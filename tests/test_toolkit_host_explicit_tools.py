@@ -1,0 +1,219 @@
+"""Unit tests for ``_toolkit_host._import_module_no_syspath`` and
+``_import_explicit_tools``.
+
+The explicit-form host loader is the runtime counterpart to ``ingest`` —
+it imports each tool's module by file resolution against the toolkit
+root, never adding the root to sys.path (HANDOFF gotcha #2).
+
+Cover:
+
+- Single-segment module imports.
+- Nested package imports (a.b.c).
+- Top-level package imports (the leaf is __init__.py).
+- Invalid dotted paths rejected.
+- Missing leaf file → ImportError with a clear message.
+- ``_import_explicit_tools`` rejects non-BaseTool values.
+- ``_import_explicit_tools`` instantiates BaseTool subclasses.
+- ``_import_explicit_tools`` accepts BaseTool instances directly.
+- sys.path is NOT mutated by these imports (regression guard for
+  HANDOFF gotcha #2).
+"""
+
+from __future__ import annotations
+
+import sys
+from pathlib import Path
+
+import pytest
+
+from toolbase._toolkit_host import (
+    _import_explicit_tools,
+    _import_module_no_syspath,
+)
+
+
+@pytest.fixture(autouse=True)
+def _clean_sys_modules():
+    """Snapshot sys.modules and restore after each test.
+
+    The host loader registers modules into sys.modules under their
+    dotted name; tests must not leak those into other tests.
+    """
+    snapshot = dict(sys.modules)
+    yield
+    for k in list(sys.modules):
+        if k not in snapshot:
+            del sys.modules[k]
+
+
+def _make_pkg(root: Path, *paths: tuple[str, str]) -> None:
+    for rel, content in paths:
+        full = root / rel
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(content, encoding="utf-8")
+
+
+class TestImportModuleNoSyspath:
+    def test_simple_submodule(self, tmp_path):
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            ("pkg/leaf.py", "VALUE = 42\n"),
+        )
+        mod = _import_module_no_syspath("pkg.leaf", tmp_path)
+        assert mod.VALUE == 42
+
+    def test_nested_package(self, tmp_path):
+        _make_pkg(
+            tmp_path,
+            ("a/__init__.py", ""),
+            ("a/b/__init__.py", ""),
+            ("a/b/c.py", "MARKER = 'c'\n"),
+        )
+        mod = _import_module_no_syspath("a.b.c", tmp_path)
+        assert mod.MARKER == "c"
+
+    def test_package_leaf_via_init(self, tmp_path):
+        _make_pkg(
+            tmp_path,
+            ("only_pkg/__init__.py", "EXPORTED = 'init'\n"),
+        )
+        mod = _import_module_no_syspath("only_pkg", tmp_path)
+        assert mod.EXPORTED == "init"
+
+    def test_missing_intermediate_package(self, tmp_path):
+        # `pkg/sub/leaf.py` exists but pkg/sub has no __init__.py.
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            ("pkg/sub/leaf.py", "X = 1\n"),
+        )
+        with pytest.raises(ImportError, match="no __init__.py"):
+            _import_module_no_syspath("pkg.sub.leaf", tmp_path)
+
+    def test_missing_leaf(self, tmp_path):
+        _make_pkg(tmp_path, ("pkg/__init__.py", ""))
+        with pytest.raises(ImportError, match="cannot find module"):
+            _import_module_no_syspath("pkg.absent", tmp_path)
+
+    def test_invalid_dotted_path(self, tmp_path):
+        with pytest.raises(ImportError, match="invalid"):
+            _import_module_no_syspath("pkg.123-bad", tmp_path)
+
+    def test_does_not_mutate_syspath(self, tmp_path):
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            ("pkg/leaf.py", "X = 1\n"),
+        )
+        before = list(sys.path)
+        _import_module_no_syspath("pkg.leaf", tmp_path)
+        assert sys.path == before, "sys.path must not be mutated"
+        assert str(tmp_path) not in sys.path
+        assert str(tmp_path / "pkg") not in sys.path
+
+    def test_relative_imports_work_inside_package(self, tmp_path):
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            ("pkg/util.py", "VALUE = 'util-value'\n"),
+            ("pkg/main.py", "from pkg.util import VALUE\nLOADED = VALUE\n"),
+        )
+        mod = _import_module_no_syspath("pkg.main", tmp_path)
+        assert mod.LOADED == "util-value"
+
+
+class TestImportExplicitTools:
+    def test_imports_basetool_instance(self, tmp_path):
+        # Use @define_tool which produces a proper BaseTool instance.
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            (
+                "pkg/mytool.py",
+                "from orchestral import define_tool\n"
+                "@define_tool\n"
+                "def instance_tool():\n"
+                "    \"\"\"Instance-form tool.\"\"\"\n"
+                "    return 'ok'\n",
+            ),
+        )
+        spec = [{"name": "instance_tool", "module": "pkg.mytool"}]
+        tools = _import_explicit_tools(spec, tmp_path)
+        from orchestral.tools.base.tool import BaseTool
+        assert len(tools) == 1
+        assert isinstance(tools[0], BaseTool)
+
+    def test_instantiates_basetool_subclass(self, tmp_path):
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            (
+                "pkg/cls.py",
+                "from orchestral.tools import BaseTool\n"
+                "class MyToolClass(BaseTool):\n"
+                "    name: str = 'cls_tool'\n"
+                "    description: str = 'A class-based tool.'\n"
+                "    def _run(self, **kw):\n"
+                "        return 'ok'\n",
+            ),
+        )
+        spec = [{"name": "MyToolClass", "module": "pkg.cls"}]
+        tools = _import_explicit_tools(spec, tmp_path)
+        from orchestral.tools.base.tool import BaseTool
+        assert len(tools) == 1
+        assert isinstance(tools[0], BaseTool)
+
+    def test_rejects_non_basetool_attribute(self, tmp_path):
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            ("pkg/junk.py", "not_a_tool = 42\n"),
+        )
+        spec = [{"name": "not_a_tool", "module": "pkg.junk"}]
+        with pytest.raises(TypeError, match="not a BaseTool"):
+            _import_explicit_tools(spec, tmp_path)
+
+    def test_rejects_missing_attribute(self, tmp_path):
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            ("pkg/empty.py", "# empty\n"),
+        )
+        spec = [{"name": "missing_attr", "module": "pkg.empty"}]
+        with pytest.raises(AttributeError, match="has no attribute"):
+            _import_explicit_tools(spec, tmp_path)
+
+    def test_rejects_entry_missing_module(self, tmp_path):
+        spec = [{"name": "no_module"}]
+        with pytest.raises(ValueError, match="missing 'module'"):
+            _import_explicit_tools(spec, tmp_path)
+
+    def test_handles_multiple_entries(self, tmp_path):
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            (
+                "pkg/a.py",
+                "from orchestral import define_tool\n"
+                "@define_tool\n"
+                "def a_inst():\n"
+                "    \"\"\"a-desc\"\"\"\n"
+                "    return 'a'\n",
+            ),
+            (
+                "pkg/b.py",
+                "from orchestral.tools import BaseTool\n"
+                "class B(BaseTool):\n"
+                "    name: str = 'b'\n"
+                "    description: str = 'b-desc'\n"
+                "    def _run(self, **kw):\n"
+                "        return 'b'\n",
+            ),
+        )
+        spec = [
+            {"name": "a_inst", "module": "pkg.a"},
+            {"name": "B", "module": "pkg.b"},
+        ]
+        tools = _import_explicit_tools(spec, tmp_path)
+        assert len(tools) == 2

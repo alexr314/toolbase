@@ -1,0 +1,37 @@
+name: tb-aster-synthetic
+version: 0.1.0
+description: ASTER-shaped synthetic toolkit — exercises the Phase 3C download flow at a small scale (10 KB instead of 2.3 GB).
+author: Toolbase
+category: astro
+keywords:
+  - astro
+  - exoplanets
+python_version: "3.12"
+setup_script: true
+config:
+  # User-supplied: API key the toolkit needs to reach an external service.
+  # Mirrors how ASTER will require a NASA Exoplanet Archive key.
+  - name: api_key
+    description: "Your NASA Exoplanet Archive API key (mocked for the test)."
+    type: secret
+    required: true
+
+  # User-supplied: workspace dir for outputs.
+  - name: workspace
+    description: "Where ASTER writes outputs."
+    type: path
+    default: ~/.toolbase/data/tb-aster-synthetic/workspace
+    required: false
+
+  # User-supplied: parallelism.
+  - name: max_workers
+    description: "Number of parallel workers for batch operations."
+    type: integer
+    default: 4
+    min: 1
+    max: 16
+
+tools:
+  - name: get_observation
+    function: tools.get_observation
+    description: Returns a packaged observation manifest derived from injected state.

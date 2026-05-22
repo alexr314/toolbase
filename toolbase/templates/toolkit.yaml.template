@@ -1,0 +1,68 @@
+name: {{name}}
+version: 0.1.0
+description: A brief description of your toolkit
+author: Your Name
+email: your.email@example.com
+license: MIT
+homepage: https://github.com/yourusername/{{name}}
+category: other  # Options: astro, hep, quantum, neutrino, bio, chem, materials, utils, other
+keywords:
+  - science
+  - research
+python_version: "3.12"
+
+tools:
+  - name: example_tool
+    function: tools.example_tool.example_tool
+    description: An example tool that demonstrates the basic Orchestral structure
+  - name: text_processor
+    function: tools.example_tool.text_processor
+    description: Another example tool showing text processing
+
+# Optional: per-toolkit configuration captured from the user at install
+# time. Uncomment and edit the block below to use. Each entry becomes a
+# state-field that tools can declare via @define_tool(state=[...]); the
+# value reaches the tool's signature alongside the LLM's runtime args.
+#
+# Three principles:
+#   1. Config files are canonical. Values live at
+#      ~/.toolbase/config/<toolkit>.yaml. Users hand-edit anytime.
+#   2. Required fields the user hasn't filled in cause `serve` to skip
+#      the toolkit with a clear pointer to the file.
+#   3. Prompts are scaffolding. `--no-input` and non-TTY contexts
+#      always work; flag-equivalence with `toolbase config set`.
+#
+# Documentation: https://tool-base.org/docs/configuration
+#
+# config:
+#   # Required secret (e.g. an API key). Hidden on prompt, masked in
+#   # `toolbase config show`. The user must fill this before serve.
+#   - name: api_key
+#     description: "Your API key. Get one at https://example.com/keys"
+#     type: secret
+#     required: true
+#
+#   # Optional path with tilde expansion. Drop `must_exist: true` to
+#   # require the path exist at config-write time.
+#   - name: data_path
+#     description: "Where to store cached data."
+#     type: path
+#     default: ~/.toolbase/data/{{name}}
+#     required: false
+#
+#   # Bounded integer with a default. `--no-input` mode picks the default.
+#   - name: max_workers
+#     description: "Parallelism for batch operations."
+#     type: integer
+#     default: 4
+#     min: 1
+#     max: 64
+#
+#   # Choice — value must be one of `options:`.
+#   - name: log_level
+#     description: "Verbosity of toolkit output."
+#     type: choice
+#     options: [error, warn, info, debug]
+#     default: info
+#
+# Other available types: `string`, `float`, `boolean`. See the docs.

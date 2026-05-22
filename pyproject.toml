@@ -1,0 +1,78 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "toolbase"
+version = "0.1.0"
+description = "The community registry and CLI for AI agent toolkits - discover, share, and serve tools to AI agents over MCP"
+readme = "README.md"
+requires-python = ">=3.12"
+license = {text = "MIT"}
+authors = [
+    {name = "Alex Roman"}
+]
+keywords = ["ai", "agents", "tools", "toolkit", "mcp", "orchestral", "registry", "package-manager"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
+
+dependencies = [
+    "click>=8.0",
+    "requests>=2.31",
+    "pyyaml>=6.0",
+    # Used by toolbase/setup/storage.py to read/write
+    # ~/.toolbase/config/<toolkit>.yaml while preserving user comments
+    # across edits. pyyaml strips comments on dump; ruamel round-trips them.
+    "ruamel.yaml>=0.18",
+    "rich>=13.0",
+    "pydantic>=2.0",
+    # Required by Pydantic's EmailStr at runtime; not imported directly.
+    "email-validator>=2.0",
+    # 1.4 introduced the `state=[...]` decorator argument that the
+    # Phase 3C-1 setup system relies on for state-field declaration.
+    "orchestral-ai>=1.4",
+    "mcp>=1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/alexr314/toolbase"
+Documentation = "https://github.com/alexr314/toolbase#readme"
+Repository = "https://github.com/alexr314/toolbase"
+Issues = "https://github.com/alexr314/toolbase/issues"
+
+[project.scripts]
+toolbase = "toolbase.cli:main"
+# `tb` is an alias for `toolbase` — same entrypoint, both ship every
+# pip install. Use whichever you prefer; `tb list` is identical to
+# `toolbase list`.
+tb = "toolbase.cli:main"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "black>=23.0",
+    "ruff>=0.1.0",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["toolbase*"]
+
+[tool.setuptools.package-data]
+# Ship template files (non-.py) so `toolbase init` works on PyPI installs.
+# Without this, only .py files in toolbase/templates/ would land in the
+# wheel — the .md, .yaml, .txt, and Dockerfile templates would silently
+# disappear and `init` would fail with a confusing missing-file error.
+"toolbase" = [
+    "templates/*",
+    "templates/**/*",
+]

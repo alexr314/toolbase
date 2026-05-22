@@ -1,0 +1,94 @@
+"""Setup script for {{name}}.
+
+Runs at install time and via `toolbase setup {{name}}`. Handles
+configuration that's too involved for the declarative `config:` block
+in toolkit.yaml — for example: data downloads, hardware detection,
+multi-step flows.
+
+This file is a starting point. Delete what you don't need.
+
+Two functions are recognized:
+
+- `setup(ctx)` — interactive setup. Runs at `toolbase install` and
+  on demand via `toolbase setup`. Free to prompt, download, write
+  config, do arbitrary Python work.
+- `validate(ctx)` — quick check called at every `toolbase serve`
+  startup. Must be fast (target <100ms) — no prompts, no downloads,
+  just config reads. Return False to refuse-to-serve with a clear
+  message; the user fixes and re-runs.
+
+`ctx` is a SetupContext. Full API:
+https://tool-base.org/docs/configuration#setup-script
+"""
+
+
+def setup(ctx):
+    """Interactive setup. Returning False (or raising) reports
+    failure; install completes regardless, and the user is told to
+    re-run via `toolbase setup {{name}}` after fixing the issue."""
+    ctx.info("Setting up {{name}}...")
+
+    # ── Read user input ─────────────────────────────────────────
+    # All prompts honor --yes / --no / --no-input flags. In skip mode
+    # they fall back to defaults (or None if no default is given).
+    #
+    # workers = ctx.prompt_int(
+    #     "How many workers?", default=4, min=1, max=64,
+    # )
+    # ctx.set_config("worker_count", workers)
+    #
+    # token = ctx.prompt_secret("Enter your API token:")
+    # ctx.set_config("api_token", token)
+
+    # ── Download data ───────────────────────────────────────────
+    # Resumable, SHA256-verified, auto-extract for tar/zip. Cache
+    # lives under ~/.toolbase/cache/ — re-runs are fast.
+    #
+    # ctx.download(
+    #     "https://example.com/data.tar.gz",
+    #     destination=ctx.data_dir,
+    #     extract=True,
+    #     sha256="abc123...",  # optional but strongly recommended
+    #     description="Reference data",
+    #     size_hint="2.3 GB",
+    # )
+    # ctx.set_config("data_dir", str(ctx.data_dir))
+
+    # ── Stash derived state ─────────────────────────────────────
+    # Values written here reach @define_tool(state=[...]) without
+    # needing to be declared in `config:`. Use this for things the
+    # user shouldn't be prompted for — auto-detected hardware, paths
+    # derived from other paths, etc.
+    #
+    # import subprocess
+    # has_gpu = (
+    #     subprocess.run(["nvidia-smi"], capture_output=True).returncode == 0
+    # )
+    # ctx.set_config("use_gpu", has_gpu)
+
+    ctx.success("Setup complete.")
+    return True
+
+
+def validate(ctx):
+    """Fast read-only check. Called at every `toolbase serve`
+    startup; the result is cached against the config and setup.py
+    mtimes so you only pay the spawn cost when something changed.
+
+    Return True iff the toolkit is configured and ready to serve.
+    Returning False causes serve to skip with the message you log
+    via ctx.error/warn (or a generic "validate(ctx) returned False"
+    if you log nothing).
+    """
+    # Example checks:
+    #
+    # if not ctx.get_config("api_token"):
+    #     ctx.error("api_token not set; run `toolbase setup {{name}}`")
+    #     return False
+    #
+    # data_dir = ctx.get_config("data_dir")
+    # if not data_dir or not Path(data_dir).exists():
+    #     ctx.error(f"data_dir missing or empty: {data_dir!r}")
+    #     return False
+
+    return True

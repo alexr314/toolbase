@@ -1,0 +1,46 @@
+"""MCP STDIO server for {{name}}."""
+import argparse
+import sys
+from pathlib import Path
+from orchestral.mcp import MCPServer
+
+# Add toolkit root to path
+TOOLKIT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(TOOLKIT_ROOT))
+
+
+def main():
+    """
+    Run the MCP server for {{name}}.
+
+    This server exposes all toolkit tools via the Model Context Protocol
+    using STDIO transport (suitable for Claude Code and similar clients).
+    """
+    parser = argparse.ArgumentParser(
+        description="{{name}} MCP Server - {{description}}"
+    )
+    parser.add_argument(
+        "--workspace",
+        help="Working directory for tool operations",
+        default="."
+    )
+    args = parser.parse_args()
+
+    # Load all tools from tools/__init__.py
+    # The tools module exports all toolkit tools via __all__
+    import tools
+    tools_list = [getattr(tools, name) for name in tools.__all__]
+
+    # Create and run MCP server
+    server = MCPServer(
+        tools=tools_list,
+        name="{{name}}",
+        version="{{version}}"
+    )
+
+    # Run server (blocks until terminated)
+    server.run()
+
+
+if __name__ == "__main__":
+    main()

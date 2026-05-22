@@ -1,0 +1,4 @@
+"""MCP server for {{name}}."""
+from .server_stdio import main
+
+__all__ = ['main']

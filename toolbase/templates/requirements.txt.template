@@ -1,0 +1,11 @@
+# Python dependencies for {{name}}
+
+# REQUIRED: Orchestral AI framework for tool definitions and MCP server
+orchestral-ai>=1.0.0
+
+# Add your toolkit-specific dependencies below, one per line
+# Example scientific computing packages:
+# numpy>=1.24.0
+# scipy>=1.11.0
+# astropy>=5.0
+# pandas>=2.0.0

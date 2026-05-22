@@ -1,0 +1,17 @@
+name: tb-setup-script-test
+version: 0.1.0
+description: Synthetic toolkit with a Tier-2 setup.py — exercises Phase 3C-2 install/setup/serve integration.
+author: Toolbase
+category: other
+setup_script: true
+config:
+  # The Tier-1 declarative block runs first; setup.py picks up these
+  # values via ctx.get_config and adds derived values via set_config.
+  - name: api_key
+    description: A secret API key (mocked for the test).
+    type: secret
+    required: true
+tools:
+  - name: get_state
+    function: tools.get_state
+    description: Returns the injected state values, for the test to verify.

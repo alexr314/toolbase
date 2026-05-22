@@ -1,0 +1,10 @@
+"""
+{{name}} - Tools module
+
+This file makes the tools directory a Python package and exports all tools.
+CRITICAL: Orchestral requires explicit tool exports - tools are NOT auto-discovered.
+"""
+
+from .example_tool import example_tool, text_processor
+
+__all__ = ['example_tool', 'text_processor']

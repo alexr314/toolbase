@@ -1,0 +1,12 @@
+name: tb-restart-test
+version: 0.1.0
+description: Synthetic toolkit that deliberately crashes its host process — used by tests/e2e/run_restart_e2e.py to exercise the orchestrator's auto-restart logic.
+author: Toolbase
+category: other
+tools:
+  - name: still_alive
+    function: tools.still_alive
+    description: Returns "ok" if the host subprocess is healthy.
+  - name: crash_now
+    function: tools.crash_now
+    description: Calls os._exit(1) — crashes the host subprocess.

@@ -1,0 +1,12 @@
+name: test-toolkit
+version: 0.1.0
+description: Test toolkit for install pipeline
+author: Toolbase
+category: other
+tools:
+  - name: hello
+    function: tools.hello
+    description: Says hello
+  - name: add
+    function: tools.add
+    description: Adds two numbers
