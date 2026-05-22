@@ -55,7 +55,7 @@ def _seed_legacy_install() -> Path:
     legacy = FAKE_HOME / "toolkits"
     legacy.mkdir(parents=True, exist_ok=True)
     (legacy / "foo").mkdir()
-    (legacy / "foo" / ".stk_meta.json").write_text(
+    (legacy / "foo" / ".tb_meta.json").write_text(
         '{"name": "foo", "version": "0.1.0", "environment": "venv"}'
     )
     (legacy / "foo" / "tools").mkdir()

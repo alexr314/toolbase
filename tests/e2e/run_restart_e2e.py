@@ -50,7 +50,7 @@ def _setup_synthetic_install() -> Path:
     """Build a fake installed toolkit at INSTALL_ROOT/<name> without
     going through the install pipeline.
 
-    We just copy the toolkit source into place and write a .stk_meta.json
+    We just copy the toolkit source into place and write a .tb_meta.json
     that points at the *current* Python interpreter — the synthetic
     toolkit has no extra deps, so the dev venv (which already has
     orchestral and mcp installed) works as the toolkit env too.
@@ -68,7 +68,7 @@ def _setup_synthetic_install() -> Path:
         "python_path": sys.executable,
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
     }
-    (dest / ".stk_meta.json").write_text(json.dumps(meta, indent=2))
+    (dest / ".tb_meta.json").write_text(json.dumps(meta, indent=2))
     return dest
 
 

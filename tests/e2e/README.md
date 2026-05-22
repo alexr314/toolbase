@@ -58,7 +58,7 @@ of `serve.log` so you can see the orchestrator's event stream.
   registry. Specifically: download (mocked), tarball extract, environment
   detection, venv creation, dependency install (this one is real — it
   hits PyPI to install orchestral-ai + mcp), metadata write.
-- `.stk_meta.json` ends up with the right shape (env type, python_path,
+- `.tb_meta.json` ends up with the right shape (env type, python_path,
   tool_count, skills_count, etc.).
 - Useful when you change install logic and want a smoke test that doesn't
   depend on whatever's on the live registry today.

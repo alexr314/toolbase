@@ -21,7 +21,7 @@ gracefully) and entries missing ``.install_meta.yaml`` (broken / partial
 installs).
 
 NB: ``.install_meta.yaml`` is the new canonical metadata file. The
-0.4.x ``.stk_meta.json`` (JSON, no schema_version) is left around for
+0.4.x ``.tb_meta.json`` (JSON, no schema_version) is left around for
 backward compat *within* the version slot — the existing
 ``setup/runner.py`` reads it for ``python_path`` / ``env_name``. Phase 2
 writes both so serve / setup keep working without touching their
@@ -45,7 +45,7 @@ from .schema import read_versioned_yaml, write_versioned_yaml
 INSTALL_META_FILE = ".install_meta.yaml"
 LAST_USED_FILE = ".last_used"
 DISK_SIZE_FILE = ".disk_size"
-LEGACY_META_FILE = ".stk_meta.json"  # Carried forward for the runner / serve
+LEGACY_META_FILE = ".tb_meta.json"  # Carried forward for the runner / serve
 
 # Soft cap on the disk-size walk at install time. If sizing a fresh
 # install takes longer than this, drop the feature for that entry
@@ -62,7 +62,7 @@ class CacheEntry:
     version: str
     path: Path
     install_meta: Dict[str, Any] = field(default_factory=dict)
-    # Legacy 0.4.x metadata, parsed from ``.stk_meta.json`` if present.
+    # Legacy 0.4.x metadata, parsed from ``.tb_meta.json`` if present.
     # Carries ``python_path``, ``env_name``, etc. that the serve and
     # setup runner still consume directly. Phase 5+ can fold these
     # into ``install_meta`` if we want.
@@ -128,7 +128,7 @@ def read_install_meta(slot_dir: Path) -> Optional[Dict[str, Any]]:
 
 
 def write_legacy_meta(slot_dir: Path, meta: Dict[str, Any]) -> Path:
-    """Write the 0.4.x ``.stk_meta.json`` carry-along file.
+    """Write the ``.tb_meta.json`` carry-along file.
 
     Serve and the setup runner both still read this; until those move
     onto ``.install_meta.yaml`` we maintain both. The legacy file is
@@ -140,7 +140,7 @@ def write_legacy_meta(slot_dir: Path, meta: Dict[str, Any]) -> Path:
 
 
 def read_legacy_meta(slot_dir: Path) -> Dict[str, Any]:
-    """Read ``.stk_meta.json``. Returns ``{}`` if absent or malformed."""
+    """Read ``.tb_meta.json``. Returns ``{}`` if absent or malformed."""
     path = slot_dir / LEGACY_META_FILE
     if not path.exists():
         return {}
@@ -265,7 +265,7 @@ def walk_cache(
 
     Filters: a version sub-directory is recognized as an install only
     if it contains a non-empty ``.install_meta.yaml`` OR a legacy
-    ``.stk_meta.json``. Partial installs (post-extract pre-meta) are
+    ``.tb_meta.json``. Partial installs (post-extract pre-meta) are
     invisible to ``tb list``; that's intentional — they'd otherwise
     show up with all fields empty.
     """

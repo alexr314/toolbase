@@ -5,7 +5,7 @@ version 0.1.0, once at 0.2.0. Verifies that:
 
 1. Both cache slots exist side-by-side under
    ``<HOME>/.toolbase/cache/<name>/<version>/``.
-2. Each slot carries ``.install_meta.yaml``, ``.stk_meta.json``,
+2. Each slot carries ``.install_meta.yaml``, ``.tb_meta.json``,
    ``.disk_size`` (or "—" if budget-skipped).
 3. The default-project manifest ends up pinned to the LATEST install
    (i.e. the second one) — the brief's "install <name>@<v> pins it"
@@ -170,12 +170,12 @@ def main() -> int:
     # Both .install_meta.yaml present.
     for slot, ver in [(v1_slot, "0.1.0"), (v2_slot, "0.2.0")]:
         meta_file = slot / ".install_meta.yaml"
-        legacy = slot / ".stk_meta.json"
+        legacy = slot / ".tb_meta.json"
         if not meta_file.exists():
             print(f"!!! {slot}/.install_meta.yaml is missing")
             return 5
         if not legacy.exists():
-            print(f"!!! {slot}/.stk_meta.json is missing")
+            print(f"!!! {slot}/.tb_meta.json is missing")
             return 5
 
     # Manifest pin should reflect the LAST install (0.2.0).

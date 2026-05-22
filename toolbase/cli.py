@@ -24,6 +24,8 @@ import tempfile
 import requests
 import shutil
 
+from .config import _api_url
+
 console = Console()
 
 
@@ -242,9 +244,7 @@ def _publish_auto_register(
         )
         sys.exit(1)
 
-    api_url = os.environ.get(
-        "TOOLBASE_API_URL", "https://api.scitoolkit.org",
-    )
+    api_url = _api_url()
     create_url = f"{api_url}/api/toolkits"
     body = {
         "name": toolkit_name,
@@ -629,7 +629,7 @@ def create(name, category, description, organization, version, yes, no_, no_inpu
     Create a new toolkit row in the registry.
 
     Registers a toolkit name, category, and description against
-    api.scitoolkit.org under the authenticated user. Use this before
+    the Toolbase registry under the authenticated user. Use this before
     `toolbase init <name>` (to scaffold a fresh local toolkit dir)
     or `toolbase ingest .` (to onboard an existing codebase).
 
@@ -700,7 +700,7 @@ def create(name, category, description, organization, version, yes, no_, no_inpu
         sys.exit(1)
 
     # 3. Hit the registry.
-    api_url = os.environ.get("TOOLBASE_API_URL", "https://api.scitoolkit.org")
+    api_url = _api_url()
     create_url = f"{api_url}/api/toolkits"
     body = {
         "name": name_l,
@@ -849,7 +849,7 @@ def init(name, path, with_docker, with_setup, yes, no_, no_input):
     # regardless. If the name *is* registered (and we have access),
     # we pre-fill toolkit.yaml from the registry's metadata so the user
     # doesn't have to re-type fields they've already set.
-    api_url = "https://api.scitoolkit.org"
+    api_url = _api_url()
     registry_metadata = None
 
     try:
@@ -2519,7 +2519,7 @@ def publish(dry_run, allow_decrease, yes, no_, no_input):
     needs_registration = False
     if not dry_run:
         from .versioning import is_strictly_greater, max_version, suggest_next_version
-        api_url_check = "https://api.scitoolkit.org"
+        api_url_check = _api_url()
         try:
             r = requests.get(
                 f"{api_url_check}/api/toolkits/{toolkit_name}", timeout=5,
@@ -2679,7 +2679,7 @@ def publish(dry_run, allow_decrease, yes, no_, no_input):
     # Step 5: Upload to backend
     console.print("Uploading to registry...")
 
-    api_url = "https://api.scitoolkit.org"
+    api_url = _api_url()
     upload_url = f"{api_url}/api/toolkits/{toolkit_name}/publish"
 
     try:
@@ -3466,7 +3466,7 @@ def _write_path_install_meta(
     editable: bool,
     source_path: Optional[Path],
 ) -> None:
-    """Write .stk_meta.json + .install_meta.yaml for a path/editable install."""
+    """Write .tb_meta.json + .install_meta.yaml for a path/editable install."""
     from .envs import (
         write_legacy_meta as _write_legacy_meta,
         write_install_meta as _write_install_meta,
@@ -3690,7 +3690,7 @@ def install(name, version, global_scope, local_scope, editable, no_skills, yes, 
     # Step 1: Fetch toolkit metadata from registry
     console.print("Fetching toolkit metadata...")
 
-    api_url = "https://api.scitoolkit.org"
+    api_url = _api_url()
 
     try:
         response = requests.get(f"{api_url}/api/toolkits/{name}", timeout=10)
@@ -3960,7 +3960,7 @@ def install(name, version, global_scope, local_scope, editable, no_skills, yes, 
     elif env_type == 'conda':
         meta['env_name'] = env_name
 
-    # Write the legacy ``.stk_meta.json`` (consumed by serve / setup runner)
+    # Write the legacy ``.tb_meta.json`` (consumed by serve / setup runner)
     # AND the new ``.install_meta.yaml`` (canonical, schema-versioned).
     # The legacy file stays until later phases migrate serve / runner.
     from .envs import (

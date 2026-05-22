@@ -3,7 +3,7 @@ Orchestrator for ``toolbase serve`` (MVP, ``--no-tui`` mode only).
 
 Responsibilities:
 
-1. Discover installed toolkits via ``~/.toolbase/toolkits/*/.stk_meta.json``.
+1. Discover installed toolkits via ``~/.toolbase/toolkits/*/.tb_meta.json``.
 2. Classify each as ready / skipped (docker, needs_setup, broken).
 3. Print a scannable startup banner.
 4. Spawn one subprocess per ready toolkit, using that toolkit's interpreter.
@@ -44,6 +44,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from rich.console import Console
 
 from ..config import LOGS_DIR, TOOLKITS_DIR
+from ..envs.cache import LEGACY_META_FILE
 from ..logging.logger import ToolLogger, get_logger
 
 
@@ -255,7 +256,7 @@ def discover_toolkits(toolkits_dir: Optional[Path] = None) -> List[ToolkitDiscov
 def _legacy_discover_toolkits(toolkits_dir: Path) -> List[ToolkitDiscovery]:
     """0.4.x walker — still used by tests that haven't migrated yet.
 
-    Walks a flat ``<dir>/<name>/.stk_meta.json`` shape. Production
+    Walks a flat ``<dir>/<name>/.tb_meta.json`` shape. Production
     code paths use the cache walker via ``discover_toolkits(None)``.
     """
     found: List[ToolkitDiscovery] = []
@@ -265,11 +266,11 @@ def _legacy_discover_toolkits(toolkits_dir: Path) -> List[ToolkitDiscovery]:
     for entry in sorted(toolkits_dir.iterdir()):
         if not entry.is_dir():
             continue
-        meta_file = entry / ".stk_meta.json"
+        meta_file = entry / LEGACY_META_FILE
         if not meta_file.exists():
             found.append(ToolkitDiscovery(
                 name=entry.name, path=entry, meta={},
-                skip_reason="missing .stk_meta.json (broken install)",
+                skip_reason=f"missing {LEGACY_META_FILE} (broken install)",
             ))
             continue
         try:
@@ -277,7 +278,7 @@ def _legacy_discover_toolkits(toolkits_dir: Path) -> List[ToolkitDiscovery]:
         except Exception:
             found.append(ToolkitDiscovery(
                 name=entry.name, path=entry, meta={},
-                skip_reason="unreadable .stk_meta.json",
+                skip_reason=f"unreadable {LEGACY_META_FILE}",
             ))
             continue
 
@@ -314,7 +315,7 @@ def _resolve_state_config(
     startup. Per-toolkit failures stay per-toolkit.
     """
     # Read the toolkit's published `config:` block from its toolkit.yaml.
-    # The metadata file (.stk_meta.json) doesn't carry it because the
+    # The metadata file (.tb_meta.json) doesn't carry it because the
     # block is the toolkit author's published schema, not user data.
     yaml_path = disc.path / "toolkit.yaml"
     if not yaml_path.exists():

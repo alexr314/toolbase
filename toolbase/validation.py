@@ -12,6 +12,8 @@ from typing import List, Optional, Dict, Any
 from pydantic import BaseModel, Field, field_validator, model_validator, EmailStr
 import yaml
 
+from .config import _api_url
+
 
 # Hardcoded fallback for the category whitelist when the registry is
 # unreachable. Must stay in sync with tb-website/lib/categories.ts
@@ -50,7 +52,7 @@ def get_allowed_categories() -> List[str]:
     if _categories_cache is not None:
         return _categories_cache
 
-    api_url = os.environ.get("TOOLBASE_API_URL", "https://api.scitoolkit.org")
+    api_url = _api_url()
     try:
         # Lazy import so plain Pydantic validation (used as a library) doesn't
         # pull in requests just to read a yaml file.

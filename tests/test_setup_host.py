@@ -36,8 +36,8 @@ from toolbase.setup.runner import (
 
 
 def _write_meta(toolkit_dir: Path):
-    """Drop a minimal .stk_meta.json pointing at the dev venv's Python."""
-    (toolkit_dir / ".stk_meta.json").write_text(json.dumps({
+    """Drop a minimal .tb_meta.json pointing at the dev venv's Python."""
+    (toolkit_dir / ".tb_meta.json").write_text(json.dumps({
         "name": toolkit_dir.name,
         "version": "0.1.0",
         "environment": "venv",

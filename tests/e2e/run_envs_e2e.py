@@ -81,7 +81,7 @@ def _seed_cache_slot(name: str, version: str) -> Path:
     tk_data["version"] = version
     yaml_path.write_text(_y.safe_dump(tk_data, sort_keys=False))
 
-    # Legacy meta (orchestrator reads .stk_meta.json + .install_meta.yaml).
+    # Legacy meta (orchestrator reads .tb_meta.json + .install_meta.yaml).
     meta = {
         "name": name,
         "version": version,
@@ -89,7 +89,7 @@ def _seed_cache_slot(name: str, version: str) -> Path:
         "python_path": sys.executable,
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
     }
-    (slot / ".stk_meta.json").write_text(json.dumps(meta, indent=2))
+    (slot / ".tb_meta.json").write_text(json.dumps(meta, indent=2))
 
     # 0.5.0 install_meta — same shape as a real install.
     _wim(
@@ -186,8 +186,8 @@ def main() -> int:
         if not (slot / ".install_meta.yaml").exists():
             print(f"!!! {slot}/.install_meta.yaml missing")
             return 4
-        if not (slot / ".stk_meta.json").exists():
-            print(f"!!! {slot}/.stk_meta.json missing")
+        if not (slot / ".tb_meta.json").exists():
+            print(f"!!! {slot}/.tb_meta.json missing")
             return 4
         if not (slot / ".disk_size").exists():
             print(f"!!! {slot}/.disk_size missing")
@@ -197,7 +197,7 @@ def main() -> int:
             print(f"!!! {slot}/.last_used should NOT exist (never served)")
             return 4
         size = int((slot / ".disk_size").read_text().strip())
-        print(f"  v{ver}: install_meta + stk_meta + disk_size present "
+        print(f"  v{ver}: install_meta + tb_meta + disk_size present "
               f"({size} bytes), .last_used absent (as expected)")
 
     # ── 4. Verify manifest pins latest (0.2.0) ──────────────────────

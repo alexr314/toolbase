@@ -1,5 +1,5 @@
 """
-Configuration paths for Toolbase.
+Configuration paths and API defaults for Toolbase.
 
 The CLI persists per-toolkit publish tokens, installed toolkits, and execution
 logs under ~/.toolbase/. The directories below are the canonical locations
@@ -8,11 +8,27 @@ they exist.
 
     ~/.toolbase/
     ├── <toolkit_name>/token     # publish tokens (mode 0600)
-    ├── toolkits/<toolkit_name>/ # installed toolkits (with .stk_meta.json)
+    ├── toolkits/<toolkit_name>/ # installed toolkits (with .tb_meta.json)
     └── logs/                    # execution logs (populated by serve)
 """
 
+import os
 from pathlib import Path
+
+# Default API base URL.  Override at run-time via the ``TOOLBASE_API_URL``
+# environment variable (used in tests and staging environments).
+# Do NOT change this value without a separate cutover task — it points at
+# the live backend.
+DEFAULT_API_URL = "https://api.scitoolkit.org"
+
+
+def _api_url() -> str:
+    """Return the effective API base URL.
+
+    Checks ``TOOLBASE_API_URL`` first so tests and staging can override
+    without touching code.  Falls back to ``DEFAULT_API_URL``.
+    """
+    return os.environ.get("TOOLBASE_API_URL") or DEFAULT_API_URL
 
 CONFIG_DIR = Path.home() / ".toolbase"
 TOOLKITS_DIR = CONFIG_DIR / "toolkits"

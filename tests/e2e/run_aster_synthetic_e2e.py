@@ -139,7 +139,7 @@ def _setup_synthetic_install() -> Path:
         "has_setup_script": True,
         "needs_setup": True,
     }
-    (dest / ".stk_meta.json").write_text(json.dumps(meta, indent=2))
+    (dest / ".tb_meta.json").write_text(json.dumps(meta, indent=2))
     from toolbase.envs import write_install_meta as _wim
     _wim(dest, name=TOOLKIT_NAME, version=version,
          install_method="venv",

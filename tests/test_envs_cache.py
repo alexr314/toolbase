@@ -201,7 +201,7 @@ def test_walk_cache_returns_installs(fake_home):
 
 
 def test_walk_cache_skips_partial_install_with_no_meta(fake_home):
-    """A version dir without .install_meta.yaml or .stk_meta.json is skipped."""
+    """A version dir without .install_meta.yaml or .tb_meta.json is skipped."""
     slot = fake_home / "cache" / "aster" / "1.0.0"
     slot.mkdir(parents=True)
     # No meta file written.
@@ -210,7 +210,7 @@ def test_walk_cache_skips_partial_install_with_no_meta(fake_home):
 
 
 def test_walk_cache_accepts_legacy_meta_only(fake_home):
-    """A version slot with only the .stk_meta.json carry survives the walk."""
+    """A version slot with only the .tb_meta.json carry survives the walk."""
     slot = _make_slot(fake_home, "aster", "1.0.0")
     cache_mod.write_legacy_meta(slot, {
         "name": "aster", "version": "1.0.0",

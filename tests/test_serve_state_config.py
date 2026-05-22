@@ -39,7 +39,7 @@ def _make_discovery(
     name: str = "demo",
     config_block=None,
 ) -> ToolkitDiscovery:
-    """Drop a synthetic toolkit dir with toolkit.yaml + .stk_meta.json."""
+    """Drop a synthetic toolkit dir with toolkit.yaml + .tb_meta.json."""
     tk = base / "toolkits" / name
     tk.mkdir(parents=True)
     yaml_data = {
@@ -55,7 +55,7 @@ def _make_discovery(
         "environment": "venv",
         "python_path": "/usr/bin/python", "python_version": "3.12",
     }
-    (tk / ".stk_meta.json").write_text(json.dumps(meta))
+    (tk / ".tb_meta.json").write_text(json.dumps(meta))
     return ToolkitDiscovery(name=name, path=tk, meta=meta)
 
 

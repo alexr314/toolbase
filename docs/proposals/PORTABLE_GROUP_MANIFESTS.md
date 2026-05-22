@@ -177,7 +177,7 @@ toolkits:
   - name: misc-utils           # bare string still accepted = "any installed"
 ```
 
-**Behavior:** at serve startup, after toolkit discovery, validate each pin against the installed `.stk_meta.json` version. Mismatch ⇒ skip that toolkit with a clear pointer:
+**Behavior:** at serve startup, after toolkit discovery, validate each pin against the installed `.tb_meta.json` version. Mismatch ⇒ skip that toolkit with a clear pointer:
 
 ```
 heptapod is installed at 1.0.3, but this manifest requires >=1.2,<2.0.

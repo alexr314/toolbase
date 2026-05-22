@@ -82,7 +82,7 @@ toolbase install arxiv-search --no-input
 - "Successfully installed arxiv-search vX.Y.Z" final line
 
 Check artifacts:
-- [ ] `~/.toolbase/toolkits/arxiv-search/.stk_meta.json` exists
+- [ ] `~/.toolbase/toolkits/arxiv-search/.tb_meta.json` exists
 - [ ] `~/.toolbase/toolkits/arxiv-search/tools/__init__.py` exists
 - [ ] No `~/.toolbase/config/arxiv-search.yaml` (arxiv-search
       ships no `config:` block — its absence is the sentinel that

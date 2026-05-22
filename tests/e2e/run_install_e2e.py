@@ -147,10 +147,10 @@ def main() -> int:
         print(f"!!! no version slot under {name_dir}")
         return 1
     slot = version_dirs[0]
-    meta_file = slot / ".stk_meta.json"
+    meta_file = slot / ".tb_meta.json"
     install_meta = slot / ".install_meta.yaml"
     if not meta_file.exists():
-        print(f"!!! no .stk_meta.json was written at {slot}")
+        print(f"!!! no .tb_meta.json was written at {slot}")
         return 1
     if not install_meta.exists():
         print(f"!!! no .install_meta.yaml was written at {slot}")

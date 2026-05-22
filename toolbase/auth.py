@@ -106,9 +106,9 @@ def _resolve_user_token_path() -> Path:
         return _self.USER_TOKEN_PATH
     return _resolve_config_dir() / "token"
 
-# Default API base. Tests / dev environments override via the
-# ``TOOLBASE_API_URL`` env var.
-DEFAULT_API_URL = "https://api.scitoolkit.org"
+# Default API base URL and resolver — canonical definition lives in config.py
+# so all modules can import it without pulling in the full auth stack.
+from .config import DEFAULT_API_URL, _api_url  # noqa: F401 — re-exported
 
 # Browser-flow defaults.
 BROWSER_FLOW_TIMEOUT_S = 300.0  # 5 minutes — generous for sign-in + approve
@@ -585,10 +585,7 @@ class BrowserFlow:
 
 
 # ── backend API helpers ───────────────────────────────────────────────
-
-
-def _api_url() -> str:
-    return os.environ.get("TOOLBASE_API_URL") or DEFAULT_API_URL
+# _api_url() and DEFAULT_API_URL are imported from config.py above.
 
 
 def whoami(token: str, *, timeout_s: float = 10.0) -> Optional[Dict[str, Any]]:

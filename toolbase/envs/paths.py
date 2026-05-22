@@ -12,7 +12,7 @@ project-side):
     │       ├── venv/ or conda-env-ref/    binary content
     │       ├── tools/                     toolkit content
     │       ├── toolkit.yaml
-    │       ├── .stk_meta.json             ownership marker (legacy carry)
+    │       ├── .tb_meta.json              ownership marker (legacy carry)
     │       ├── .install_meta.yaml         NEW (schema_version + install meta)
     │       ├── .last_used                 NEW (ISO-8601 timestamp)
     │       └── .disk_size                 NEW (single integer, bytes)

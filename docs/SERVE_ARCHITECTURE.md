@@ -70,7 +70,7 @@ If any of those three blocks the design, we should resolve them before I build.
 A single **orchestrator** process is what `toolbase serve` launches. It is
 the long-running parent that:
 
-- Discovers installed toolkits by walking `~/.toolbase/toolkits/*/.stk_meta.json`.
+- Discovers installed toolkits by walking `~/.toolbase/toolkits/*/.tb_meta.json`.
 - Launches one **per-toolkit subprocess** for each healthy toolkit, using that
   toolkit's own Python interpreter (its venv or conda env).
 - Exposes its own MCP stdio server upward (to Claude Code).
@@ -134,7 +134,7 @@ no firewall implications, the cost is one bound socket per toolkit.
 
 ### 1.3 Subprocess launch mechanics
 
-Per toolkit, the orchestrator computes the launch command from `.stk_meta.json`:
+Per toolkit, the orchestrator computes the launch command from `.tb_meta.json`:
 
 ```python
 if meta["environment"] == "venv":
@@ -312,7 +312,7 @@ forward what we get.
 
 1. `toolbase serve` parses args (e.g., `--no-tui`, `--toolkit aster`
    to scope to one for debugging).
-2. Walks `~/.toolbase/toolkits/*/.stk_meta.json`. Skips:
+2. Walks `~/.toolbase/toolkits/*/.tb_meta.json`. Skips:
    - Directories without metadata (broken installs — same as `list`).
    - Toolkits with `meta["environment"] == "docker"` (Phase 3B). Logs a clear
      "skipping, docker mode not supported yet" line.

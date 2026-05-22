@@ -172,7 +172,7 @@ def test_install_filters_already_installed_companions(tmp_path: Path, monkeypatc
     # Pretend `companion` is already installed at any version.
     companion_slot = fake_home / "cache" / "companion" / "0.1.0"
     companion_slot.mkdir(parents=True)
-    (companion_slot / ".stk_meta.json").write_text(
+    (companion_slot / ".tb_meta.json").write_text(
         json.dumps({"name": "companion", "version": "0.1.0", "environment": "venv"})
     )
 

@@ -63,7 +63,7 @@ def main() -> int:
         "python_path": sys.executable,
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
     }
-    (dest / ".stk_meta.json").write_text(json.dumps(meta, indent=2))
+    (dest / ".tb_meta.json").write_text(json.dumps(meta, indent=2))
 
     from toolbase.envs import write_install_meta as _wim
     _wim(

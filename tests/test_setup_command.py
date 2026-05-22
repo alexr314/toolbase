@@ -43,7 +43,7 @@ def _make_install(home: Path, name: str, *,
         yaml_data["setup_script"] = True
     (tdir / "toolkit.yaml").write_text(yaml.safe_dump(yaml_data))
 
-    (tdir / ".stk_meta.json").write_text(json.dumps({
+    (tdir / ".tb_meta.json").write_text(json.dumps({
         "name": name, "version": version,
         "environment": "venv",
         "python_path": sys.executable,

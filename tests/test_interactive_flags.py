@@ -206,4 +206,4 @@ def test_install_different_version_coexists_with_existing(tmp_path, monkeypatch)
         )
 
     # The existing v0.1.0 slot is untouched regardless of v0.2.0 outcome.
-    assert (existing_slot / ".stk_meta.json").exists()
+    assert (existing_slot / ".tb_meta.json").exists()

@@ -62,7 +62,7 @@ def _install_synthetic(
     name: str = "demo",
     config_block=None,
 ) -> Path:
-    """Drop a minimal cache slot with toolkit.yaml + .stk_meta.json.
+    """Drop a minimal cache slot with toolkit.yaml + .tb_meta.json.
 
     Mirrors the 0.5.0 layout: ``base/cache/<name>/<version>/``.
     """
@@ -80,7 +80,7 @@ def _install_synthetic(
     if config_block is not None:
         yaml_data["config"] = config_block
     (tk / "toolkit.yaml").write_text(_yaml.safe_dump(yaml_data))
-    (tk / ".stk_meta.json").write_text(json.dumps({
+    (tk / ".tb_meta.json").write_text(json.dumps({
         "name": name, "version": version, "environment": "venv",
         "python_path": "/usr/bin/python", "python_version": "3.12",
     }))

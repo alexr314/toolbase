@@ -857,15 +857,16 @@ class _Runner:
 
 
 def _read_toolkit_meta(toolkit_dir: Path) -> Dict[str, Any]:
-    """Read ``.stk_meta.json`` from an installed toolkit.
+    """Read ``.tb_meta.json`` from an installed toolkit.
 
     Same file the serve orchestrator reads. Carries ``python_path``
     (for venv toolkits) and ``env_name`` (for conda toolkits).
     """
-    meta_file = toolkit_dir / ".stk_meta.json"
+    from ..envs.cache import LEGACY_META_FILE
+    meta_file = toolkit_dir / LEGACY_META_FILE
     if not meta_file.exists():
         raise RuntimeError(
-            f"installed toolkit at {toolkit_dir} has no .stk_meta.json — "
+            f"installed toolkit at {toolkit_dir} has no {LEGACY_META_FILE} — "
             "reinstall to fix"
         )
     return json.loads(meta_file.read_text())
@@ -899,7 +900,7 @@ def _resolve_python_exe(meta: Dict[str, Any], toolkit_name: str) -> str:
         py = meta.get("python_path")
         if not py:
             raise RuntimeError(
-                f"venv toolkit {toolkit_name!r}: .stk_meta.json missing "
+                f"venv toolkit {toolkit_name!r}: .tb_meta.json missing "
                 "python_path"
             )
         return py

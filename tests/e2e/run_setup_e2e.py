@@ -44,7 +44,7 @@ def _setup_synthetic_install() -> Path:
     """Build a fake installed toolkit at INSTALL_ROOT/toolkits/<name>.
 
     Same pattern as run_restart_e2e.py: copy the toolkit source into
-    place and write a .stk_meta.json that points at the dev venv's
+    place and write a .tb_meta.json that points at the dev venv's
     Python (the synthetic toolkit has no extra deps).
     """
     if WORK_ROOT.exists():
@@ -63,7 +63,7 @@ def _setup_synthetic_install() -> Path:
         "python_path": sys.executable,
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
     }
-    (dest / ".stk_meta.json").write_text(json.dumps(meta, indent=2))
+    (dest / ".tb_meta.json").write_text(json.dumps(meta, indent=2))
     return dest
 
 
@@ -100,9 +100,9 @@ def main() -> int:
         "python_path": sys.executable,
         "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
     }
-    (dest / ".stk_meta.json").write_text(json.dumps(meta, indent=2))
+    (dest / ".tb_meta.json").write_text(json.dumps(meta, indent=2))
     # Also drop the canonical .install_meta.yaml so the cache walker
-    # picks the slot up; the .stk_meta.json carry-along stays for the
+    # picks the slot up; the .tb_meta.json carry-along stays for the
     # serve / setup runner.
     from toolbase.envs import write_install_meta as _wim
     _wim(dest, name=TOOLKIT_NAME, version=version,
