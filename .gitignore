@@ -75,3 +75,8 @@ logs/
 
 # Local toolbase state (if running CLI from repo)
 .toolbase/
+
+# Frozen scitoolkit-era completion summaries; kept on disk as local history,
+# not shipped in the repo. (PLATFORM_DECISIONS.md was promoted to docs/ as a
+# live spec; the rest stay archived locally.)
+docs/archive/

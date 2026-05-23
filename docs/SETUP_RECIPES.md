@@ -1,6 +1,6 @@
 # Toolkit Setup Recipes
 
-> **🚧 ASPIRATIONAL — Phase 3C, not yet implemented.** These recipes use `SetupContext`, `setup.py`, and the `config:` block in toolkit.yaml — none of which exist yet. They show the *intended* author experience. Toolkits that use these patterns today will install but be skipped at serve time with a "setup not yet run" message. Once Phase 3C ships, this banner comes off.
+> **ASPIRATIONAL — Phase 3C, not yet implemented.** These recipes use `SetupContext`, `setup.py`, and the `config:` block in toolkit.yaml — none of which exist yet. They show the *intended* author experience. Toolkits that use these patterns today will install but be skipped at serve time with a "setup not yet run" message. Once Phase 3C ships, this banner comes off.
 
 **Copy-paste solutions for common setup patterns.**
 

@@ -115,7 +115,7 @@ class Manifest:
 _MANIFEST_HEADER_COMMENT = (
     "toolbase project manifest — checked into git.\n"
     "Pin a toolkit with: tb install <name>@<version>\n"
-    "See https://tool-base.org/docs/environments\n"
+    "See https://toolbase-ai.com/docs/environments\n"
 )
 
 

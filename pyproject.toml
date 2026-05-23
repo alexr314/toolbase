@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "MIT"}
 authors = [
-    {name = "Alex Roman"}
+    {name = "Alex Roman", email = "toolbase.dev@gmail.com"}
 ]
 keywords = ["ai", "agents", "tools", "toolkit", "mcp", "orchestral", "registry", "package-manager"]
 classifiers = [

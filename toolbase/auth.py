@@ -403,7 +403,7 @@ class BrowserFlow:
     def __init__(
         self,
         *,
-        web_base: str = "https://tool-base.org",
+        web_base: str = "https://toolbase-ai.com",
         timeout_s: float = BROWSER_FLOW_TIMEOUT_S,
         open_browser: Callable[[str], bool] = webbrowser.open,
     ):
@@ -506,7 +506,7 @@ class BrowserFlow:
 
             def do_OPTIONS(self) -> None:
                 # CORS preflight. Frontend's POST is cross-origin
-                # (tool-base.org → 127.0.0.1) so we must answer this.
+                # (toolbase-ai.com → 127.0.0.1) so we must answer this.
                 self.send_response(204)
                 self._send_cors_headers()
                 self.end_headers()

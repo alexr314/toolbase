@@ -63,7 +63,7 @@ print(f'name={d[\"name\"]}, version={d[\"version\"]}, '
 version=0.1.0, category=other, downloads=N`.
 
 - [ ] Registry confirms toolkit exists with non-empty version
-- [ ] (Optional) browse https://tool-base.org/toolkit/arxiv-search
+- [ ] (Optional) browse https://toolbase-ai.com/toolkit/arxiv-search
       and confirm the detail page renders
 
 ---

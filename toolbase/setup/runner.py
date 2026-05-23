@@ -669,7 +669,7 @@ class _Runner:
             return self._fail_with_subprocess_diag(
                 proc,
                 "setup.py at this toolkit does not define `setup(ctx)`. "
-                "See https://tool-base.org/docs/configuration#setup-script.",
+                "See https://toolbase-ai.com/docs/configuration#setup-script.",
             )
         if self.mode == "validate" and not has_validate:
             # Missing validate(ctx) → trivially passes. (The

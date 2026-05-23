@@ -232,7 +232,7 @@ def validate(ctx: SetupContext) -> bool:
 """
 Setup script for my-toolkit. Runs at install time and via
 `toolbase setup my-toolkit`. The `ctx` argument is a
-SetupContext; full API at https://tool-base.org/docs/configuration#setupcontext-api.
+SetupContext; full API at https://toolbase-ai.com/docs/configuration#setupcontext-api.
 """
 
 

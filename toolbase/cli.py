@@ -1185,7 +1185,7 @@ def ingest(path, output, force, prune, dry_run, yes, no_, no_input):
         "    [dim](If the toolkit isn't registered yet, publish will offer "
         "to register it. To reserve the name first, use "
         "[/dim][cyan]toolbase create[/cyan][dim] or "
-        "[/dim][cyan]https://tool-base.org[/cyan][dim].)[/dim]"
+        "[/dim][cyan]https://toolbase-ai.com[/cyan][dim].)[/dim]"
     )
 
 
@@ -1271,7 +1271,7 @@ def login(toolkit_name, token_flag, yes, no_, no_input):
         toolbase login <toolkit>                # legacy per-toolkit (deprecated)
         toolbase login <toolkit> --token stk_... # legacy paste mode
 
-    The browser-flow opens https://tool-base.org/cli-auth, asks you to
+    The browser-flow opens https://toolbase-ai.com/cli-auth, asks you to
     approve, and writes the resulting per-user token to ~/.toolbase/token.
     Once logged in, tb publish works for any toolkit you have
     permission on — no per-toolkit login required.
@@ -1323,7 +1323,7 @@ def _login_legacy_toolkit(toolkit_name: str, token_flag: Optional[str], mode: st
             )
             console.print(
                 "Get a per-toolkit token from "
-                "[link]https://tool-base.org[/link] (the toolkit's "
+                "[link]https://toolbase-ai.com[/link] (the toolkit's "
                 "management page) if you still need one.\n"
             )
         token = _require_input(
@@ -1394,7 +1394,7 @@ def _login_paste_user_token(token: str, mode: str) -> None:
         console.print(
             "Use [cyan]toolbase login <toolkit-name> --token <token>[/cyan] "
             "for the legacy form, or generate a per-user token at "
-            "[link]https://tool-base.org/profile/cli-tokens[/link]."
+            "[link]https://toolbase-ai.com/profile/cli-tokens[/link]."
         )
         sys.exit(1)
     if not auth.is_user_token(token):
@@ -1456,11 +1456,11 @@ def _login_browser_flow(mode: str) -> None:
         raise click.UsageError(
             "Cannot run the browser-flow login non-interactively. "
             "Generate a per-user token at "
-            "https://tool-base.org/profile/cli-tokens and pass it via "
+            "https://toolbase-ai.com/profile/cli-tokens and pass it via "
             "--token <token>."
         )
 
-    web_base = os.environ.get("TOOLBASE_WEB_URL") or "https://tool-base.org"
+    web_base = os.environ.get("TOOLBASE_WEB_URL") or "https://toolbase-ai.com"
     flow = auth.BrowserFlow(web_base=web_base)
 
     # We don't know the bound port until run() picks one. Print the URL
@@ -1489,7 +1489,7 @@ def _login_browser_flow(mode: str) -> None:
         )
         console.print(
             "Try again, or generate a token manually at "
-            "[link]https://tool-base.org/profile/cli-tokens[/link] and pass "
+            "[link]https://toolbase-ai.com/profile/cli-tokens[/link] and pass "
             "it via [cyan]--token <token>[/cyan]."
         )
         sys.exit(1)
@@ -1653,7 +1653,7 @@ def logout(clean_legacy, yes, no_, no_input):
             )
             console.print(
                 "[dim]To revoke this token on the server side too, visit "
-                "[link]https://tool-base.org/profile/cli-tokens[/link].[/dim]"
+                "[link]https://toolbase-ai.com/profile/cli-tokens[/link].[/dim]"
             )
 
     if clean_legacy:
@@ -2576,9 +2576,9 @@ def publish(dry_run, allow_decrease, yes, no_, no_input):
                         to_version=version,
                     )
                     console.print(
-                        f"[yellow]⚠[/yellow] Publishing {version} which is "
+                        f"[yellow]Warning: publishing {version} which is "
                         f"older than the registry's latest ({latest}). "
-                        "Logged for telemetry."
+                        "Logged for telemetry.[/yellow]"
                     )
                 if gt is None:
                     # Unparseable; not our place to block, registry will
@@ -2712,7 +2712,7 @@ def publish(dry_run, allow_decrease, yes, no_, no_input):
             console.print(f"Version:   {data['version']}")
             console.print(f"Size:      {data['file_size'] / (1024*1024):.2f} MB")
             console.print(f"Published: {data['published_at']}")
-            console.print(f"\nView at: [link]https://tool-base.org/toolkit/{toolkit_name}[/link]")
+            console.print(f"\nView at: [link]https://toolbase-ai.com/toolkit/{toolkit_name}[/link]")
 
         elif response.status_code == 409:
             from .versioning import suggest_next_version

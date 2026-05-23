@@ -473,7 +473,7 @@ toolbase/
 ### Phase 3C-3 (polish)
 
 1. `toolbase init` template includes a sample `config:` block and an optional `setup.py` template.
-2. Documentation update on tool-base.org/docs/configuration and /docs/recipes.
+2. Documentation update on toolbase-ai.com/docs/configuration and /docs/recipes.
 3. Migration helper for the live `arxiv-search` toolkit (it has no config today; this just verifies that no-config toolkits keep working).
 
 ---

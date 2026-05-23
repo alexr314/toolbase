@@ -107,7 +107,7 @@ def _check_skill_frontmatter(skill_path: Path) -> Optional[str]:
     except OSError:
         return None
     fm, _body = parse_frontmatter(text)
-    docs_url = "https://tool-base.org/docs/authoring#skills"
+    docs_url = "https://toolbase-ai.com/docs/authoring#skills"
     if fm is None:
         return (
             f"skills/{skill_path.name}: missing YAML frontmatter. "

@@ -157,7 +157,7 @@ class _FakeFlow:
     def __init__(self, result: auth.BrowserFlowResult, **_kwargs):
         self._result = result
         self.state = "fake-state"
-        self.web_base = _kwargs.get("web_base", "https://tool-base.org")
+        self.web_base = _kwargs.get("web_base", "https://toolbase-ai.com")
 
     def run(self) -> auth.BrowserFlowResult:
         return self._result

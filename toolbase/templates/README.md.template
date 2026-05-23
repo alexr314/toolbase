@@ -45,6 +45,6 @@ If you use this toolkit in your research, please cite:
   author = {Your Name},
   title = { {{name}} },
   year = {2024},
-  url = {https://tool-base.org/toolkit/{{name}}}
+  url = {https://toolbase-ai.com/toolkit/{{name}}}
 }
 ```

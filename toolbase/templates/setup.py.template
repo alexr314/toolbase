@@ -18,7 +18,7 @@ Two functions are recognized:
   message; the user fixes and re-runs.
 
 `ctx` is a SetupContext. Full API:
-https://tool-base.org/docs/configuration#setup-script
+https://toolbase-ai.com/docs/configuration#setup-script
 """
 
 

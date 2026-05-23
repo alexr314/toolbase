@@ -204,7 +204,7 @@ def main(argv: Optional[list] = None) -> int:
                 traceback_str=(
                     f"setup.py at {args.toolkit_dir / 'setup.py'} does not "
                     "define `setup(ctx)`. See "
-                    "https://tool-base.org/docs/configuration#setup-script "
+                    "https://toolbase-ai.com/docs/configuration#setup-script "
                     "(or tb-package/docs/SETUP_SYSTEM_SPEC.md §'Tier 2 — "
                     "script' until that page lands)."
                 ),

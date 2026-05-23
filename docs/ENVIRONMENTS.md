@@ -355,7 +355,7 @@ If you have a `~/.toolbase/config/<toolkit>.yaml` file with values you want, tho
 
 ## Pointers
 
-- **Frontend documentation site:** [tool-base.org/docs/environments](https://tool-base.org/docs/environments) (will mirror this file with extra walkthroughs).
+- **Frontend documentation site:** [toolbase-ai.com/docs/environments](https://toolbase-ai.com/docs/environments) (will mirror this file with extra walkthroughs).
 - **Design doc with rationale:** `docs/ENVIRONMENTS_DESIGN.md` (in the main toolbase project repo).
 - **Setup system (Tier-1 declarative + Tier-2 `setup.py`):** `docs/SETUP_SYSTEM_SPEC.md`.
 - **Serve architecture (per-toolkit subprocess + MCP):** `docs/SERVE_ARCHITECTURE.md`.

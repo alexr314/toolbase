@@ -139,7 +139,7 @@ def test_default_init_yaml_contains_commented_examples(tmp_path):
     assert "type: integer" in yaml_text
     assert "type: choice" in yaml_text
     # And the docs link.
-    assert "https://tool-base.org/docs/configuration" in yaml_text
+    assert "https://toolbase-ai.com/docs/configuration" in yaml_text
 
 
 def test_default_init_substitutes_name_in_default_path(tmp_path):

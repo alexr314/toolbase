@@ -1,7 +1,7 @@
 # toolbase
 
 The package manager and runtime for AI agent tools. Publish toolkits to
-the [Toolbase registry](https://tool-base.org) and use them in coding
+the [Toolbase registry](https://toolbase-ai.com) and use them in coding
 agents (Claude Code, Codex) or any client that speaks the
 [Model Context Protocol](https://modelcontextprotocol.io). Toolkits span
 any domain, from web and data utilities to scientific categories like
@@ -99,12 +99,12 @@ into it). Edits to your tool source appear on the next `tb serve`. If
 you change dependencies, re-run `tb install -e .` to rebuild the env.
 
 For the agent-assisted authoring flow (recommended for first toolkits),
-see <https://tool-base.org/docs/scaffold-with-an-agent>.
+see <https://toolbase-ai.com/docs/scaffold-with-an-agent>.
 
 For the full author guide — toolkit layout, tool conventions, skills,
 groups, expected_toolkits, configuration — see
-<https://tool-base.org/docs/authoring> and
-<https://tool-base.org/docs/configuration>.
+<https://toolbase-ai.com/docs/authoring> and
+<https://toolbase-ai.com/docs/configuration>.
 
 ---
 
@@ -180,7 +180,7 @@ The package has three pieces:
   environments and serves tools.
 - **Backend** ([api.scitoolkit.org](https://api.scitoolkit.org)) —
   registry, auth, tarball storage.
-- **Website** ([tool-base.org](https://tool-base.org)) — discover and
+- **Website** ([toolbase-ai.com](https://toolbase-ai.com)) — discover and
   manage published toolkits.
 
 Each installed toolkit runs in its own subprocess in its own Python
@@ -203,7 +203,7 @@ MIT. See [LICENSE](LICENSE).
 
 ## Links
 
-- Website: <https://tool-base.org>
+- Website: <https://toolbase-ai.com>
 - Backend API: <https://api.scitoolkit.org>
 - GitHub: <https://github.com/alexr314/toolbase>
 - Issues: <https://github.com/alexr314/toolbase/issues>

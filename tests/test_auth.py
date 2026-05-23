@@ -381,7 +381,7 @@ def test_browser_flow_options_returns_cors_headers():
     """OPTIONS preflight must reply with the expected CORS headers."""
     import urllib.request
 
-    flow = auth.BrowserFlow(web_base="https://tool-base.org", timeout_s=10.0)
+    flow = auth.BrowserFlow(web_base="https://toolbase-ai.com", timeout_s=10.0)
     flow._open_browser = lambda url: True  # type: ignore
 
     captured: list[str] = []
@@ -408,7 +408,7 @@ def test_browser_flow_options_returns_cors_headers():
     req = urllib.request.Request(callback_url, method="OPTIONS")
     with urllib.request.urlopen(req, timeout=2.0) as resp:
         assert resp.status == 204
-        assert resp.headers.get("Access-Control-Allow-Origin") == "https://tool-base.org"
+        assert resp.headers.get("Access-Control-Allow-Origin") == "https://toolbase-ai.com"
         assert "POST" in resp.headers.get("Access-Control-Allow-Methods", "")
 
     # End the flow with a denial so the test thread exits.

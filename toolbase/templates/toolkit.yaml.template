@@ -32,7 +32,7 @@ tools:
 #   3. Prompts are scaffolding. `--no-input` and non-TTY contexts
 #      always work; flag-equivalence with `toolbase config set`.
 #
-# Documentation: https://tool-base.org/docs/configuration
+# Documentation: https://toolbase-ai.com/docs/configuration
 #
 # config:
 #   # Required secret (e.g. an API key). Hidden on prompt, masked in

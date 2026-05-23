@@ -193,7 +193,7 @@ class TestNextStepsBanner:
         assert result.exit_code == 0, result.output
         # The optional name-reservation paths are still mentioned.
         assert "toolbase create" in result.output
-        assert "tool-base.org" in result.output
+        assert "toolbase-ai.com" in result.output
         # The three plain steps.
         assert "toolbase validate" in result.output
         assert "toolbase login" in result.output

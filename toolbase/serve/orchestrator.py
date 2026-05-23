@@ -6,12 +6,19 @@ Responsibilities:
 1. Discover installed toolkits via ``~/.toolbase/toolkits/*/.tb_meta.json``.
 2. Classify each as ready / skipped (docker, needs_setup, broken).
 3. Print a scannable startup banner.
-4. Spawn one subprocess per ready toolkit, using that toolkit's interpreter.
-5. Read each subprocess's handshake (port + tool list) from its stdout.
-6. Connect an MCPClient (HTTP) to each subprocess.
-7. Build proxy tools (namespaced ``<toolkit>__<tool>``) and aggregate them.
-8. Start ``orchestral.mcp.MCPServer`` on stdio (Claude Code talks to it).
-9. On shutdown, send graceful → SIGTERM → SIGKILL to children.
+4. For each ready toolkit, hand the spawn argv to an Orchestral 1.4
+   ``MCPClient`` in stdio mode; the client owns the subprocess and the
+   wire is the subprocess's own stdin/stdout pipe (no port, no HTTP).
+5. ``MCPClient.connect()`` spawns the host and completes the MCP handshake.
+6. Build proxy tools (namespaced ``<toolkit>__<tool>``) and aggregate them.
+7. Start ``orchestral.mcp.MCPServer`` on stdio (Claude Code talks to it).
+8. On shutdown, disconnect each client (which terminates its subprocess).
+
+Transport note: the orchestrator↔subprocess wire is **persistent stdio**
+(the client holds one long-lived session per toolkit). The HTTP-loopback
+design — port-bind handshake, FastMCP, ``_wait_for_port_ready`` — was
+retired in 0.4.1. See ``docs/SERVE_ARCHITECTURE.md`` (carries a superseded
+banner) for the historical HTTP rationale.
 
 Out of scope for the MVP (deferred per direction):
 
@@ -24,7 +31,7 @@ Implemented post-MVP:
 - Auto-restart of crashed per-toolkit subprocesses with exponential
   backoff (1s, 4s, 16s; budget 3). See §3.3 of SERVE_ARCHITECTURE.md.
 
-See ``tb-package/docs/SERVE_ARCHITECTURE.md`` for the full design.
+See ``docs/SERVE_ARCHITECTURE.md`` for the full design.
 """
 
 from __future__ import annotations
@@ -48,17 +55,16 @@ from ..envs.cache import LEGACY_META_FILE
 from ..logging.logger import ToolLogger, get_logger
 
 
-HOST_HANDSHAKE_TIMEOUT_S = 15.0  # generous; conda startup can be slow
-# After the host emits its handshake JSON, FastMCP still has to finish
-# binding the port and accepting connections — there's a tiny window
-# where the port is reported but not yet listening. A subsequent
-# ``MCPClient.connect()`` can race that window and fail with
-# ``httpx.ConnectError``. We poll the port for accept-readiness with this
-# total budget before giving up. In practice it resolves in <100 ms.
-HOST_PORT_READY_TIMEOUT_S = 5.0
-# The MCPClient's `timeout` parameter governs *both* the initial HTTP
+# NOTE 2026-05-22: ``HOST_HANDSHAKE_TIMEOUT_S`` and ``HOST_PORT_READY_TIMEOUT_S``
+# were removed here — dead HTTP-loopback constants the 0.4.1 stdio cutover
+# left behind (defined, referenced nowhere). With stdio there is no port to
+# poll for accept-readiness; ``MCPClient.connect()`` completes the MCP
+# handshake over the subprocess's own pipes. See the retirement note further
+# down (``_wait_for_port_ready``/``_start_stderr_pump``).
+#
+# The MCPClient's `timeout` parameter governs *both* the initial stdio
 # connect and each subsequent call. We default it to 60 s so long-running
-# scientific calls don't fail prematurely.
+# tool calls don't fail prematurely.
 #
 # History (2026-05-06): the original code passed a `MCP_CONNECT_TIMEOUT_S
 # = 10.0` constant here, which Orchestral applied as the per-call timeout

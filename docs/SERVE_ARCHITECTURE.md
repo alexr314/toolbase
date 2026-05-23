@@ -1,6 +1,21 @@
 # `toolbase serve` — Architecture (Implemented)
 
-> **✅ IMPLEMENTED as of 2026-05-05 (MVP).** This document is the canonical reference for how serve works. The architecture described here is the shipped architecture. Sections explicitly marked "later" or "deferred" (TUI, restart logic, `--call-timeout` flag) are still future work; the rest is live.
+> **SUPERSEDED (transport):** The orchestrator↔subprocess transport is now
+> **persistent stdio** — an Orchestral 1.4 `MCPClient` in stdio mode owns each
+> per-toolkit subprocess, and the wire is the subprocess's own stdin/stdout
+> pipe. **HTTP-loopback (the port-bind handshake, FastMCP HTTP server,
+> `_wait_for_port_ready`, the `127.0.0.1:<port>/mcp` URL) was retired in
+> scitoolkit 0.4.1** (~250 LOC removed). Everything below that describes
+> "MCP-over-HTTP between orchestrator and subprocesses" — the TL;DR diagram,
+> §1.2, §1.3's port handshake, §2.2's `MCPClient(url=...)` — is **retained as
+> historical rationale, not current design.** The process model (orchestrator +
+> per-toolkit subprocess in its own interpreter), the upstream MCP-stdio server,
+> the namespacing, the lifecycle/restart policy, and the failure-mode table are
+> all still accurate. When in doubt, the live source
+> (`toolbase/serve/orchestrator.py`) is canonical; its module docstring records
+> the stdio reality.
+
+> **IMPLEMENTED as of 2026-05-05 (MVP).** This document is the canonical reference for how serve works. The architecture described here is the shipped architecture. Sections explicitly marked "later" or "deferred" (TUI, restart logic, `--call-timeout` flag) are still future work; the rest is live.
 
 **Status:** Implemented (Phase 3A complete)
 **Author:** Package Agent
