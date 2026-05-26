@@ -18,8 +18,10 @@ from pathlib import Path
 # Default API base URL.  Override at run-time via the ``TOOLBASE_API_URL``
 # environment variable (used in tests and staging environments).
 # Do NOT change this value without a separate cutover task — it points at
-# the live backend.
-DEFAULT_API_URL = "https://api.scitoolkit.org"
+# the live backend.  (Cut over from the legacy ``api.scitoolkit.org`` host on
+# 2026-05-23; that host still serves in parallel for now, but this is the
+# canonical one.)
+DEFAULT_API_URL = "https://api.toolbase-ai.com"
 
 
 def _api_url() -> str:
