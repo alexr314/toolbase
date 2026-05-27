@@ -7,8 +7,8 @@ license: MIT
 homepage: https://github.com/yourusername/{{name}}
 category: other  # Options: astro, hep, quantum, neutrino, bio, chem, materials, utils, other
 keywords:
-  - science
-  - research
+  - tools
+  - agents
 python_version: "3.12"
 
 tools:

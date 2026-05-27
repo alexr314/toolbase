@@ -1,8 +1,8 @@
 """
-Toolbase CLI - Command-line interface for managing scientific agentic toolkits.
+Toolbase CLI - Command-line interface for managing AI agent toolkits.
 
 This module provides the main CLI commands for creating, validating, publishing,
-installing, and managing scientific toolkits.
+installing, and managing toolkits.
 """
 
 import click
@@ -401,9 +401,10 @@ class _SectionedGroup(click.Group):
 )
 def main():
     """
-    Toolbase - Scientific agentic tools made easy
+    Toolbase - AI agent toolkits made easy
 
-    A platform for creating, publishing, and using AI tools for science.
+    The community registry and CLI for AI agent toolkits: create, publish,
+    install, and serve tools to AI agents over MCP, across any domain.
     """
     # Phase 6 cutover messaging: surface a one-time-per-invocation heads-up
     # on stderr when the 0.4.x install layout is detected on disk. Stderr
@@ -4870,7 +4871,7 @@ class _ServeGroup(click.Group):
     metavar='SECONDS',
     help=(
         'Per-tool-call timeout in seconds. Defaults to 60. Bump this for '
-        'long-running scientific workflows; the orchestrator will fail a '
+        'long-running workflows; the orchestrator will fail a '
         'call rather than block the agent forever if a tool wedges.'
     ),
 )

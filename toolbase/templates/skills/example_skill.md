@@ -35,7 +35,7 @@ A typical session looks like:
 - The tools return JSON strings — parse before quoting fields, don't grep.
 - Surface only the fields the user asked for; raw payloads are noisy.
 - When confidence is low, tell the user explicitly rather than padding with
-  filler. Scientific users prefer "I'm not sure, here's what I found" over
+  filler. Users prefer "I'm not sure, here's what I found" over
   fabricated certainty.
 
 ## What to skip

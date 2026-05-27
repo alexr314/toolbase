@@ -1,14 +1,14 @@
 """
-Toolbase - A Community Repository for Scientific Agentic Tools
+Toolbase - The community registry and CLI for AI agent toolkits
 
 Toolbase provides a centralized platform for discovering, sharing, and using
-scientific tools for AI agents. Think of it as an app store for scientific
-agentic tools across domains like astrophysics, high-energy physics, quantum
-computing, and more.
+tools for AI agents. Think of it as an app store for agent toolkits across any
+domain - from general-purpose utilities to specialized fields like astrophysics,
+high-energy physics, and quantum computing.
 
 Features:
 - Easy tool creation and sharing
-- Curated categories by scientific domain
+- Curated categories across domains
 - MCP (Model Context Protocol) compatibility
 - Integration with Orchestral AI and other agent frameworks
 """

@@ -4,7 +4,7 @@
 orchestral-ai>=1.0.0
 
 # Add your toolkit-specific dependencies below, one per line
-# Example scientific computing packages:
+# Example packages (scientific computing shown here; use whatever your tools need):
 # numpy>=1.24.0
 # scipy>=1.11.0
 # astropy>=5.0

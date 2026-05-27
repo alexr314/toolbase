@@ -136,7 +136,7 @@ def create_toolkit_from_template(
         yaml_content = f"""name: {name}
 version: {version}
 category: {registry_metadata.get('category', 'other')}
-description: {registry_metadata.get('description', 'A scientific toolkit')}
+description: {registry_metadata.get('description', 'A toolkit for AI agents')}
 author: {registry_metadata.get('author', author or 'Your Name')}
 license: {registry_metadata.get('license', 'MIT')}
 homepage: {homepage}
@@ -383,5 +383,5 @@ def format_keywords_yaml(keywords: list) -> str:
         YAML-formatted string
     """
     if not keywords:
-        return "  - science\n  - research"
+        return "  - tools\n  - agents"
     return "\n".join(f"  - {kw}" for kw in keywords)
