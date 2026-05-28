@@ -343,7 +343,7 @@ class _SectionedGroup(click.Group):
         (
             "Installing & serving",
             ["search", "install", "uninstall", "list", "activate",
-             "deactivate", "serve", "logs"],
+             "deactivate", "serve", "connect", "disconnect", "logs"],
         ),
         (
             "Configuration",
@@ -5626,6 +5626,236 @@ def profile_tools(toolkit):
                 "(implicit form); the full list is available at serve "
                 "time.[/dim]"
             )
+
+
+# ── tb connect: wire toolbase into an agent client ─────────────────────
+
+
+def _resolve_connect_scope(global_scope: bool, local_scope: bool):
+    """Connect scope -> (scope, project_root). Default is user (-g); -l
+    writes the project's team-shared config. Explicit by design — writing
+    into a repo's shared config is a deliberate act."""
+    if global_scope and local_scope:
+        raise click.UsageError(
+            "-g/--global and -l/--local are mutually exclusive."
+        )
+    if local_scope:
+        root, _src = _resolve_active_project_root()
+        return "project", root
+    return "user", None
+
+
+def _toolbase_command(abspath: bool) -> str:
+    """The command string to write into the client config.
+
+    Default is the bare ``toolbase`` (PATH-resolved, portable across
+    machines — important for team-shared project configs). ``--abspath``
+    writes the resolved absolute path of the current binary.
+    """
+    if not abspath:
+        return "toolbase"
+    import shutil
+    resolved = shutil.which("toolbase")
+    return resolved or "toolbase"
+
+
+@main.command()
+@click.argument('client', required=False)
+@_scope_flags
+@click.option('--profile', 'profile_name', default=None, metavar='NAME',
+              help='Also set NAME as the active profile (writes default.profile).')
+@click.option('--remove', 'remove', is_flag=True, default=False,
+              help='Remove the toolbase entry from the client config.')
+@click.option('--dry-run', 'dry_run', is_flag=True, default=False,
+              help='Print the intended write without changing anything.')
+@click.option('--abspath', 'abspath', is_flag=True, default=False,
+              help='Write the absolute toolbase binary path instead of relying on PATH.')
+@click.option('--list', 'do_list', is_flag=True, default=False,
+              help='Show where toolbase is wired across clients, then exit.')
+@click.option('--clients', 'do_clients', is_flag=True, default=False,
+              help='List available client adapters and detection status, then exit.')
+def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
+            abspath, do_list, do_clients):
+    """Wire toolbase into an agent client's MCP config.
+
+    \b
+    Examples:
+        tb connect claude-code              # user scope (~/.claude.json)
+        tb connect claude-code -l           # project scope (.mcp.json)
+        tb connect claude-code -l --profile paper
+        tb connect claude-code --remove
+        tb connect --list                   # where is toolbase wired?
+        tb connect --clients                # which clients are supported?
+    """
+    from .connect import (
+        get_adapter, all_adapters, available_adapter_names,
+    )
+    from .connect.claude_code import ClaudeCodeConfigError
+
+    if do_clients:
+        for ad in all_adapters():
+            avail = ad.is_available()
+            mark = "[green]✓[/green]" if avail.detected else "[dim]·[/dim]"
+            console.print(f"{mark} [cyan]{ad.name}[/cyan] [dim]({avail.detail})[/dim]")
+        return
+
+    if do_list:
+        project_root, _src = _resolve_active_project_root()
+        _connect_print_status(all_adapters(), project_root)
+        return
+
+    if client is None:
+        console.print(
+            "[red]Specify a client, e.g. [cyan]tb connect claude-code[/cyan], "
+            "or use --list / --clients.[/red]"
+        )
+        sys.exit(2)
+
+    try:
+        adapter = get_adapter(client)
+    except KeyError:
+        console.print(
+            f"[red]Unknown client '{client}'. Available: "
+            f"{', '.join(available_adapter_names())}.[/red]"
+        )
+        sys.exit(2)
+
+    scope, project_root = _resolve_connect_scope(global_scope, local_scope)
+
+    if remove:
+        try:
+            removed = adapter.uninstall(
+                scope=scope, project_root=project_root, server_name="toolbase",
+            )
+        except ClaudeCodeConfigError as e:
+            console.print(f"[red]✗ {e}[/red]")
+            sys.exit(1)
+        path = adapter.config_path(scope, project_root)
+        if removed:
+            console.print(f"[green]✓[/green] Removed toolbase from {path}.")
+        else:
+            console.print(f"[dim]No toolbase entry in {path}; nothing to remove.[/dim]")
+        return
+
+    command = _toolbase_command(abspath)
+    try:
+        path = adapter.install(
+            scope=scope, project_root=project_root, server_name="toolbase",
+            command=command, args=["serve"], dry_run=dry_run,
+        )
+    except ClaudeCodeConfigError as e:
+        console.print(f"[red]✗ {e}[/red]")
+        sys.exit(1)
+    except ValueError as e:
+        console.print(f"[red]✗ {e}[/red]")
+        sys.exit(2)
+
+    if dry_run:
+        console.print(f"[dim]Would write toolbase ({command} serve) to {path}.[/dim]")
+        return
+
+    console.print(f"[green]✓[/green] Wired toolbase into {client} at {path}.")
+
+    # --profile: set the active profile in the matching serve.yaml scope.
+    if profile_name is not None:
+        _connect_set_profile(profile_name, scope, project_root)
+
+    if scope == "project":
+        console.print(
+            "[dim]Note: Claude Code shows a one-time approval prompt the "
+            "first time a project's .mcp.json is opened — this is Claude's "
+            "security model. Teammates who clone the repo see it once.[/dim]"
+        )
+
+
+def _connect_set_profile(profile_name, scope, project_root) -> None:
+    """Validate + write default.profile into the matching serve.yaml."""
+    from .serve.profiles import discover_profiles
+    from .serve.config import load_serve_config, save_serve_config
+    from .envs.paths import user_serve_config_path, project_serve_config_path
+    from .serve.profile_scaffold import default_project_root as _dpr
+
+    found = discover_profiles(project_root)
+    if profile_name not in found:
+        console.print(
+            f"[yellow]Wired, but no profile named '{profile_name}' exists "
+            "— default.profile not set. Create it with "
+            f"[cyan]tb profile create {profile_name}[/cyan].[/yellow]"
+        )
+        return
+    if scope == "user":
+        path = user_serve_config_path()
+    else:
+        root = project_root if project_root is not None else _dpr()
+        path = project_serve_config_path(root)
+    cfg = load_serve_config(path)
+    cfg.default.profile = profile_name
+    save_serve_config(cfg, path)
+    console.print(f"[green]✓[/green] Active profile set to '{profile_name}'.")
+
+
+def _connect_print_status(adapters, project_root) -> None:
+    """Render `tb connect --list`: registrations + a binary freshness check."""
+    import shutil
+    any_present = False
+    console.print("\n[bold]toolbase client registrations:[/bold]")
+    for ad in adapters:
+        for entry in ad.status(project_root):
+            if entry.present:
+                any_present = True
+                console.print(
+                    f"  [green]✓[/green] [cyan]{entry.client}[/cyan] "
+                    f"[dim]({entry.scope})[/dim]  {entry.path}  "
+                    f"[dim]-> {entry.command} "
+                    f"{' '.join(entry.args or [])}[/dim]"
+                )
+            else:
+                console.print(
+                    f"  [dim]·[/dim] [dim]{entry.client} ({entry.scope}): "
+                    f"not wired ({entry.path})[/dim]"
+                )
+    if not any_present:
+        console.print("  [dim](toolbase is not wired into any client yet)[/dim]")
+        console.print(
+            "\nWire it with [cyan]tb connect claude-code[/cyan]."
+        )
+        return
+    # Freshness: does the PATH-resolved toolbase match what's wired?
+    which = shutil.which("toolbase")
+    console.print(
+        f"\n[dim]Current `toolbase` on PATH: {which or '(not found!)'}[/dim]"
+    )
+
+
+@main.command()
+@click.argument('client')
+@_scope_flags
+def disconnect(client, global_scope, local_scope):
+    """Remove toolbase from a client config (alias for `tb connect --remove`)."""
+    from .connect import get_adapter, available_adapter_names
+    from .connect.claude_code import ClaudeCodeConfigError
+
+    try:
+        adapter = get_adapter(client)
+    except KeyError:
+        console.print(
+            f"[red]Unknown client '{client}'. Available: "
+            f"{', '.join(available_adapter_names())}.[/red]"
+        )
+        sys.exit(2)
+    scope, project_root = _resolve_connect_scope(global_scope, local_scope)
+    try:
+        removed = adapter.uninstall(
+            scope=scope, project_root=project_root, server_name="toolbase",
+        )
+    except ClaudeCodeConfigError as e:
+        console.print(f"[red]✗ {e}[/red]")
+        sys.exit(1)
+    path = adapter.config_path(scope, project_root)
+    if removed:
+        console.print(f"[green]✓[/green] Removed toolbase from {path}.")
+    else:
+        console.print(f"[dim]No toolbase entry in {path}; nothing to remove.[/dim]")
 
 
 @main.command()
