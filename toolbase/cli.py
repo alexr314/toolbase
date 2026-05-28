@@ -4252,8 +4252,8 @@ def install(name, version, global_scope, local_scope, editable, no_skills, activ
                                 )
 
     console.print(f"\n[bold]Ready to use! Try:[/bold]")
+    console.print(f"  [cyan]tb activate {name}[/cyan]   # expose it to the agent")
     console.print(f"  [cyan]tb list[/cyan]")
-    console.print(f"  [cyan]tb serve {name}[/cyan]")
     console.print()
 
 
