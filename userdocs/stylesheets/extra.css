@@ -1,0 +1,29 @@
+/* Brand palette, taken from the toolbase logo: black + teal-blue.
+ *
+ * The teal hex below is an approximation of the logo color — if you have
+ * the exact brand value, change --tb-teal in one place and it propagates.
+ */
+:root {
+  --tb-teal: #1a8cbe;
+  --tb-teal-dark: #15729c;
+  --tb-teal-bright: #1aa3d8;
+  --tb-ink: #111418;
+}
+
+/* Light scheme: teal as the primary (header/links) + near-black text. */
+[data-md-color-scheme="default"] {
+  --md-primary-fg-color: var(--tb-teal);
+  --md-primary-fg-color--light: var(--tb-teal-bright);
+  --md-primary-fg-color--dark: var(--tb-teal-dark);
+  --md-accent-fg-color: var(--tb-teal-dark);
+  --md-typeset-a-color: var(--tb-teal-dark);
+}
+
+/* Dark scheme: the logo's black, with teal accents. */
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: var(--tb-ink);
+  --md-primary-fg-color--light: var(--tb-teal);
+  --md-primary-fg-color--dark: #000000;
+  --md-accent-fg-color: var(--tb-teal-bright);
+  --md-typeset-a-color: var(--tb-teal-bright);
+}
