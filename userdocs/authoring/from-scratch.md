@@ -1,9 +1,11 @@
-# Create & declare tools
+# Start from scratch
+
+Your first toolkit, from the template.
 
 ## Scaffold
 
 ```bash
-tb init my-toolkit            # creates toolkit.yaml, tools/, mcp/, skills/
+tb init my-toolkit                # creates toolkit.yaml, tools/, mcp/, skills/
 tb init my-toolkit --with-setup   # also add a setup.py (heavier setup)
 tb init my-toolkit --with-docker  # also add a Dockerfile
 ```
@@ -23,10 +25,11 @@ def add(a: float, b: float) -> str:
     return json.dumps({"sum": a + b})
 ```
 
-Type hints become the tool's input schema; the docstring is what the agent
-sees. Return a JSON string, not a dict.
+Type hints become the input schema; the docstring is what the agent sees.
 
-## Declare tools in `toolkit.yaml`
+## Declare it
+
+List each tool in `toolkit.yaml`:
 
 ```yaml
 tools:
@@ -36,19 +39,10 @@ tools:
     bundle: basic                  # optional
 ```
 
-Or generate the list from your code and keep it in sync:
+Don't want to hand-write the list? `tb ingest` generates it from your code —
+see [From existing tools](existing-tools.md).
 
-```bash
-tb ingest            # write/update toolkit.yaml's tools: from tools/
-tb ingest --prune    # also drop entries whose source is gone
-tb ingest --force    # rebuild from scratch
-```
-
-`ingest` preserves your hand-edits (descriptions, `bundle:`) on a re-sync.
-
-## Group tools into bundles
-
-Declare bundles and tag tools with `bundle:`:
+## Group into bundles
 
 ```yaml
 bundles:
@@ -64,8 +58,7 @@ tools:
     bundle: scientific
 ```
 
-Tools with no `bundle:` are always served. Gating a bundle on config is in
-[Config & setup](config-and-setup.md).
+Tools with no `bundle:` are always served.
 
 ## Next
 

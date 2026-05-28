@@ -1,21 +1,23 @@
-# Authoring overview
+# Authoring a toolkit
 
-Writing a toolkit, end to end:
+Two ways in, depending on where you're starting:
 
-```bash
-tb init my-toolkit          # scaffold from template
-cd my-toolkit
-# write tools in tools/, declare them in toolkit.yaml (or run `tb ingest`)
-tb validate                 # check structure
-tb login                    # one-time registry auth
-tb publish                  # package + upload
+- **[Start from scratch](from-scratch.md)** — your first toolkit. `tb init`
+  scaffolds a template; you write tools and declare them.
+- **[From existing tools](existing-tools.md)** — you already have a codebase of
+  Orchestral `@define_tool` functions. `tb ingest` discovers them and writes
+  the `toolkit.yaml` for you, without moving your code.
+
+Both paths then share the same steps:
+
+1. [Config & setup](config-and-setup.md) — values the user supplies, gated
+   bundles, heavier setup.
+2. [Validate & publish](publish.md) — validate, authenticate, ship.
+
+```
+init  /  ingest  →  (config, bundles)  →  validate  →  login  →  publish
 ```
 
-The pieces:
-
-1. [Create & declare tools](create-and-declare.md) — scaffold, write tools, list them (and group into bundles).
-2. [Config & setup](config-and-setup.md) — declare config the user fills in, gate bundles on it, and handle heavier setup.
-3. [Validate & publish](publish.md) — validate, authenticate, ship.
-
-Develop against a live install with `tb install -e . -a` — see
-[Multi-version & editable](../guides/multi-version-and-editable.md).
+Develop against a live install instead of publish→install round-trips with
+`tb install -e . -a` — see
+[editable installs](../guides/multi-version-and-editable.md).

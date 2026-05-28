@@ -77,7 +77,8 @@ nav:
       - Multi-version & editable: guides/multi-version-and-editable.md
   - Authoring:
       - Overview: authoring/overview.md
-      - Create & declare tools: authoring/create-and-declare.md
+      - Start from scratch: authoring/from-scratch.md
+      - From existing tools: authoring/existing-tools.md
       - Config & setup: authoring/config-and-setup.md
       - Validate & publish: authoring/publish.md
   - Reference:
