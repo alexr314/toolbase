@@ -254,6 +254,97 @@ def test_validate_no_warning_for_complete_frontmatter(tmp_path: Path):
     assert not any("good.md" in w and "frontmatter" in w for w in result.warnings)
 
 
+# ── bundle scoping ───────────────────────────────────────────────────────────
+
+
+def test_parse_frontmatter_bundle():
+    text = "---\nname: N\ndescription: D\nbundle: symbolic\n---\nbody\n"
+    fm, _ = skills.parse_frontmatter(text)
+    assert fm is not None
+    assert fm.bundle == "symbolic"
+
+
+def test_parse_frontmatter_no_bundle_defaults_none():
+    text = "---\nname: N\ndescription: D\n---\nbody\n"
+    fm, _ = skills.parse_frontmatter(text)
+    assert fm is not None
+    assert fm.bundle is None
+
+
+def test_install_skips_bundle_skill_when_bundle_unavailable(tmp_path: Path):
+    tk = _make_toolkit(
+        tmp_path, "tk",
+        ("core.md", "---\nname: Core\ndescription: d.\n---\nbody\n"),
+        ("pro.md", "---\nname: Pro\ndescription: d.\nbundle: pro\n---\nbody\n"),
+    )
+    out = tmp_path / "claude"
+    surfaced = skills.install_skills_for_toolkit(
+        "tk", tk, skills_dir=out, available_bundles={"basic"},
+    )
+    # Unbundled skill surfaces; the 'pro'-scoped skill is gated out.
+    assert surfaced == ["tk__core"]
+    assert (out / "tk__core" / "SKILL.md").exists()
+    assert not (out / "tk__pro").exists()
+
+
+def test_install_surfaces_bundle_skill_when_bundle_available(tmp_path: Path):
+    tk = _make_toolkit(
+        tmp_path, "tk",
+        ("pro.md", "---\nname: Pro\ndescription: d.\nbundle: pro\n---\nbody\n"),
+    )
+    out = tmp_path / "claude"
+    surfaced = skills.install_skills_for_toolkit(
+        "tk", tk, skills_dir=out, available_bundles={"pro"},
+    )
+    assert surfaced == ["tk__pro"]
+
+
+def test_install_no_gating_surfaces_bundle_skill(tmp_path: Path):
+    # available_bundles=None (default) disables gating — back-compat.
+    tk = _make_toolkit(
+        tmp_path, "tk",
+        ("pro.md", "---\nname: Pro\ndescription: d.\nbundle: pro\n---\nbody\n"),
+    )
+    out = tmp_path / "claude"
+    surfaced = skills.install_skills_for_toolkit("tk", tk, skills_dir=out)
+    assert surfaced == ["tk__pro"]
+
+
+def test_validate_errors_on_skill_bundle_not_declared(tmp_path: Path):
+    tk = _make_minimal_valid_toolkit(tmp_path, "demo-tk")  # no bundles: block
+    (tk / "skills" / "pro.md").write_text(
+        "---\nname: Pro\ndescription: d.\nbundle: pro\n---\nbody\n"
+    )
+    result = validation.validate_toolkit(tk)
+    assert not result.is_valid
+    assert any("pro.md" in e and "pro" in e for e in result.errors)
+
+
+def test_validate_ok_when_skill_bundle_declared(tmp_path: Path):
+    tk = _make_minimal_valid_toolkit(tmp_path, "demo-tk")
+    (tk / "toolkit.yaml").write_text(
+        "name: demo-tk\n"
+        "version: 0.1.0\n"
+        "description: A toolkit\n"
+        "author: Test\n"
+        "category: utils\n"
+        "bundles:\n"
+        "  pro: {}\n"
+        "tools:\n"
+        "  - name: example\n"
+        "    function: tools.example\n"
+        "    description: Example tool.\n"
+        "    bundle: pro\n"
+    )
+    (tk / "skills" / "pro.md").write_text(
+        "---\nname: Pro\ndescription: d.\nbundle: pro\n---\nbody\n"
+    )
+    result = validation.validate_toolkit(tk)
+    assert not any(
+        "pro.md" in e and "not" in e for e in result.errors
+    ), result.errors
+
+
 def _make_minimal_valid_toolkit(tmp_path: Path, name: str) -> Path:
     """Build a toolkit dir that satisfies the rest of validate_toolkit
     so we can isolate the skills-frontmatter warnings.

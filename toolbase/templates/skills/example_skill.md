@@ -1,6 +1,7 @@
 ---
 name: Using {{name}} for typical tasks
 description: When and how to reach for {{name}}'s tools, with concrete usage tips for common research workflows.
+# bundle: <name>   # optional: scope this skill to a bundle (surfaced only when that bundle is available)
 ---
 
 # Using {{name}}
