@@ -14,16 +14,16 @@ theme:
   name: material
   # Brand colors (teal + black) are defined in stylesheets/extra.css via
   # custom CSS variables; the palette below selects the "custom" slot.
+  # Light is the default (first entry, no prefers-color-scheme media); the
+  # toggle switches to dark and the choice persists.
   palette:
-    - media: "(prefers-color-scheme: light)"
-      scheme: default
+    - scheme: default
       primary: custom
       accent: custom
       toggle:
         icon: material/weather-night
         name: Switch to dark mode
-    - media: "(prefers-color-scheme: dark)"
-      scheme: slate
+    - scheme: slate
       primary: custom
       accent: custom
       toggle:
@@ -40,6 +40,9 @@ theme:
     - search.suggest
     - search.highlight
     - toc.follow
+    # Fold the page's table of contents into the left nav (under the active
+    # page) instead of a separate right-hand column.
+    - toc.integrate
 
 markdown_extensions:
   - admonition
@@ -64,7 +67,6 @@ extra_css:
 
 nav:
   - Home: index.md
-  - Getting started: getting-started.md
   - Guides:
       - Install & activate: guides/install-and-activate.md
       - Curating tools: guides/curating-tools.md
@@ -83,5 +85,5 @@ nav:
       - Files & layout: reference/files-and-layout.md
       - Vocabulary & scopes: reference/vocabulary-and-scopes.md
       - Schemas: reference/schemas.md
-  - How it works: explanation.md
+  - Concepts: explanation.md
   - Troubleshooting: troubleshooting.md
