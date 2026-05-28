@@ -3534,6 +3534,35 @@ def _write_path_install_meta(
         pass
 
 
+def _available_bundles_for_surface(name: str, toolkit_dir: Path):
+    """Bundles whose config requirements are met, for skill surfacing.
+
+    Returns ``None`` when the toolkit declares no ``bundles:`` block (no
+    gating — surface every skill). Otherwise returns the set of available
+    bundle names, evaluated against the resolved two-layer config, so a
+    skill scoped to an unconfigured bundle isn't surfaced — the same
+    availability the orchestrator uses to drop the bundle's tools.
+    """
+    try:
+        import yaml as _yaml
+        data = _yaml.safe_load(
+            (toolkit_dir / "toolkit.yaml").read_text(encoding="utf-8")
+        ) or {}
+    except Exception:
+        return None
+    bundles_block = data.get("bundles")
+    if not isinstance(bundles_block, dict) or not bundles_block:
+        return None
+    try:
+        from .serve.bundles import evaluate_bundles
+        from .envs.config import resolve_toolkit_config
+        project_root, _src = _resolve_active_project_root()
+        resolved = resolve_toolkit_config(name, project_root)
+    except Exception:
+        resolved = {}
+    return set(evaluate_bundles(bundles_block, resolved).available_bundles)
+
+
 def _surface_skills_best_effort(name: str, slot: Path, no_skills: bool) -> None:
     """Surface a toolkit's skills into ~/.claude/skills/ (best-effort)."""
     skills_dir = slot / "skills"
@@ -3550,7 +3579,9 @@ def _surface_skills_best_effort(name: str, slot: Path, no_skills: bool) -> None:
     )
     try:
         from .skills import install_skills_for_toolkit, CLAUDE_SKILLS_DIR
-        surfaced = install_skills_for_toolkit(name, slot)
+        surfaced = install_skills_for_toolkit(
+            name, slot, available_bundles=_available_bundles_for_surface(name, slot)
+        )
         if surfaced:
             console.print(
                 f"[dim]Surfaced to {CLAUDE_SKILLS_DIR}/ "
@@ -4068,7 +4099,10 @@ def install(name, version, global_scope, local_scope, editable, no_skills, activ
         if not no_skills:
             try:
                 from .skills import install_skills_for_toolkit, CLAUDE_SKILLS_DIR
-                surfaced = install_skills_for_toolkit(name, toolkit_dir)
+                surfaced = install_skills_for_toolkit(
+                    name, toolkit_dir,
+                    available_bundles=_available_bundles_for_surface(name, toolkit_dir),
+                )
                 if surfaced:
                     console.print(
                         f"[dim]Surfaced to {CLAUDE_SKILLS_DIR}/ "

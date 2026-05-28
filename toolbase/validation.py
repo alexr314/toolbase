@@ -752,26 +752,27 @@ def validate_toolkit(toolkit_path: Path) -> ValidationResult:
             # can index it. Warning-only — backward compat with toolkits
             # that predate the requirement; the install-time surfacer
             # synthesizes frontmatter when missing.
+            declared_bundles = set((metadata.bundles or {}).keys()) if metadata else set()
             for sf in skill_files:
                 fm_problem = _check_skill_frontmatter(sf)
                 if fm_problem:
                     result.warnings.append(fm_problem)
 
-            # Validate skills metadata in toolkit.yaml if present
-            if metadata and hasattr(metadata, 'skills') and metadata.skills:
-                for skill in metadata.skills:
-                    if isinstance(skill, dict):
-                        skill_file_path = skill.get('file', '')
-                        skill_name = skill.get('name', 'unknown')
-                    else:
-                        # If skills is just a list of strings
-                        skill_file_path = str(skill)
-                        skill_name = skill_file_path
-
-                    full_skill_path = toolkit_path / skill_file_path
-                    if not full_skill_path.exists():
-                        result.errors.append(f"Skill file referenced in toolkit.yaml not found: {skill_file_path}")
-                        result.is_valid = False
+                # A skill that scopes itself to a bundle via `bundle:` in
+                # frontmatter must name a bundle declared in `bundles:`.
+                try:
+                    from .skills import parse_frontmatter
+                    fm, _body = parse_frontmatter(sf.read_text(encoding="utf-8"))
+                except Exception:
+                    fm = None
+                skill_bundle = fm.bundle if fm else None
+                if skill_bundle is not None and skill_bundle not in declared_bundles:
+                    result.errors.append(
+                        f"skills/{sf.name}: bundle: '{skill_bundle}' is not "
+                        f"declared in bundles. Declared bundles: "
+                        f"{sorted(declared_bundles) or '(none)'}."
+                    )
+                    result.is_valid = False
 
     return result
 

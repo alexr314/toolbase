@@ -6,6 +6,12 @@ watches that directory) picks them up automatically. On uninstall, we
 remove them. On publish, we validate that they carry the frontmatter
 Claude Code expects.
 
+A skill may scope itself to a bundle with ``bundle: <name>`` in its
+frontmatter. Such a skill is surfaced only when that bundle is available
+(its ``requires:`` config keys are set), parallel to how the orchestrator
+drops an unavailable bundle's tools. Skills with no ``bundle:`` are
+toolkit-wide and always surfaced. See ``install_skills_for_toolkit``.
+
 The mirror layout is:
 
     ~/.claude/skills/<toolkit>__<skill_name>/SKILL.md
@@ -59,6 +65,11 @@ class SkillFrontmatter:
     name: Optional[str]
     description: Optional[str]
     raw: dict
+    # Optional bundle this skill is scoped to. None means toolkit-wide
+    # (surfaced whenever the toolkit is installed). A named bundle ties
+    # the skill to that bundle's availability -- see
+    # ``install_skills_for_toolkit``.
+    bundle: Optional[str] = None
 
     def is_complete(self) -> bool:
         return bool(self.name) and bool(self.description)
@@ -95,6 +106,7 @@ def parse_frontmatter(text: str) -> Tuple[Optional[SkillFrontmatter], str]:
         name=raw.get("name") if isinstance(raw.get("name"), str) else None,
         description=raw.get("description") if isinstance(raw.get("description"), str) else None,
         raw=raw,
+        bundle=raw.get("bundle") if isinstance(raw.get("bundle"), str) else None,
     ), body
 
 
@@ -128,12 +140,22 @@ def install_skills_for_toolkit(
     toolkit_dir: Path,
     *,
     skills_dir: Optional[Path] = None,
+    available_bundles: Optional[set] = None,
 ) -> List[str]:
     """Copy a toolkit's skills into ``~/.claude/skills/``.
 
     Returns the list of skill slugs that were surfaced (empty if the
     toolkit ships none). Idempotent: safe to call repeatedly; existing
     SKILL.md files we own will be overwritten.
+
+    ``available_bundles`` gates bundle-scoped skills. A skill declares a
+    bundle via ``bundle:`` in its frontmatter. When ``available_bundles``
+    is provided, a skill scoped to a bundle not in the set is skipped
+    (its bundle's config requirements aren't met, so the matching tools
+    aren't served either — surfacing the guide would be misleading).
+    Skills with no ``bundle:`` are always surfaced. ``None`` (the
+    default) disables gating and surfaces every skill — the back-compat
+    behavior for callers that don't evaluate bundles.
 
     ``skills_dir`` defaults to the module-level ``CLAUDE_SKILLS_DIR`` at
     call time. We use a ``None`` sentinel rather than
@@ -155,14 +177,25 @@ def install_skills_for_toolkit(
     surfaced: List[str] = []
     use_symlinks = _can_symlink()
     for src in sources:
+        text = src.read_text(encoding="utf-8")
+        fm, _body = parse_frontmatter(text)
+        bundle = fm.bundle if fm else None
+        if (
+            bundle is not None
+            and available_bundles is not None
+            and bundle not in available_bundles
+        ):
+            # Bundle unavailable (config requirements unmet) — skip its
+            # skill, mirroring how the orchestrator drops the bundle's
+            # tools.
+            continue
+
         slug = f"{toolkit_name}__{_slug(src.stem)}"
         dest_dir = skills_dir / slug
         dest_dir.mkdir(parents=True, exist_ok=True)
         # Drop the marker so we know we own this directory.
         (dest_dir / OWNED_MARKER).write_text(toolkit_name + "\n")
 
-        text = src.read_text(encoding="utf-8")
-        fm, _body = parse_frontmatter(text)
         needs_synthesis = fm is None or not fm.is_complete()
 
         skill_path = dest_dir / "SKILL.md"
