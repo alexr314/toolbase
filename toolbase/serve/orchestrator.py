@@ -618,6 +618,16 @@ def _build_host_env(toolkit_path: Path, toolkit_name: str) -> Dict[str, str]:
         pkg_parent + (os.pathsep + existing if existing else "")
     )
     env["PYTHONUNBUFFERED"] = "1"
+    # The host is launched as ``python -m toolbase._toolkit_host`` with cwd
+    # at the toolkit dir, and ``-m`` prepends cwd to sys.path. A toolkit
+    # that ships a top-level dir named like an installed package (the
+    # scaffold's ``mcp/`` is the canonical trap) would then shadow that
+    # package -- e.g. ``import mcp`` resolves to the toolkit's ``mcp/``
+    # instead of the MCP SDK, and ``orchestral.mcp`` fails to import.
+    # PYTHONSAFEPATH (3.11+) stops the implicit cwd/script-dir entry; the
+    # explicit PYTHONPATH above and the spec_from_file_location tool loader
+    # are unaffected. Pins the regression in test_host_import_isolation.
+    env["PYTHONSAFEPATH"] = "1"
     env["TOOLBASE_HOST_LOG"] = str(LOGS_DIR / f"{toolkit_name}.log")
     return env
 
