@@ -80,3 +80,6 @@ logs/
 # not shipped in the repo. (PLATFORM_DECISIONS.md was promoted to docs/ as a
 # live spec; the rest stay archived locally.)
 docs/archive/
+
+# MkDocs build output
+/site/

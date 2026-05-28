@@ -1,0 +1,90 @@
+site_name: toolbase
+site_description: >-
+  Setup, installation, and configuration guide for toolbase — the package
+  manager and runtime for AI agent tools.
+site_url: https://toolbase-ai.com/docs/
+repo_url: https://github.com/alexr314/toolbase
+repo_name: alexr314/toolbase
+edit_uri: edit/main/userdocs/
+
+docs_dir: userdocs
+site_dir: site
+
+theme:
+  name: material
+  # Brand colors (teal + black) are defined in stylesheets/extra.css via
+  # custom CSS variables; the palette below selects the "custom" slot.
+  # Light is the default (first entry, no prefers-color-scheme media); the
+  # toggle switches to dark and the choice persists.
+  palette:
+    - scheme: default
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-night
+        name: Switch to dark mode
+    - scheme: slate
+      primary: custom
+      accent: custom
+      toggle:
+        icon: material/weather-sunny
+        name: Switch to light mode
+  features:
+    - navigation.sections
+    - navigation.tabs
+    - navigation.top
+    - navigation.tracking
+    - navigation.indexes
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+    - search.highlight
+    - toc.follow
+    # Fold the page's table of contents into the left nav (under the active
+    # page) instead of a separate right-hand column.
+    - toc.integrate
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - def_list
+  - footnotes
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.details
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.keys
+
+extra_css:
+  - stylesheets/extra.css
+
+nav:
+  - Home: index.md
+  - Guides:
+      - Install & activate: guides/install-and-activate.md
+      - Curating tools: guides/curating-tools.md
+      - Configuring toolkits: guides/configuring-toolkits.md
+      - Connecting clients: guides/connecting-clients.md
+      - Projects & teams: guides/projects-and-teams.md
+      - Profiles (power user): guides/profiles-power-user.md
+      - Multi-version & editable: guides/multi-version-and-editable.md
+  - Authoring:
+      - Overview: authoring/overview.md
+      - Start from scratch: authoring/from-scratch.md
+      - From existing tools: authoring/existing-tools.md
+      - Config & setup: authoring/config-and-setup.md
+      - Validate & publish: authoring/publish.md
+  - Reference:
+      - Commands: reference/commands.md
+      - Files & layout: reference/files-and-layout.md
+      - Vocabulary & scopes: reference/vocabulary-and-scopes.md
+      - Schemas: reference/schemas.md
+  - Concepts: explanation.md
+  - Troubleshooting: troubleshooting.md
