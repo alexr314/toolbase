@@ -199,3 +199,54 @@ def test_resolve_profile_no_active_raises(tmp_path: Path):
     user_base.mkdir(parents=True, exist_ok=True)
     with pytest.raises(NoActiveProfileError):
         resolve_profile(None, user_base=user_base)
+
+
+# ── tool_is_served (shared orchestrator/list decision) ────────────────
+
+
+from toolbase.serve.bundles import BundleAvailability
+from toolbase.serve.profiles import tool_is_served
+
+
+def _avail(available=(), dropped=None, has_block=True):
+    return BundleAvailability(
+        available_bundles=list(available),
+        dropped_bundles=dict(dropped or {}),
+        has_bundles_block=has_block,
+    )
+
+
+def test_served_whole_toolkit_no_selection():
+    # No profile selection -> serve-all; tool with no bundle is served.
+    assert tool_is_served("t", None, None, _avail(has_block=False), set())
+
+
+def test_served_dropped_bundle_gated_off():
+    av = _avail(dropped={"mg5": ["mg5_path"]})
+    assert not tool_is_served("gen", "mg5", None, av, set())
+
+
+def test_served_allowlist_by_bundle():
+    sel = ToolkitSelection(bundles=["pythia"])
+    av = _avail(available=["pythia", "inspire"])
+    assert tool_is_served("run", "pythia", sel, av, set())
+    assert not tool_is_served("search", "inspire", sel, av, set())
+
+
+def test_served_allowlist_union_enabled():
+    sel = ToolkitSelection(bundles=["pythia"], enabled_tools=["extra"])
+    av = _avail(available=["pythia", "inspire"])
+    assert tool_is_served("extra", "inspire", sel, av, set())  # via enabled
+    assert tool_is_served("run", "pythia", sel, av, set())     # via bundle
+
+
+def test_served_per_toolkit_disabled_wins():
+    sel = ToolkitSelection(bundles=["pythia"], disabled_tools=["debug"])
+    av = _avail(available=["pythia"])
+    assert not tool_is_served("debug", "pythia", sel, av, set())
+
+
+def test_served_global_blocklist():
+    sel = ToolkitSelection()  # whole toolkit
+    av = _avail(has_block=False)
+    assert not tool_is_served("noisy", None, sel, av, {"noisy"})

@@ -1008,37 +1008,16 @@ class Orchestrator:
         # Forwarder is bound to the toolkit *name*, not the client. The
         # forwarder looks up the live MCPClient on every call so a restart
         # that swaps the client is picked up transparently.
+        from .profiles import tool_is_served
+
         exposed_tools: List[str] = []
         forward = self._make_forwarder(disc.name)
         for defn in spawn.client.get_tool_definitions():
             upstream_name = defn["name"]
             tool_bundle = name_to_bundle.get(upstream_name)
-
-            # Config-gating: drop tools whose bundle's required config keys
-            # aren't satisfied. Tools without a bundle: field always pass.
-            if not availability.is_bundle_available(tool_bundle):
-                continue
-
-            # Profile per-toolkit selection. Allowlist mode (bundles and/or
-            # tools.enabled set) keeps only tools that are in one of the
-            # named bundles OR explicitly enabled (union). Then the
-            # per-toolkit and global disabled lists are subtracted.
-            if sel is not None:
-                if sel.is_allowlist:
-                    in_bundle = (
-                        sel.bundles is not None
-                        and tool_bundle is not None
-                        and tool_bundle in sel.bundles
-                    )
-                    in_enabled = (
-                        sel.enabled_tools is not None
-                        and upstream_name in sel.enabled_tools
-                    )
-                    if not (in_bundle or in_enabled):
-                        continue
-                if upstream_name in sel.disabled_tools:
-                    continue
-            if upstream_name in global_disabled:
+            if not tool_is_served(
+                upstream_name, tool_bundle, sel, availability, global_disabled
+            ):
                 continue
             namespaced = f"{disc.name}__{upstream_name}"
             self._proxy_tools.append(make_proxy_tool(

@@ -342,11 +342,12 @@ class _SectionedGroup(click.Group):
         ),
         (
             "Installing & serving",
-            ["search", "install", "uninstall", "list", "serve", "logs"],
+            ["search", "install", "uninstall", "list", "activate",
+             "deactivate", "serve", "logs"],
         ),
         (
             "Configuration",
-            ["config", "setup", "project"],
+            ["config", "profile", "setup", "project"],
         ),
         (
             "Maintenance",
@@ -4188,11 +4189,18 @@ def install(name, version, global_scope, local_scope, editable, no_skills, yes, 
     "--json", "as_json", is_flag=True, default=False,
     help=(
         "Emit a flat JSON array of {name, version, last_used_iso, "
-        "size_bytes, pinned_in_project} for agent / scripting consumption. "
-        "Suppresses the tree output and the legacy-layout heads-up."
+        "size_bytes, pinned_in_project, active} for agent / scripting "
+        "consumption. Suppresses the tree output and the legacy heads-up."
     ),
 )
-def list_cmd(as_json):
+@click.option(
+    "-v", "--verbose", "verbose", is_flag=True, default=False,
+    help=(
+        "Show each toolkit's tools with served/hidden status and bundle "
+        "membership (relative to the active profile)."
+    ),
+)
+def list_cmd(as_json, verbose):
     """
     List all installed toolkits.
 
@@ -4245,6 +4253,11 @@ def list_cmd(as_json):
     # default-project when no .toolbase/ is found.
     pin_map, manifest_path = _list_resolve_pin_map(entries)
 
+    # Resolve the active profile to mark which toolkits are active (served).
+    # Best-effort: no active profile => everything inactive, no error.
+    resolved_profile, active_set = _list_resolve_active()
+    active_profile = resolved_profile.name if resolved_profile is not None else None
+
     if as_json:
         payload = [
             {
@@ -4253,6 +4266,7 @@ def list_cmd(as_json):
                 "last_used_iso": e.last_used_iso,
                 "size_bytes": e.disk_size_bytes,
                 "pinned_in_project": pin_map.get(e.name) == e.version,
+                "active": e.name in active_set,
             }
             for e in _list_sorted_entries(entries)
         ]
@@ -4265,6 +4279,14 @@ def list_cmd(as_json):
             "\nTry: [cyan]tb install arxiv-search[/cyan]"
         )
         return
+
+    if active_profile is not None:
+        console.print(f"[dim]Active profile: {active_profile}[/dim]\n")
+    else:
+        console.print(
+            "[dim]No active profile — nothing is served. "
+            "Run `tb activate <toolkit>` to expose tools.[/dim]\n"
+        )
 
     # Group entries by toolkit name; within a name, sort by version desc.
     from .versioning import parse_version
@@ -4279,7 +4301,10 @@ def list_cmd(as_json):
 
     any_pin_applied = False
     for name in sorted(grouped):
-        console.print(f"[cyan]{name}[/cyan]")
+        is_active = name in active_set
+        mark = "[green]✓[/green]" if is_active else "[red]✗[/red]"
+        status = "active" if is_active else "inactive"
+        console.print(f"{mark} [cyan]{name}[/cyan] [dim]({status})[/dim]")
         for entry in grouped[name]:
             pinned = pin_map.get(name) == entry.version
             if pinned:
@@ -4304,6 +4329,8 @@ def list_cmd(as_json):
                     f"  - {ver_cell}   "
                     f"[dim](used {last_used}, {size})[/dim]"
                 )
+        if verbose:
+            _list_print_tools_verbose(name, resolved_profile)
 
     if any_pin_applied and manifest_path is not None:
         # Render the manifest path relative to cwd when possible — keeps
@@ -4319,6 +4346,79 @@ def list_cmd(as_json):
         console.print(
             f"[dim]* = pinned in this project ({display})[/dim]"
         )
+
+
+def _list_resolve_active():
+    """Best-effort active-profile resolution for ``tb list``.
+
+    Returns ``(resolved_profile_or_None, active_toolkit_names)``. A toolkit
+    is "active" when the active profile names it and serve.yaml doesn't
+    blocklist it. No active profile (or a malformed one) yields
+    ``(None, set())`` — list never errors over serve config.
+    """
+    from .serve.profiles import resolve_profile
+    from .serve.config import ServeConfigError
+    try:
+        project_root, _src = _resolve_active_project_root()
+        resolved = resolve_profile(project_root)
+    except (ServeConfigError, Exception):
+        return None, set()
+    disabled = set(resolved.disabled_toolkits)
+    active = {tk for tk in resolved.toolkits if tk not in disabled}
+    return resolved, active
+
+
+def _list_print_tools_verbose(name, resolved_profile) -> None:
+    """Print a toolkit's declared tools with served/hidden status.
+
+    Tool list comes from the toolkit.yaml declaration (explicit form);
+    implicit-form toolkits don't enumerate tools there, so we say so.
+    """
+    from .serve.orchestrator import discover_toolkits, _resolve_bundle_availability
+    from .serve.profiles import tool_is_served
+
+    disc = next(
+        (d for d in discover_toolkits()
+         if d.name == name and d.skip_reason is None),
+        None,
+    )
+    if disc is None:
+        return
+    availability, name_to_bundle = _resolve_bundle_availability(disc)
+    if not name_to_bundle:
+        console.print(
+            "    [dim](tools not enumerated in toolkit.yaml; served list "
+            "is available at serve time)[/dim]"
+        )
+        return
+
+    sel = None
+    global_disabled: set = set()
+    if resolved_profile is not None:
+        sel = resolved_profile.toolkits.get(name)
+        prefix = f"{name}__"
+        global_disabled = {
+            q.split("__", 1)[1]
+            for q in resolved_profile.disabled_tools
+            if q.startswith(prefix)
+        }
+        # A toolkit absent from the active profile serves nothing.
+        toolkit_active = name in resolved_profile.toolkits
+    else:
+        toolkit_active = False
+
+    for tool in sorted(name_to_bundle):
+        bundle = name_to_bundle[tool]
+        served = toolkit_active and tool_is_served(
+            tool, bundle, sel, availability, global_disabled,
+        )
+        mk = "[green]✓[/green]" if served else "[red]✗[/red]"
+        btag = f" [dim][bundle: {bundle}][/dim]" if bundle else ""
+        gate = ""
+        if bundle and bundle in availability.dropped_bundles:
+            miss = ", ".join(availability.dropped_bundles[bundle])
+            gate = f" [yellow](needs config: {miss})[/yellow]"
+        console.print(f"    {mk} {tool}{btag}{gate}")
 
 
 def _list_sorted_entries(entries):
@@ -5031,6 +5131,434 @@ def serve_config(action):
         )
         return
     console.print(SERVE_CONFIG_PATH.read_text())
+
+
+# ── activate / deactivate (casual-tier profile editing) ────────────────
+
+
+def _installed_toolkit_names() -> set:
+    """Names of toolkits present in the cache (any version)."""
+    try:
+        from .envs import walk_cache
+        return {e.name for e in walk_cache()}
+    except Exception:
+        return set()
+
+
+def _resolve_profile_scope(global_scope: bool, local_scope: bool):
+    """Resolve activate/deactivate/create scope -> (scope, project_root).
+
+    -g forces user; -l forces project; default mirrors ``tb install``:
+    project when inside a real project, else user.
+    """
+    if global_scope and local_scope:
+        raise click.UsageError(
+            "-g/--global and -l/--local are mutually exclusive."
+        )
+    if global_scope:
+        return "user", None
+    if local_scope:
+        root, _src = _resolve_active_project_root()
+        return "project", root
+    root, source = _resolve_active_project_root()
+    if source == "fallback":
+        return "user", None
+    return "project", root
+
+
+def _print_mutation(result) -> None:
+    if result.changed:
+        console.print(f"[green]✓[/green] {result.message}")
+        console.print(f"  [dim]{result.path}[/dim]")
+        console.print(
+            "  [dim]See the active set with `tb list`, or `tb serve "
+            "--dry-run`.[/dim]"
+        )
+    else:
+        console.print(f"[dim]{result.message}[/dim]")
+
+
+def _scope_flags(f):
+    f = click.option(
+        '-l', '--local', 'local_scope', is_flag=True, default=False,
+        help="Operate on this project's default profile.",
+    )(f)
+    f = click.option(
+        '-g', '--global', 'global_scope', is_flag=True, default=False,
+        help='Operate on the user-level default profile.',
+    )(f)
+    return f
+
+
+@main.command()
+@click.argument('item')
+@_scope_flags
+def activate(item, global_scope, local_scope):
+    """Activate a toolkit, bundle, or tool in the default profile.
+
+    \b
+    ITEM is one of:
+      <toolkit>            whole toolkit      (tb activate heptapod)
+      <toolkit>/<bundle>   one bundle         (tb activate heptapod/pythia)
+      <toolkit>__<tool>    one tool           (tb activate heptapod__run_pythia)
+    """
+    from .serve.profile_scaffold import activate as _activate, ProfileItemError
+
+    scope, project_root = _resolve_profile_scope(global_scope, local_scope)
+    tk = item.split('/', 1)[0].split('__', 1)[0]
+    if tk not in _installed_toolkit_names():
+        console.print(f"[red]✗ '{tk}' is not installed.[/red]")
+        console.print(f"Run [cyan]toolbase install {tk}[/cyan] first.")
+        sys.exit(1)
+    try:
+        result = _activate(item, scope=scope, project_root=project_root)
+    except ProfileItemError as e:
+        console.print(f"[red]✗ {e}[/red]")
+        sys.exit(2)
+    _print_mutation(result)
+
+
+@main.command()
+@click.argument('item')
+@_scope_flags
+def deactivate(item, global_scope, local_scope):
+    """Deactivate a toolkit, bundle, or tool from the default profile.
+
+    \b
+    ITEM forms match `tb activate` (toolkit, toolkit/bundle, toolkit__tool).
+    """
+    from .serve.profile_scaffold import deactivate as _deactivate, ProfileItemError
+
+    scope, project_root = _resolve_profile_scope(global_scope, local_scope)
+    try:
+        result = _deactivate(item, scope=scope, project_root=project_root)
+    except ProfileItemError as e:
+        console.print(f"[red]✗ {e}[/red]")
+        sys.exit(2)
+    _print_mutation(result)
+
+
+# ── tb profile: named-profile management (power tier) ──────────────────
+
+
+@main.group()
+def profile():
+    """Manage named profiles (curated tool sets)."""
+    pass
+
+
+def _profile_active_name(project_root):
+    """Best-effort name of the active profile, or None if unresolved."""
+    from .serve.profiles import (
+        load_merged_serve_config, discover_profiles,
+        resolve_active_profile_name,
+    )
+    from .serve.config import ServeConfigError
+    try:
+        merged = load_merged_serve_config(project_root)
+        available = discover_profiles(project_root)
+        name, _src = resolve_active_profile_name(merged, available)
+        return name
+    except ServeConfigError:
+        return None
+
+
+@profile.command('list')
+def profile_list():
+    """List all available profiles (user + project), marking the active one."""
+    from .serve.profiles import discover_profiles
+    from .serve.config import ServeConfigError
+
+    project_root, _src = _resolve_active_project_root()
+    try:
+        found = discover_profiles(project_root)
+    except ServeConfigError as e:
+        console.print(f"[red]{e}[/red]")
+        sys.exit(1)
+
+    if not found:
+        console.print("[dim]No profiles defined.[/dim]\n")
+        console.print(
+            "Create one with [cyan]tb activate <toolkit>[/cyan] (builds the "
+            "default profile) or [cyan]tb profile create <name>[/cyan]."
+        )
+        return
+
+    active = _profile_active_name(project_root)
+    for name in sorted(found):
+        prof = found[name]
+        mark = "[green]*[/green]" if name == active else " "
+        n_tk = len(prof.toolkits)
+        console.print(
+            f"{mark} [cyan]{name}[/cyan] [dim]({prof.scope}, "
+            f"{n_tk} toolkit{'s' if n_tk != 1 else ''})[/dim]"
+        )
+    if active:
+        console.print(f"\n[dim]* = active profile[/dim]")
+
+
+@profile.command('show')
+@click.argument('name', required=False)
+def profile_show(name):
+    """Pretty-print a profile (defaults to the active one)."""
+    from .serve.profiles import discover_profiles
+    from .serve.config import ServeConfigError
+
+    project_root, _src = _resolve_active_project_root()
+    try:
+        found = discover_profiles(project_root)
+    except ServeConfigError as e:
+        console.print(f"[red]{e}[/red]")
+        sys.exit(1)
+
+    if name is None:
+        name = _profile_active_name(project_root)
+        if name is None:
+            console.print("[red]No active profile to show.[/red]")
+            sys.exit(1)
+    if name not in found:
+        console.print(f"[red]No profile named '{name}'.[/red]")
+        sys.exit(1)
+
+    prof = found[name]
+    console.print(f"\n[bold]{name}[/bold] [dim]({prof.scope}: {prof.path})[/dim]")
+    if not prof.toolkits:
+        console.print("  [dim](selects no toolkits)[/dim]")
+    for tk, sel in prof.toolkits.items():
+        if not sel.is_allowlist and not sel.disabled_tools:
+            console.print(f"  [cyan]{tk}[/cyan] [dim](whole toolkit)[/dim]")
+            continue
+        console.print(f"  [cyan]{tk}[/cyan]")
+        if sel.bundles is not None:
+            console.print(f"    bundles: {', '.join(sel.bundles) or '(none)'}")
+        if sel.enabled_tools is not None:
+            console.print(f"    enabled: {', '.join(sel.enabled_tools) or '(none)'}")
+        if sel.disabled_tools:
+            console.print(f"    disabled: {', '.join(sel.disabled_tools)}")
+
+
+@profile.command('path')
+@click.argument('name')
+def profile_path_cmd(name):
+    """Print the file path of a profile."""
+    from .serve.profiles import discover_profiles
+    project_root, _src = _resolve_active_project_root()
+    found = discover_profiles(project_root)
+    if name not in found:
+        console.print(f"[red]No profile named '{name}'.[/red]")
+        sys.exit(1)
+    print(found[name].path)
+
+
+@profile.command('create')
+@click.argument('name')
+@_scope_flags
+@click.option('--from', 'from_profile', default=None, metavar='PROFILE',
+              help='Scaffold from an existing profile instead of default.')
+@click.option('--empty', 'empty', is_flag=True, default=False,
+              help='Create a minimal empty profile.')
+def profile_create(name, global_scope, local_scope, from_profile, empty):
+    """Create a new named profile (scaffolded from default unless overridden)."""
+    from .serve.profile_scaffold import _load, _save
+    from .serve.profiles import discover_profiles
+
+    scope, project_root = _resolve_profile_scope(global_scope, local_scope)
+    from .serve.profile_scaffold import (
+        user_profiles_dir as _u, project_profiles_dir as _p,
+    )
+    if scope == "user":
+        dest = _u() / f"{name}.yaml"
+    else:
+        from .serve.profile_scaffold import default_project_root as _dpr
+        root = project_root if project_root is not None else _dpr()
+        dest = _p(root) / f"{name}.yaml"
+
+    if dest.exists():
+        console.print(f"[red]Profile '{name}' already exists at {dest}.[/red]")
+        sys.exit(1)
+
+    if empty:
+        from ruamel.yaml.comments import CommentedMap
+        data = CommentedMap()
+        data["toolkits"] = CommentedMap()
+        _save(dest, data)
+    else:
+        src_name = from_profile or "default"
+        found = discover_profiles(project_root)
+        if src_name in found:
+            data = _load(found[src_name].path)
+        elif from_profile is not None:
+            console.print(f"[red]No profile named '{from_profile}' to copy.[/red]")
+            sys.exit(1)
+        else:
+            # No default to scaffold from — start blank.
+            from ruamel.yaml.comments import CommentedMap
+            data = CommentedMap()
+            data["toolkits"] = CommentedMap()
+        _save(dest, data)
+
+    console.print(f"[green]✓[/green] Created profile '{name}'.")
+    console.print(f"  [dim]{dest}[/dim]")
+    console.print(f"  [dim]Edit it: tb profile edit {name}[/dim]")
+
+
+@profile.command('edit')
+@click.argument('name', required=False)
+@_scope_flags
+def profile_edit(name, global_scope, local_scope):
+    """Open a profile in $EDITOR (defaults to the active profile).
+
+    If the named profile doesn't exist, it's scaffolded from the default
+    profile (or blank) before opening.
+    """
+    from .serve.profiles import discover_profiles
+    from .serve.profile_scaffold import _load, _save
+
+    project_root_tuple = _resolve_active_project_root()
+    project_root = project_root_tuple[0]
+    found = discover_profiles(project_root)
+
+    if name is None:
+        name = _profile_active_name(project_root) or "default"
+
+    if name in found:
+        target = found[name].path
+    else:
+        scope, proot = _resolve_profile_scope(global_scope, local_scope)
+        if scope == "user":
+            from .serve.profile_scaffold import user_profiles_dir as _u
+            target = _u() / f"{name}.yaml"
+        else:
+            from .serve.profile_scaffold import (
+                project_profiles_dir as _p, default_project_root as _dpr,
+            )
+            root = proot if proot is not None else _dpr()
+            target = _p(root) / f"{name}.yaml"
+        # Scaffold from default if present, else blank.
+        data = _load(found["default"].path) if "default" in found else _load(target)
+        _save(target, data)
+
+    click.edit(filename=str(target))
+
+
+@profile.command('delete')
+@click.argument('name')
+@_scope_flags
+@_interactive_options
+def profile_delete(name, global_scope, local_scope, yes, no_, no_input):
+    """Delete a profile file."""
+    from .serve.profiles import discover_profiles
+
+    mode = _resolve_prompt_mode(yes, no_, no_input)
+    project_root, _src = _resolve_active_project_root()
+    found = discover_profiles(project_root)
+    if name not in found:
+        console.print(f"[red]No profile named '{name}'.[/red]")
+        sys.exit(1)
+    target = found[name].path
+    if not _confirm(
+        f"Delete profile '{name}' ({target})?", default=False, mode=mode,
+        consequential=True,
+    ):
+        console.print("[dim]Cancelled.[/dim]")
+        sys.exit(0)
+    target.unlink()
+    console.print(f"[green]✓[/green] Deleted profile '{name}'.")
+
+
+@profile.command('set-default')
+@click.argument('name')
+@_scope_flags
+def profile_set_default(name, global_scope, local_scope):
+    """Set the active profile by writing default.profile into serve.yaml."""
+    from .serve.profiles import discover_profiles
+    from .serve.config import load_serve_config, save_serve_config
+    from .envs.paths import user_serve_config_path, project_serve_config_path
+
+    scope, project_root = _resolve_profile_scope(global_scope, local_scope)
+    found = discover_profiles(project_root)
+    if name not in found:
+        console.print(f"[red]No profile named '{name}'.[/red]")
+        console.print("Create it first with [cyan]tb profile create[/cyan].")
+        sys.exit(1)
+
+    if scope == "user":
+        path = user_serve_config_path()
+    else:
+        from .serve.profile_scaffold import default_project_root as _dpr
+        root = project_root if project_root is not None else _dpr()
+        path = project_serve_config_path(root)
+
+    cfg = load_serve_config(path)
+    cfg.default.profile = name
+    save_serve_config(cfg, path)
+    console.print(f"[green]✓[/green] Active profile set to '{name}'.")
+    console.print(f"  [dim]{path}[/dim]")
+
+
+@profile.command('tools')
+@click.argument('toolkit', required=False)
+def profile_tools(toolkit):
+    """List available bundles + tools across installed toolkits.
+
+    Use as a reference while editing a profile: the names shown here are
+    what you pass to `tb activate` / `tb deactivate` and the `bundles:` /
+    `tools:` fields in a profile.
+    """
+    from .serve.orchestrator import discover_toolkits, _resolve_bundle_availability
+
+    discoveries = [d for d in discover_toolkits() if d.skip_reason is None]
+    if toolkit is not None:
+        discoveries = [d for d in discoveries if d.name == toolkit]
+        if not discoveries:
+            console.print(f"[red]'{toolkit}' is not installed.[/red]")
+            sys.exit(1)
+
+    if not discoveries:
+        console.print("[dim]No toolkits installed.[/dim]")
+        return
+
+    for disc in discoveries:
+        availability, name_to_bundle = _resolve_bundle_availability(disc)
+        # Invert: bundle -> [tools]; collect ungrouped separately.
+        by_bundle: dict = {}
+        ungrouped: list = []
+        for tname, b in name_to_bundle.items():
+            if b is None:
+                ungrouped.append(tname)
+            else:
+                by_bundle.setdefault(b, []).append(tname)
+        n_tools = len(name_to_bundle)
+        console.print(
+            f"\n[bold cyan]{disc.name}[/bold cyan] "
+            f"[dim]({n_tools} tool{'s' if n_tools != 1 else ''} declared "
+            f"in toolkit.yaml)[/dim]"
+        )
+        # Bundles (declared in bundles: block), with gating status.
+        declared = set()
+        if availability.has_bundles_block:
+            declared = set(availability.available_bundles) | set(
+                availability.dropped_bundles
+            )
+        for b in sorted(declared | set(by_bundle)):
+            gated = ""
+            if b in availability.dropped_bundles:
+                miss = ", ".join(availability.dropped_bundles[b])
+                gated = f"  [yellow](unavailable — needs config: {miss})[/yellow]"
+            tools = sorted(by_bundle.get(b, []))
+            console.print(f"  bundle [magenta]{b}[/magenta]{gated}")
+            for t in tools:
+                console.print(f"    {t}")
+        if ungrouped:
+            console.print("  [dim](no bundle)[/dim]")
+            for t in sorted(ungrouped):
+                console.print(f"    {t}")
+        if n_tools == 0:
+            console.print(
+                "  [dim]Tools aren't enumerated in toolkit.yaml "
+                "(implicit form); the full list is available at serve "
+                "time.[/dim]"
+            )
 
 
 @main.command()

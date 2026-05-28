@@ -81,6 +81,48 @@ class ToolkitSelection:
         return self.bundles is not None or self.enabled_tools is not None
 
 
+def tool_is_served(
+    tool_name: str,
+    tool_bundle: Optional[str],
+    selection: Optional["ToolkitSelection"],
+    availability,
+    global_disabled: set,
+) -> bool:
+    """The single source of truth for "is this tool exposed?".
+
+    Used by both the orchestrator (at spawn time) and ``tb list`` (for the
+    active/served view) so the two never drift. Order matches the spec:
+
+    1. config-gating: a tool whose bundle's ``requires:`` aren't satisfied
+       is never served (``availability``).
+    2. profile selection: in allowlist mode (bundles and/or enabled set),
+       keep only tools in a named bundle OR explicitly enabled (union);
+       then subtract the per-toolkit ``disabled``.
+    3. the absolute serve.yaml blocklist (``global_disabled``, unqualified
+       names for this toolkit).
+    """
+    if not availability.is_bundle_available(tool_bundle):
+        return False
+    if selection is not None:
+        if selection.is_allowlist:
+            in_bundle = (
+                selection.bundles is not None
+                and tool_bundle is not None
+                and tool_bundle in selection.bundles
+            )
+            in_enabled = (
+                selection.enabled_tools is not None
+                and tool_name in selection.enabled_tools
+            )
+            if not (in_bundle or in_enabled):
+                return False
+        if tool_name in selection.disabled_tools:
+            return False
+    if tool_name in global_disabled:
+        return False
+    return True
+
+
 @dataclass
 class Profile:
     """A parsed profile file."""
