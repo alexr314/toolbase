@@ -3240,7 +3240,7 @@ def _install_from_path(
     local_scope: bool,
     no_skills: bool,
     mode: str,
-) -> None:
+) -> Optional[str]:
     """Install a toolkit from a local source directory.
 
     Covers two cases:
@@ -3412,9 +3412,10 @@ def _install_from_path(
         )
 
     console.print(f"\n[bold]Ready to use! Try:[/bold]")
+    console.print(f"  [cyan]tb activate {name}[/cyan]   # expose it to the agent")
     console.print(f"  [cyan]tb list[/cyan]")
-    console.print(f"  [cyan]tb serve {name}[/cyan]")
     console.print()
+    return name
 
 
 def _remove_slot(slot: Path) -> None:
@@ -3561,6 +3562,30 @@ def _surface_skills_best_effort(name: str, slot: Path, no_skills: bool) -> None:
         )
 
 
+def _post_install_activate(name: str, *, local_scope: bool) -> None:
+    """Activate a just-installed toolkit in the default profile (``-a``).
+
+    Scope mirrors the install: ``-l`` -> project default profile, else
+    user default profile. Best-effort; a failure here doesn't fail the
+    install (the toolkit is in the cache regardless).
+    """
+    from .serve.profile_scaffold import activate as _activate
+    try:
+        if local_scope:
+            root, _src = _resolve_active_project_root()
+            result = _activate(name, scope="project", project_root=root)
+        else:
+            result = _activate(name, scope="user")
+    except Exception as e:
+        console.print(f"[yellow]Installed, but could not activate: {e}[/yellow]")
+        console.print(f"Run [cyan]toolbase activate {name}[/cyan] manually.")
+        return
+    if result.changed:
+        console.print(f"[green]✓[/green] {result.message}")
+    else:
+        console.print(f"[dim]{result.message}[/dim]")
+
+
 @main.command()
 @click.argument('name')
 @click.option('--version', '-v', help='Specific version to install (default: latest)')
@@ -3592,8 +3617,17 @@ def _surface_skills_best_effort(name: str, slot: Path, no_skills: bool) -> None:
     '--no-skills', 'no_skills', is_flag=True, default=False,
     help="Don't surface the toolkit's skills into ~/.claude/skills/.",
 )
+@click.option(
+    '--activate', '-a', 'activate_after', is_flag=True, default=False,
+    help=(
+        "Also activate the toolkit in the default profile after installing "
+        "(adds it to what `tb serve` exposes). Without this, install only "
+        "places the toolkit in the cache; nothing is served until you "
+        "activate it."
+    ),
+)
 @_interactive_options
-def install(name, version, global_scope, local_scope, editable, no_skills, yes, no_, no_input):
+def install(name, version, global_scope, local_scope, editable, no_skills, activate_after, yes, no_, no_input):
     """
     Install a toolkit — from the registry or a local source directory.
 
@@ -3660,13 +3694,15 @@ def install(name, version, global_scope, local_scope, editable, no_skills, yes, 
     # Path-source branch (covers -e always, and -g/-l when the arg is a
     # path). Builds the cache slot from the local dir and pins per scope.
     if source_path is not None:
-        _install_from_path(
+        installed_name = _install_from_path(
             source_path,
             editable=editable,
             local_scope=local_scope,
             no_skills=no_skills,
             mode=mode,
         )
+        if activate_after and installed_name:
+            _post_install_activate(installed_name, local_scope=local_scope)
         return
 
     # Registry-name branch below (the common case).
@@ -4008,6 +4044,9 @@ def install(name, version, global_scope, local_scope, editable, no_skills, yes, 
 
     # Step 9: Success message
     console.print(f"\n[bold green]✓ Successfully installed {name} v{version}[/bold green]\n")
+
+    if activate_after:
+        _post_install_activate(name, local_scope=local_scope)
 
     if env_type == 'venv':
         console.print(f"Environment: venv (Python {python_version})")
@@ -4664,7 +4703,7 @@ def uninstall(name, yes, no_, no_input):
             f"[dim]Note: could not update project manifest: {e}[/dim]"
         )
 
-    # Skills cleanup — only when ALL versions are gone.
+    # Skills + default-profile cleanup — only when ALL versions are gone.
     if not _list_versions(name):
         try:
             from .skills import uninstall_skills_for_toolkit
@@ -4679,7 +4718,35 @@ def uninstall(name, yes, no_, no_input):
                 f"[yellow]Could not clean up ~/.claude/skills entries: {e}[/yellow]"
             )
 
+        # Drop the toolkit from the default profile(s) so an uninstalled
+        # toolkit doesn't linger as a dangling reference. Named profiles
+        # are explicit user choices and left untouched (they surface a
+        # clear skip at serve time if they reference a missing toolkit).
+        _uninstall_cleanup_profiles(name)
+
     console.print(f"\n[bold green]✓ Uninstalled {plural}[/bold green]")
+
+
+def _uninstall_cleanup_profiles(name: str) -> None:
+    """Remove ``name`` from the user and active-project default profiles.
+
+    Best-effort: only touches an entry that exists, only the ``default``
+    profile, and never raises into the uninstall flow.
+    """
+    from .serve.profile_scaffold import deactivate as _deactivate
+    for scope, needs_root in (("user", False), ("project", True)):
+        try:
+            if needs_root:
+                root, src = _resolve_active_project_root()
+                res = _deactivate(name, scope="project", project_root=root)
+            else:
+                res = _deactivate(name, scope="user")
+            if res.changed:
+                console.print(
+                    f"[dim]Removed {name} from the {scope} default profile.[/dim]"
+                )
+        except Exception:
+            pass
 
 
 # ── tb reset ───────────────────────────────────────────────────────
