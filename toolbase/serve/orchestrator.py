@@ -249,7 +249,7 @@ def discover_toolkits(toolkits_dir: Optional[Path] = None) -> List[ToolkitDiscov
         if not skip:
             env = meta.get("environment")
             if env == "docker":
-                skip = "Docker mode (Phase 3B not yet supported)"
+                skip = "Docker mode (not yet supported)"
             elif env not in ("venv", "conda"):
                 skip = f"unknown environment type: {env!r}"
 
@@ -291,7 +291,7 @@ def _legacy_discover_toolkits(toolkits_dir: Path) -> List[ToolkitDiscovery]:
         skip: Optional[str] = None
         env = meta.get("environment")
         if env == "docker":
-            skip = "Docker mode (Phase 3B not yet supported)"
+            skip = "Docker mode (not yet supported)"
         elif env not in ("venv", "conda"):
             skip = f"unknown environment type: {env!r}"
 
