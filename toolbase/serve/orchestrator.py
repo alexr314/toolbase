@@ -694,7 +694,7 @@ class Orchestrator:
         *,
         console: Optional[Console] = None,
         toolkits_dir: Optional[Path] = None,
-        resolved: Optional[Any] = None,  # serve.config.ResolvedSet, optional
+        profile: Optional[Any] = None,  # serve.profiles.ResolvedProfile
         call_timeout_s: float = DEFAULT_CALL_TIMEOUT_S,
     ):
         self.console = console or Console(stderr=True)
@@ -710,11 +710,21 @@ class Orchestrator:
         self._runtimes: Dict[str, ToolkitRuntime] = {}
         self._proxy_tools: List[Any] = []
         self._shutdown_initiated = False
-        # When set, the resolver has decided which toolkits and (optionally)
-        # which tools per toolkit to expose. None means "serve everything
-        # discoverable" (legacy behavior).
-        self._resolved = resolved
+        # The active profile (``serve.profiles.ResolvedProfile``) decides
+        # which toolkits and which tools per toolkit to expose. None means
+        # "serve every discovered toolkit, uncurated" — used by lower-level
+        # callers (e.g. crash-recovery tests). The CLI always resolves a
+        # profile and passes it, so the "no active profile" requirement is
+        # enforced at the CLI boundary, not here.
+        self._profile = profile
         self._call_timeout_s = call_timeout_s
+
+    def _selection_for(self, name: str):
+        """Return the ``ToolkitSelection`` for a toolkit under the active
+        profile, or ``None`` when no profile is active (serve-all mode)."""
+        if self._profile is None:
+            return None
+        return self._profile.toolkits.get(name)
 
     # ── startup ─────────────────────────────────────────────────────────
 
@@ -735,13 +745,23 @@ class Orchestrator:
             )
             raise RuntimeError("no toolkits installed")
 
-        # If the resolver has narrowed the set, filter discoveries to match.
-        if self._resolved is not None:
-            target_names = set(self._resolved.toolkits)
+        # Filter discoveries to the active profile: only toolkits named in
+        # the profile are served, minus the absolute serve.yaml blocklist.
+        # When no profile is active (serve-all mode) every discovered
+        # toolkit is served.
+        if self._profile is not None:
+            served = set(self._profile.toolkits.keys())
+            disabled_tk = set(self._profile.disabled_toolkits)
             for d in discoveries:
-                if d.skip_reason is None and d.name not in target_names:
-                    d.skip_reason = "not in this serve session"
-            for w in self._resolved.warnings:
+                if d.skip_reason is not None:
+                    continue
+                if d.name in disabled_tk:
+                    d.skip_reason = "disabled in serve.yaml"
+                elif d.name not in served:
+                    d.skip_reason = (
+                        f"not in active profile '{self._profile.name}'"
+                    )
+            for w in self._profile.warnings:
                 self.console.print(f"  [yellow]warning:[/yellow] {w}")
 
         self._print_startup_banner_pre(discoveries)
@@ -953,22 +973,18 @@ class Orchestrator:
         from .proxy_tool import make_proxy_tool
         from .bundles import format_skip_log_line
 
-        # Determine which tools from this toolkit to actually expose.
-        # `tool_filter` is one of:
-        #   None       — expose all tools (no per-tool filter active)
-        #   List[str]  — expose only tools in this allowlist
-        # Disabled tools (when tool_filter is None) are subtracted via
-        # `tool_disable_set`.
-        tool_filter: Optional[List[str]] = None
-        tool_disable_set: set = set()
-        if self._resolved is not None:
-            allow = self._resolved.tools.get(disc.name)
-            if allow is not None:
-                tool_filter = list(allow)
-            # Pull disabled-tools subtraction list (qualified names).
-            for q in self._resolved.disable_qualified:
-                if q.startswith(f"{disc.name}__"):
-                    tool_disable_set.add(q.split("__", 1)[1])
+        # The active profile's per-toolkit selection (bundles / enabled /
+        # disabled). None when no profile is active (serve-all mode).
+        sel = self._selection_for(disc.name)
+
+        # Global absolute blocklist of qualified tool names (serve.yaml
+        # default.disabled.tools), restricted to this toolkit.
+        global_disabled: set = set()
+        if self._profile is not None:
+            prefix = f"{disc.name}__"
+            for q in self._profile.disabled_tools:
+                if q.startswith(prefix):
+                    global_disabled.add(q.split("__", 1)[1])
 
         # 0.5.1: evaluate bundles against the resolved two-layer
         # config. Tools whose ``bundle:`` field names an unavailable
@@ -976,9 +992,6 @@ class Orchestrator:
         # dropped bundle, fired once at startup (NOT per call).
         availability, name_to_bundle = _resolve_bundle_availability(disc)
         if availability.dropped_bundles:
-            # ``--enable-bundle <tk>__<bundle>`` requests for unavailable
-            # bundles on this toolkit are surfaced separately below; the
-            # logging here covers the implicit-drop case.
             for bname, missing in availability.dropped_bundles.items():
                 line = format_skip_log_line(disc.name, bname, missing)
                 # stderr console for visibility + serve.log for grepping.
@@ -992,38 +1005,6 @@ class Orchestrator:
                     level="warn",
                 )
 
-        # If --enable-bundle requested specific bundles for this toolkit,
-        # translate that into a per-tool allowlist (filter to tools
-        # whose bundle: is in the requested set). Unavailable requested
-        # bundles produce a clear stderr message but don't crash serve.
-        requested_bundles: Optional[List[str]] = None
-        if self._resolved is not None:
-            requested = self._resolved.enable_bundles.get(disc.name)
-            if requested is not None:
-                requested_bundles = list(requested)
-                unavailable = [
-                    b for b in requested_bundles
-                    if b in availability.dropped_bundles
-                ]
-                undeclared = [
-                    b for b in requested_bundles
-                    if b not in availability.dropped_bundles
-                    and b not in availability.available_bundles
-                ]
-                for b in unavailable:
-                    missing = availability.dropped_bundles.get(b, [])
-                    self.console.print(
-                        f"  [red]✗[/red] [dim]{disc.name}__{b}:[/dim] "
-                        f"[red]bundle not available — "
-                        f"missing config keys [{', '.join(missing)}][/red]"
-                    )
-                for b in undeclared:
-                    self.console.print(
-                        f"  [red]✗[/red] [dim]{disc.name}__{b}:[/dim] "
-                        f"[red]bundle not declared in toolkit.yaml's "
-                        f"bundles: block[/red]"
-                    )
-
         # Forwarder is bound to the toolkit *name*, not the client. The
         # forwarder looks up the live MCPClient on every call so a restart
         # that swaps the client is picked up transparently.
@@ -1031,22 +1012,34 @@ class Orchestrator:
         forward = self._make_forwarder(disc.name)
         for defn in spawn.client.get_tool_definitions():
             upstream_name = defn["name"]
-            if tool_filter is not None and upstream_name not in tool_filter:
-                continue
-            if upstream_name in tool_disable_set:
-                continue
-            # bundle gating: drop tools belonging to unavailable
-            # bundles. Tools without a bundle: field always pass.
             tool_bundle = name_to_bundle.get(upstream_name)
+
+            # Config-gating: drop tools whose bundle's required config keys
+            # aren't satisfied. Tools without a bundle: field always pass.
             if not availability.is_bundle_available(tool_bundle):
                 continue
-            # --enable-bundle narrowing: when active for this toolkit,
-            # only tools whose bundle: is in the requested set are
-            # served. Tools without a bundle: field are dropped under
-            # this mode (the user opted into a curated subset).
-            if requested_bundles is not None:
-                if tool_bundle is None or tool_bundle not in requested_bundles:
+
+            # Profile per-toolkit selection. Allowlist mode (bundles and/or
+            # tools.enabled set) keeps only tools that are in one of the
+            # named bundles OR explicitly enabled (union). Then the
+            # per-toolkit and global disabled lists are subtracted.
+            if sel is not None:
+                if sel.is_allowlist:
+                    in_bundle = (
+                        sel.bundles is not None
+                        and tool_bundle is not None
+                        and tool_bundle in sel.bundles
+                    )
+                    in_enabled = (
+                        sel.enabled_tools is not None
+                        and upstream_name in sel.enabled_tools
+                    )
+                    if not (in_bundle or in_enabled):
+                        continue
+                if upstream_name in sel.disabled_tools:
                     continue
+            if upstream_name in global_disabled:
+                continue
             namespaced = f"{disc.name}__{upstream_name}"
             self._proxy_tools.append(make_proxy_tool(
                 upstream_name=upstream_name,
@@ -1457,16 +1450,17 @@ class Orchestrator:
 def serve(
     *,
     no_tui: bool = True,
-    resolved: Optional[Any] = None,
+    profile: Optional[Any] = None,
     call_timeout_s: float = DEFAULT_CALL_TIMEOUT_S,
 ) -> int:
     """Top-level entry point for ``toolbase serve``.
 
     For now ``no_tui=False`` is rejected (TUI not implemented yet).
 
-    ``resolved`` is an optional ``serve.config.ResolvedSet`` that narrows
-    which toolkits and tools to serve. When None, the legacy "everything"
-    behavior is used.
+    ``profile`` is the resolved active profile (``serve.profiles.
+    ResolvedProfile``) that decides which toolkits and tools to serve.
+    The CLI resolves it before calling here; None means "serve every
+    discovered toolkit, uncurated" (lower-level / test path).
 
     ``call_timeout_s`` is the upper bound on each upstream tool call as
     enforced by Orchestral's MCPClient. Default 60 s.
@@ -1478,7 +1472,7 @@ def serve(
     # stream we're handing to Claude Code.
     console = Console(stderr=True)
     orch = Orchestrator(
-        console=console, resolved=resolved, call_timeout_s=call_timeout_s,
+        console=console, profile=profile, call_timeout_s=call_timeout_s,
     )
 
     try:

@@ -146,6 +146,48 @@ def project_config_path(project_root: Path, toolkit: str) -> Path:
     return project_root / ".toolbase" / "config" / f"{toolkit}.yaml"
 
 
+# ── serve config + profiles (curation layer) ────────────────────────
+
+
+def user_serve_config_path(*, base: Optional[Path] = None) -> Path:
+    """``~/.toolbase/serve.yaml`` — user-level serve defaults.
+
+    Carries ``default.profile`` (which profile is active) and the
+    absolute ``default.disabled`` blocklists. Profile bodies live in
+    ``profiles/`` (see ``user_profiles_dir``), not here.
+    """
+    return _user_root(base) / "serve.yaml"
+
+
+def project_serve_config_path(project_root: Path) -> Path:
+    """``<project>/.toolbase/serve.yaml`` — project-level serve defaults.
+
+    Same default-project special-case as ``project_manifest_path``.
+    """
+    if _is_default_project(project_root):
+        return project_root / "serve.yaml"
+    return project_root / ".toolbase" / "serve.yaml"
+
+
+def user_profiles_dir(*, base: Optional[Path] = None) -> Path:
+    """``~/.toolbase/profiles/`` — user-level profile files.
+
+    One file per profile (``<name>.yaml``). Does NOT create the dir;
+    callers create it when writing.
+    """
+    return _user_root(base) / "profiles"
+
+
+def project_profiles_dir(project_root: Path) -> Path:
+    """``<project>/.toolbase/profiles/`` — project-level profile files.
+
+    Same default-project special-case as ``project_manifest_path``.
+    """
+    if _is_default_project(project_root):
+        return project_root / "profiles"
+    return project_root / ".toolbase" / "profiles"
+
+
 def _is_default_project(project_root: Path) -> bool:
     """Return True if ``project_root`` IS the default-project dir.
 

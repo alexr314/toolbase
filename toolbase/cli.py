@@ -342,7 +342,7 @@ class _SectionedGroup(click.Group):
         ),
         (
             "Installing & serving",
-            ["search", "install", "uninstall", "list", "serve", "logs", "groups"],
+            ["search", "install", "uninstall", "list", "serve", "logs"],
         ),
         (
             "Configuration",
@@ -4782,88 +4782,18 @@ def toolbase_config_dir() -> Path:
     return _config_mod.CONFIG_DIR
 
 
-class _ServeGroup(click.Group):
-    """``serve``-specific group that lets toolkit names appear as positional
-    args without colliding with subcommand dispatch.
-
-    Click's normal behavior is to interpret the first positional after the
-    group name as a subcommand. Without this override, ``tb serve
-    arxiv-search`` would error with "No such command 'arxiv-search'."
-    Forcing users to write ``-t arxiv-search`` is mechanically correct but
-    unfriendly.
-
-    Strategy: rewrite ``args`` early in ``parse_args``. Bare positional
-    names that aren't reserved subcommand names get rewritten as
-    ``-t NAME`` pairs. Subcommand calls (``serve enable foo``,
-    ``serve config --show``) take the unmodified path.
-
-    The reserved subcommand names are listed in ``RESERVED`` below; any
-    toolkit colliding with one of those would still need ``-t``. The
-    validator's name shape allows ``config`` etc. as toolkit names so
-    this is technically possible, but rare.
-    """
-
-    RESERVED = {"enable", "disable", "enable-tool", "disable-tool", "config"}
-
-    def parse_args(self, ctx, args):
-        # Walk leading non-flag tokens. If none of them match a reserved
-        # subcommand, treat them all as ``-t`` values. If any of them
-        # *does* match a reserved name, we leave args untouched and let
-        # Click's normal subcommand dispatch handle it.
-        leading: list[str] = []
-        rest_idx = 0
-        while rest_idx < len(args) and not args[rest_idx].startswith("-"):
-            leading.append(args[rest_idx])
-            rest_idx += 1
-        if leading and not any(t in self.RESERVED for t in leading):
-            rewritten: list[str] = []
-            for name in leading:
-                rewritten.extend(["-t", name])
-            rewritten.extend(args[rest_idx:])
-            args = rewritten
-        return super().parse_args(ctx, args)
-
-
-@main.group(cls=_ServeGroup, invoke_without_command=True)
+@main.group(invoke_without_command=True)
 @click.option(
-    '--toolkit', '-t', 'toolkits_flag', multiple=True, metavar='NAME',
+    '--profile', 'profile_name', default=None, metavar='NAME',
     help=(
-        'Serve only this toolkit (repeatable). Replaces the default set for '
-        'this invocation. Bare positional names also work: '
-        'tb serve aster heptapod is equivalent to -t aster -t heptapod.'
-    ),
-)
-@click.option(
-    '--group', 'group_name', default=None,
-    help='Serve a named tool group from ~/.toolbase/serve.yaml (one-shot).',
-)
-@click.option(
-    '--enable-tool', 'enable_tool', multiple=True, metavar='TOOLKIT__TOOL',
-    help=(
-        'Enable a single tool, switching to allowlist mode for its toolkit '
-        '(only listed tools serve). One-shot, does not persist. Repeatable.'
-    ),
-)
-@click.option(
-    '--disable-tool', 'disable_tool', multiple=True, metavar='TOOLKIT__TOOL',
-    help=(
-        'Disable a single tool from this serve session (one-shot, does not '
-        'persist). Wins over --enable-tool for the same tool. Repeatable.'
-    ),
-)
-@click.option(
-    '--enable-bundle', 'enable_bundle', multiple=True, metavar='TOOLKIT__BUNDLE',
-    help=(
-        'Serve only tools belonging to the named bundle within that '
-        'toolkit (one-shot). Requires the toolkit to declare a '
-        'bundles: block in its toolkit.yaml. If the bundle is currently '
-        'unavailable (missing required config keys) or undeclared, a clear '
-        'reason is surfaced at startup without crashing. Repeatable.'
+        'Serve a specific profile this invocation (one-shot, does not '
+        'persist). Without it, the active profile is resolved from '
+        'serve.yaml default.profile, else the implicit "default" profile.'
     ),
 )
 @click.option(
     '--dry-run', '-d', 'dry_run', is_flag=True, default=False,
-    help='Print the resolved serve set and exit without starting the server.',
+    help='Print the active profile and what it selects, then exit.',
 )
 @click.option(
     '--call-timeout', 'call_timeout', type=float, default=None,
@@ -4879,40 +4809,33 @@ class _ServeGroup(click.Group):
     help='Run without TUI. Currently the only supported mode.',
 )
 @click.pass_context
-def serve(ctx, toolkits_flag, group_name, enable_tool, disable_tool, enable_bundle, dry_run, call_timeout, no_tui):
+def serve(ctx, profile_name, dry_run, call_timeout, no_tui):
     """
-    Start the MCP server for installed toolkits.
+    Start the MCP server for the active profile's tools.
 
-    With no arguments, serves all installed toolkits (minus anything in
-    ~/.toolbase/serve.yaml's default.toolkits.disabled). Pass toolkit
-    names positionally, or use --toolkit / -t (repeatable), or --group to
-    narrow the set for this invocation. Use the subcommands below to
-    persistently edit defaults; see also "toolbase groups" for managing
-    named subsets.
+    Serves the tools selected by the active profile. The active profile is
+    resolved in order: --profile flag, then default.profile in serve.yaml,
+    then an implicit profile named "default". If none resolve, serve errors
+    with a hint — there is no "serve everything" fallback.
+
+    You normally don't run this yourself: your agent client (e.g. Claude
+    Code) spawns it. Curate what's served with `tb activate` /
+    `tb deactivate`, or manage named profiles with `tb profile`.
 
     \b
     Examples:
-        tb serve                              # all installed
-        tb serve aster                        # one toolkit (positional)
-        tb serve aster arxiv-search           # several
-        tb serve -t aster -t arxiv-search     # same, via flags
-        tb serve --group exoplanet-pipeline   # named group
-        tb serve aster --enable-tool aster__transit
-        tb serve --disable-tool aster__heavy
-        tb serve --dry-run                    # preview, then exit
+        tb serve                        # active profile
+        tb serve --profile paper        # one-shot: serve the 'paper' profile
+        tb serve --dry-run              # preview the resolved selection
 
     \b
-    Persistent configuration lives in ~/.toolbase/serve.yaml. Edit
-    directly, or use the subcommands below.
-
-    Configure Claude Code with (use the canonical "toolbase" command in
-    config files; "tb" works too but is documented as a convenience alias):
+    Wire it into Claude Code (the canonical command is "toolbase"; "tb"
+    is an alias):
 
     \b
         {"mcpServers": {"toolbase": {"command": "toolbase",
                                        "args": ["serve"]}}}
     """
-    toolkits = toolkits_flag
     # Subcommand path: don't run the server, defer to the subcommand.
     if ctx.invoked_subcommand is not None:
         return
@@ -4923,147 +4846,87 @@ def serve(ctx, toolkits_flag, group_name, enable_tool, disable_tool, enable_bund
         )
         sys.exit(2)
 
-    from .serve.config import (
-        load_serve_config,
-        resolve_serve_set,
-        ServeConfigError,
-        SERVE_CONFIG_PATH,
-    )
-    from .serve.orchestrator import discover_toolkits, serve as _serve_entry
+    from .serve.profiles import resolve_profile, NoActiveProfileError
+    from .serve.config import ServeConfigError
 
-    # Claim serve.log mirroring before anything else can take the
-    # singleton. Project-discovery during ``discover_toolkits`` calls
-    # ``get_logger()`` with no kwarg and would otherwise lock the
-    # logger into ``serve_log=False`` for the rest of the process.
-    # The orchestrator also calls ``get_logger(serve_log=True)`` later;
-    # it's idempotent.
+    # Claim serve.log mirroring before anything else can take the singleton
+    # (it locks serve_log on first construction; the orchestrator re-asks
+    # idempotently later).
     from .logging.logger import get_logger as _get_logger
     _get_logger(serve_log=True)
 
+    project_root, _src = _resolve_active_project_root()
+
     try:
-        cfg = load_serve_config()
+        profile = resolve_profile(project_root, cli_profile=profile_name)
+    except NoActiveProfileError as e:
+        console.print(f"[red]{e}[/red]")
+        sys.exit(1)
     except ServeConfigError as e:
         console.print(f"[red]Error in serve config:[/red] {e}")
-        console.print(f"[dim]Edit {SERVE_CONFIG_PATH} or remove it to reset.[/dim]")
         sys.exit(1)
 
-    discoveries = discover_toolkits()
-    installed_names = [d.name for d in discoveries if d.skip_reason is None]
-
-    try:
-        resolved = resolve_serve_set(
-            installed_toolkits=installed_names,
-            config=cfg,
-            positional_toolkits=list(toolkits),
-            group_name=group_name,
-            enable_tools=list(enable_tool),
-            disable_tools=list(disable_tool),
-            enable_bundles=list(enable_bundle),
-        )
-    except ServeConfigError as e:
-        console.print(f"[red]{e}[/red]")
-        sys.exit(2)
-
     if dry_run:
-        _print_resolution(resolved, discoveries)
+        _print_resolution(profile)
         return
-
-    # Bare serve flow with no narrowing flags should keep legacy behavior
-    # (serve everything, no resolver). Only thread the resolved set when
-    # the user actually narrowed something.
-    narrowed = bool(toolkits or group_name or enable_tool or disable_tool
-                    or enable_bundle
-                    or cfg.default.disabled_toolkits or cfg.default.disabled_tools)
 
     # The MCP stdio protocol owns this process's stdin/stdout, so we do NOT
     # use the module-level `console` here (which writes to stdout). The
     # orchestrator builds its own stderr-bound Console.
-    from .serve.orchestrator import DEFAULT_CALL_TIMEOUT_S
+    from .serve.orchestrator import DEFAULT_CALL_TIMEOUT_S, serve as _serve_entry
     timeout_s = call_timeout if call_timeout is not None else DEFAULT_CALL_TIMEOUT_S
-    rc = _serve_entry(
-        no_tui=True,
-        resolved=resolved if narrowed else None,
-        call_timeout_s=timeout_s,
-    )
+    rc = _serve_entry(no_tui=True, profile=profile, call_timeout_s=timeout_s)
     sys.exit(rc)
 
 
-def _print_resolution(resolved, discoveries) -> None:
-    """Render --dry-run output: what would be served and how we got there.
+def _print_resolution(profile) -> None:
+    """Render --dry-run output: the active profile and what it selects.
 
-    Two output modes, picked automatically:
-      - Compact: when nothing is overriding the default (no positional,
-        no group, no per-tool flag, no default disables). One-line
-        resolution. Useful when the user is just confirming defaults.
-      - Detailed: when overrides are layered. Per-toolkit tool counts and
-        a step-by-step resolution path for debuggability.
+    Shows the profile name + provenance, each selected toolkit and its
+    per-toolkit curation (bundles / enabled / disabled), and the absolute
+    serve.yaml blocklist. Exact served tools also depend on each toolkit's
+    bundle membership and config-gating, so this is the selection view, not
+    the final tool list — `tb list -v` gives the tool-level view.
     """
-    installed_meta = {d.name: d for d in discoveries}
-
-    # "No overrides" = exactly one entry in resolution_path AND it's the
-    # untouched default. The resolver appends "default: all installed"
-    # verbatim in that case.
-    is_plain_default = (
-        len(resolved.resolution_path) == 1
-        and resolved.resolution_path[0] == "default: all installed"
-        and not resolved.disable_qualified
+    console.print(
+        f"\n[bold]Active profile:[/bold] [cyan]{profile.name}[/cyan] "
+        f"[dim]({profile.source})[/dim]"
     )
-
-    console.print("\n[bold]Resolved serve set:[/bold]")
-    if not resolved.toolkits:
-        console.print("  [dim](nothing)[/dim]")
-    for tk in resolved.toolkits:
-        meta = installed_meta.get(tk)
-        if meta is not None and meta.meta:
-            total = meta.meta.get("tools_count", "?")
-        else:
-            total = "?"
-        per_tool = resolved.tools.get(tk)
-        if per_tool is None:
-            disables_here = [
-                q.split("__", 1)[1]
-                for q in resolved.disable_qualified
-                if q.startswith(f"{tk}__")
-            ]
-            if disables_here:
-                # If we know the total, show "(N of M tools, except: X)".
-                if isinstance(total, int):
-                    served = total - len(disables_here)
-                    console.print(
-                        f"  [cyan]{tk}[/cyan] ({served} of {total} tools)"
-                    )
-                    console.print(f"    disabled: {', '.join(disables_here)}")
-                else:
-                    console.print(
-                        f"  [cyan]{tk}[/cyan] (all tools except "
-                        f"{', '.join(disables_here)})"
-                    )
-            else:
-                console.print(f"  [cyan]{tk}[/cyan] ({total} of {total} tools)"
-                              if isinstance(total, int)
-                              else f"  [cyan]{tk}[/cyan] (all tools)")
-        else:
+    if not profile.toolkits:
+        console.print("  [dim](profile selects no toolkits)[/dim]")
+    for tk, sel in profile.toolkits.items():
+        if not sel.is_allowlist and not sel.disabled_tools:
+            console.print(f"  [cyan]{tk}[/cyan] [dim](whole toolkit)[/dim]")
+            continue
+        console.print(f"  [cyan]{tk}[/cyan]")
+        if sel.bundles is not None:
             console.print(
-                f"  [cyan]{tk}[/cyan] ({len(per_tool)} of {total} tools)"
+                f"    bundles: {', '.join(sel.bundles) or '(none)'}"
             )
-            console.print(f"    enabled: {', '.join(per_tool)}")
+        if sel.enabled_tools is not None:
+            console.print(
+                f"    enabled tools: {', '.join(sel.enabled_tools) or '(none)'}"
+            )
+        if sel.disabled_tools:
+            console.print(
+                f"    disabled tools: {', '.join(sel.disabled_tools)}"
+            )
 
-    if resolved.warnings:
-        console.print("\n[bold yellow]Warnings:[/bold yellow]")
-        for w in resolved.warnings:
-            console.print(f"  [yellow]•[/yellow] {w}")
+    if profile.disabled_toolkits or profile.disabled_tools:
+        console.print(
+            "\n[bold]Absolute blocklist (serve.yaml default.disabled):[/bold]"
+        )
+        if profile.disabled_toolkits:
+            console.print(
+                f"  toolkits: {', '.join(profile.disabled_toolkits)}"
+            )
+        if profile.disabled_tools:
+            console.print(f"  tools: {', '.join(profile.disabled_tools)}")
 
-    if is_plain_default:
-        from .serve.config import SERVE_CONFIG_PATH
-        if SERVE_CONFIG_PATH.exists():
-            console.print(f"\nResolution: default from {SERVE_CONFIG_PATH}")
-        else:
-            console.print(f"\nResolution: default (no {SERVE_CONFIG_PATH})")
-        return
-
-    console.print("\n[bold]Resolution path:[/bold]")
-    for step in resolved.resolution_path:
-        console.print(f"  {step}")
+    console.print(
+        "\n[dim]Exact served tools also depend on bundle membership and "
+        "config-gating. Run `tb list -v` for the tool-level view.[/dim]"
+    )
 
 
 @serve.command('enable', short_help='Persistently enable a toolkit by default.')
@@ -5168,149 +5031,6 @@ def serve_config(action):
         )
         return
     console.print(SERVE_CONFIG_PATH.read_text())
-
-
-@main.group()
-def groups():
-    """Manage tool groups in ~/.toolbase/serve.yaml."""
-    pass
-
-
-@groups.command('list', short_help='List all configured tool groups.')
-def groups_list():
-    """List all configured tool groups."""
-    from .serve.config import load_serve_config
-
-    cfg = load_serve_config()
-    if not cfg.groups:
-        console.print("[dim]No groups defined.[/dim]\n")
-        console.print("Create one combining several toolkits:")
-        console.print(
-            "  [cyan]tb groups create exoplanet-pipeline aster arxiv-search[/cyan]\n"
-        )
-        console.print("Or include several toolkits but exclude a slow tool:")
-        console.print(
-            "  [cyan]tb groups create exoplanet-pipeline aster arxiv-search "
-            "--exclude-tool aster__heavy_simulation[/cyan]\n"
-        )
-        console.print(
-            "Then serve it with: [cyan]tb serve --group exoplanet-pipeline[/cyan]"
-        )
-        return
-    for name, g in cfg.groups.items():
-        console.print(f"[bold cyan]{name}[/bold cyan]")
-        console.print(f"  toolkits: {', '.join(g.toolkits) or '(none)'}")
-        if g.disabled_tools:
-            console.print(f"  excludes: {', '.join(g.disabled_tools)}")
-
-
-@groups.command(
-    'create',
-    short_help='Create a new group spanning multiple toolkits.',
-)
-@click.argument('name')
-@click.argument('toolkits', nargs=-1, required=True)
-@click.option(
-    '--exclude-tool', 'exclude_tool', multiple=True, metavar='TOOLKIT__TOOL',
-    help=(
-        'Exclude a specific tool from the group (repeatable). The named '
-        'toolkit must be one of the positional toolkits above.'
-    ),
-)
-def groups_create(name, toolkits, exclude_tool):
-    """Create a new group containing the given toolkits.
-
-    \b
-    A group must contain at least two toolkits — single-toolkit invocations
-    are better expressed as `tb serve <toolkit>` directly.
-
-    \b
-    Examples:
-        tb groups create exoplanet aster arxiv-search
-        tb groups create exoplanet aster arxiv-search \\
-            --exclude-tool aster__heavy_simulation
-    """
-    from .serve.config import (
-        load_serve_config, save_serve_config, Group, _split_tool, ServeConfigError,
-    )
-
-    if len(toolkits) < 2:
-        console.print(
-            "[red]✗ A group must contain at least two toolkits.[/red]"
-        )
-        console.print(
-            f"For a single toolkit, use [cyan]tb serve {toolkits[0]}[/cyan] "
-            "directly — no group needed."
-        )
-        sys.exit(2)
-
-    cfg = load_serve_config()
-    if name in cfg.groups:
-        console.print(f"[red]Group '{name}' already exists.[/red]")
-        console.print(f"Use [cyan]tb groups edit[/cyan] to modify it.")
-        sys.exit(1)
-
-    # Validate every --exclude-tool reference: it must be well-shaped and
-    # name a toolkit in this group.
-    toolkit_set = set(toolkits)
-    excludes: list[str] = []
-    for q in exclude_tool:
-        try:
-            tk, _t = _split_tool(q)
-        except ServeConfigError as e:
-            console.print(f"[red]✗ {e}[/red]")
-            sys.exit(2)
-        if tk not in toolkit_set:
-            console.print(
-                f"[red]✗ --exclude-tool '{q}' references '{tk}', which "
-                f"isn't in this group ({', '.join(toolkits)}).[/red]"
-            )
-            sys.exit(2)
-        excludes.append(q)
-
-    cfg.groups[name] = Group(
-        name=name, toolkits=list(toolkits), disabled_tools=excludes,
-    )
-    save_serve_config(cfg)
-    extra = f", excluding {len(excludes)} tool(s)" if excludes else ""
-    console.print(
-        f"[green]✓[/green] Created group '{name}' with {len(toolkits)} "
-        f"toolkit(s){extra}."
-    )
-
-
-@groups.command('edit', short_help='Open serve.yaml in $EDITOR to edit groups.')
-def groups_edit():
-    """Open the serve config in $EDITOR (groups live under groups:)."""
-    from .serve.config import SERVE_CONFIG_PATH
-
-    # Ensure the file exists so $EDITOR has something to open.
-    if not SERVE_CONFIG_PATH.exists():
-        SERVE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        SERVE_CONFIG_PATH.write_text("groups: {}\n")
-    click.edit(filename=str(SERVE_CONFIG_PATH))
-
-
-@groups.command('delete', short_help='Delete a tool group from serve.yaml.')
-@click.argument('name')
-@_interactive_options
-def groups_delete(name, yes, no_, no_input):
-    """Delete a tool group from serve.yaml."""
-    from .serve.config import load_serve_config, save_serve_config
-
-    mode = _resolve_prompt_mode(yes, no_, no_input)
-    cfg = load_serve_config()
-    if name not in cfg.groups:
-        console.print(f"[red]Group '{name}' does not exist.[/red]")
-        sys.exit(1)
-    if not _confirm(
-        f"Delete group '{name}'?", default=False, mode=mode, consequential=True,
-    ):
-        console.print("[dim]Cancelled.[/dim]")
-        sys.exit(0)
-    del cfg.groups[name]
-    save_serve_config(cfg)
-    console.print(f"[green]✓[/green] Deleted group '{name}'.")
 
 
 @main.command()
