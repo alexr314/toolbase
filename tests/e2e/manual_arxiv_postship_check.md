@@ -46,7 +46,7 @@ optionally a fresh shell. Don't try to bake them into pytest.
 ## Step 1 — Confirm the registry has the toolkit
 
 `toolbase search` is still a placeholder as of 0.3.0
-("The search command is not yet implemented"). Until it ships,
+("Search is not available yet."). Until it ships,
 this step is a direct API check or a website browse:
 
 ```bash

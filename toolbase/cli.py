@@ -2814,8 +2814,7 @@ def search(query, category):
         toolbase search --category astro
         toolbase search transit --category astro
     """
-    console.print("[yellow]The search command is not yet implemented.[/yellow]")
-    console.print("This will be added in Phase 3 of the development.")
+    console.print("[yellow]Search is not available yet.[/yellow]")
     sys.exit(1)
 
 
@@ -3051,7 +3050,7 @@ def verify_conda_available():
             "Please install conda or mamba:\n"
             "  - Miniconda: https://docs.conda.io/en/latest/miniconda.html\n"
             "  - Mamba: https://mamba.readthedocs.io/\n\n"
-            "Alternatively, Docker mode (Phase 3B) will support this toolkit."
+            "Alternatively, Docker mode (not yet available) will support this toolkit."
         )
 
 
@@ -3904,7 +3903,7 @@ def install(name, version, global_scope, local_scope, editable, no_skills, activ
                 current_py = get_current_python()
                 if python_version != current_py:
                     console.print(f"[blue]Docker mode: requires Python {python_version} (current: {current_py})[/blue]")
-            console.print("[yellow]Docker mode will be available in Phase 3B[/yellow]\n")
+            console.print("[yellow]Docker mode is not yet available[/yellow]\n")
 
     except FileNotFoundError as e:
         console.print(f"[red]✗ Error: {e}[/red]")
@@ -3920,7 +3919,7 @@ def install(name, version, global_scope, local_scope, editable, no_skills, activ
     if env_type == 'docker':
         console.print(
             "[red]✗ This toolkit requires Docker mode, which is not yet supported.[/red]\n"
-            "[yellow]  Docker mode is planned for Phase 3B.[/yellow]"
+            "[yellow]  Docker mode is planned but not yet available.[/yellow]"
         )
         # Roll back the extracted toolkit so we don't leave a broken install behind
         shutil.rmtree(toolkit_dir, ignore_errors=True)
