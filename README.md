@@ -22,18 +22,23 @@ pip install toolbase
 # Install a toolkit from the registry (global by default)
 tb install arxiv-search
 
-# Or scope an install to the current project's manifest
-tb install -l arxiv-search
+# Expose it to the agent (installing alone serves nothing)
+tb activate arxiv-search
 
-# See what you have
+# Wire toolbase into Claude Code (writes its MCP config for you)
+tb connect claude-code
+
+# See what's installed and what's active
 tb list
-
-# Serve installed toolkits over MCP stdio
-tb serve
 ```
 
 `tb` is a shorter alias for `toolbase`; both ship with the package
 and behave identically.
+
+**Install, then activate.** Installing places a toolkit in the cache but
+does not serve it — nothing reaches the agent until you `tb activate` it
+(conda-style: install ≠ activate). `tb install -a arxiv-search` does both
+in one step. Use `tb deactivate` to hide a toolkit, bundle, or tool again.
 
 Installs are global by default (`-g`). Use `-l` to pin a toolkit into
 the current project's `.toolbase/manifest.yaml` instead — the binary
@@ -41,23 +46,30 @@ still lives in the shared global cache, only the pin is project-scoped,
 so a collaborator who clones the project and runs `tb install` (no
 args) gets the same toolkits at the same versions.
 
-To use the served toolkits in [Claude Code](https://claude.ai/code), add
-this to its MCP config:
+**`tb connect` replaces hand-editing MCP config.** It writes the
+`toolbase` server entry into [Claude Code](https://claude.ai/code)'s
+config (`~/.claude.json` for user scope, `.mcp.json` for `-l` project
+scope). Claude Code then spawns its own `toolbase serve` subprocess and
+discovers the active profile's tools. To watch tool calls fire in real
+time, run `tb logs` in another terminal. (If you'd rather wire it by
+hand, the entry is `{"mcpServers": {"toolbase": {"command": "toolbase",
+"args": ["serve"]}}}`.)
 
-```json
-{
-  "mcpServers": {
-    "toolbase": {
-      "command": "toolbase",
-      "args": ["serve"]
-    }
-  }
-}
+### Curating what the agent sees
+
+`tb activate` / `tb deactivate` edit the active **profile** — a named
+curated set of tools. Three granularities:
+
+```bash
+tb activate heptapod                 # the whole toolkit
+tb activate heptapod/pythia          # one bundle (a coherent group of tools)
+tb activate heptapod__run_pythia     # one specific tool
 ```
 
-Claude Code will spawn its own `toolbase serve` subprocess and
-discover all installed toolkits' tools. To watch tool calls fire in
-real time, run `tb logs` in another terminal.
+Most users only ever touch the default profile via these commands. Power
+users can keep several named profiles (`tb profile create paper`,
+`tb connect claude-code --profile paper`) and switch between them. Run
+`tb profile tools` to see the bundles and tools a toolkit offers.
 
 ---
 
@@ -89,20 +101,20 @@ publish→install round-trip on every change, install it editable:
 
 ```bash
 cd my-toolkit
-tb install -e .                 # live symlink to this source dir
-tb serve my-toolkit             # serve it; edit tools/, restart, edits are live
+tb install -e . -a              # live symlink to this source dir, and activate it
+# edit tools/, restart your agent session — edits are live
 ```
 
 An editable install symlinks your source into the cache and builds the
 environment there (your source tree stays clean — no `.venv` written
-into it). Edits to your tool source appear on the next `tb serve`. If
-you change dependencies, re-run `tb install -e .` to rebuild the env.
+into it). Edits to your tool source appear on the next serve. If you
+change dependencies, re-run `tb install -e .` to rebuild the env.
 
 For the agent-assisted authoring flow (recommended for first toolkits),
 see <https://toolbase-ai.com/docs/scaffold-with-an-agent>.
 
 For the full author guide — toolkit layout, tool conventions, skills,
-groups, expected_toolkits, configuration — see
+bundles, expected_toolkits, configuration — see
 <https://toolbase-ai.com/docs/authoring> and
 <https://toolbase-ai.com/docs/configuration>.
 
@@ -116,15 +128,23 @@ groups, expected_toolkits, configuration — see
   `publish` — author and ship toolkits.
 - `search`, `install`, `uninstall`, `list` — manage installed toolkits.
   `install` takes `-g` (global, the default), `-l` (pin into this
-  project), or `-e <path>` (editable, live symlink to a local source).
-- `serve` — run installed toolkits as an MCP stdio server. Supports
-  positional toolkit names, `--group`, `--enable-tool`,
-  `--disable-tool`, `--dry-run`, `--call-timeout`.
+  project), `-e <path>` (editable, live symlink to a local source), or
+  `-a` (also activate). `list` takes `-v` for a per-tool served/hidden
+  view.
+- `activate` / `deactivate` — expose or hide a toolkit, bundle
+  (`toolkit/bundle`), or tool (`toolkit__tool`) in the active profile.
+- `connect <client>` / `disconnect <client>` — write (or remove)
+  toolbase in an agent client's MCP config (`claude-code` in v1).
+  `--list` shows where it's wired; `--clients` lists supported targets.
+- `serve` — run the active profile's tools as an MCP stdio server
+  (`--profile`, `--dry-run`, `--call-timeout`). Normally spawned by the
+  client, not run by hand.
+- `profile <list|show|create|edit|delete|set-default|path|tools>` —
+  manage named profiles (curated tool sets).
 - `setup <toolkit>` — run a toolkit's `setup.py` (`--reset`, `--check`).
 - `config <show|edit|path|set|unset|validate>` — manage per-toolkit
   config files at `~/.toolbase/config/<toolkit>.yaml`.
 - `logs` — tail the serve log with Rich coloring.
-- `groups` — manage named tool subsets that span toolkits.
 
 **Features:**
 
@@ -152,8 +172,11 @@ groups, expected_toolkits, configuration — see
 - **Multi-tier execution:** same-Python toolkits run in venv,
   different-Python toolkits run under conda (auto-detected). Docker
   mode coming in 3B.
-- **Per-tool selection:** enable or disable individual tools per
-  serve session or persistently in `~/.toolbase/serve.yaml`.
+- **Profiles:** curated tool sets assembled across toolkits at
+  toolkit / bundle / tool granularity, stored one-file-per-profile under
+  `.toolbase/profiles/`. Activate with `tb activate`; the active profile
+  is chosen by `default.profile` in `~/.toolbase/serve.yaml` (or a
+  project-level override).
 - **Skills surfacing:** a toolkit's `skills/*.md` files are
   auto-mirrored to `~/.claude/skills/` so Claude Code discovers
   them. Symlinked on POSIX for live edits, copied on Windows.

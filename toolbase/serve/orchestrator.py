@@ -428,18 +428,18 @@ def _read_tools_spec(toolkit_path: Path) -> List[Dict[str, Any]]:
     return out
 
 
-def _read_tool_groups_and_membership(
+def _read_bundles_and_membership(
     toolkit_path: Path,
 ) -> Tuple[Optional[Dict[str, Dict[str, Any]]], Dict[str, Optional[str]]]:
-    """Extract the ``tool_groups:`` block and per-tool group membership.
+    """Extract the ``bundles:`` block and per-tool bundle membership.
 
-    Returns ``(tool_groups_block, name_to_group)``:
+    Returns ``(bundles_block, name_to_bundle)``:
 
-    - ``tool_groups_block``: the parsed ``tool_groups:`` mapping, or
+    - ``bundles_block``: the parsed ``bundles:`` mapping, or
       ``None`` if the toolkit doesn't declare one (backward compat —
       no gating in that case).
-    - ``name_to_group``: tool name → group name (or ``None`` for tools
-      that don't declare a group). Empty if the yaml is missing or
+    - ``name_to_bundle``: tool name → bundle name (or ``None`` for tools
+      that don't declare a bundle). Empty if the yaml is missing or
       malformed (gate-evaluation falls back to "all served").
 
     Defensive reading: any malformed shape returns the safe fallback
@@ -457,26 +457,26 @@ def _read_tool_groups_and_membership(
     if not isinstance(data, dict):
         return None, {}
 
-    raw_block = data.get("tool_groups")
-    tool_groups_block: Optional[Dict[str, Dict[str, Any]]] = None
+    raw_block = data.get("bundles")
+    bundles_block: Optional[Dict[str, Dict[str, Any]]] = None
     if isinstance(raw_block, dict) and raw_block:
         # Keep only mapping-shaped entries; ignore malformed ones rather
         # than failing the whole serve startup. Validation at publish
         # time is the gate for shape correctness.
         cleaned_block: Dict[str, Dict[str, Any]] = {}
-        for gname, gentry in raw_block.items():
-            if not isinstance(gname, str):
+        for bname, bentry in raw_block.items():
+            if not isinstance(bname, str):
                 continue
-            if isinstance(gentry, dict):
-                cleaned_block[gname] = dict(gentry)
-            elif gentry is None:
+            if isinstance(bentry, dict):
+                cleaned_block[bname] = dict(bentry)
+            elif bentry is None:
                 # YAML ``foo:`` with no value parses as None — treat
-                # as an empty group entry (no requires).
-                cleaned_block[gname] = {}
+                # as an empty bundle entry (no requires).
+                cleaned_block[bname] = {}
         if cleaned_block:
-            tool_groups_block = cleaned_block
+            bundles_block = cleaned_block
 
-    name_to_group: Dict[str, Optional[str]] = {}
+    name_to_bundle: Dict[str, Optional[str]] = {}
     tools = data.get("tools") if isinstance(data, dict) else None
     if isinstance(tools, list):
         for entry in tools:
@@ -485,22 +485,22 @@ def _read_tool_groups_and_membership(
             tool_name = entry.get("name")
             if not isinstance(tool_name, str):
                 continue
-            group = entry.get("group")
-            if isinstance(group, str) and group:
-                name_to_group[tool_name] = group
+            bundle = entry.get("bundle")
+            if isinstance(bundle, str) and bundle:
+                name_to_bundle[tool_name] = bundle
             else:
-                name_to_group[tool_name] = None
+                name_to_bundle[tool_name] = None
 
-    return tool_groups_block, name_to_group
+    return bundles_block, name_to_bundle
 
 
-def _resolve_group_availability(
+def _resolve_bundle_availability(
     disc: "ToolkitDiscovery",
 ) -> Tuple[Any, Dict[str, Optional[str]]]:
-    """Evaluate this toolkit's ``tool_groups:`` against its resolved config.
+    """Evaluate this toolkit's ``bundles:`` against its resolved config.
 
-    Returns ``(GroupAvailability, name_to_group)``. The orchestrator
-    uses ``GroupAvailability.is_group_available(group)`` per tool at
+    Returns ``(BundleAvailability, name_to_bundle)``. The orchestrator
+    uses ``BundleAvailability.is_bundle_available(bundle)`` per tool at
     spawn time to decide whether to expose it.
 
     Resolution sourcing: same two-layer user→project merge that the
@@ -514,12 +514,12 @@ def _resolve_group_availability(
     returns an empty availability that gates nothing — pass-through
     behavior so a broken yaml doesn't take down all toolkits.
     """
-    from .tool_groups import (
-        GroupAvailability,
-        evaluate_tool_groups,
+    from .bundles import (
+        BundleAvailability,
+        evaluate_bundles,
     )
 
-    tool_groups_block, name_to_group = _read_tool_groups_and_membership(
+    bundles_block, name_to_bundle = _read_bundles_and_membership(
         disc.path
     )
 
@@ -543,8 +543,8 @@ def _resolve_group_availability(
         # startup over a config-resolution glitch.
         resolved_config = {}
 
-    availability = evaluate_tool_groups(tool_groups_block, resolved_config)
-    return availability, name_to_group
+    availability = evaluate_bundles(bundles_block, resolved_config)
+    return availability, name_to_bundle
 
 
 def _build_host_command(
@@ -694,7 +694,7 @@ class Orchestrator:
         *,
         console: Optional[Console] = None,
         toolkits_dir: Optional[Path] = None,
-        resolved: Optional[Any] = None,  # serve.config.ResolvedSet, optional
+        profile: Optional[Any] = None,  # serve.profiles.ResolvedProfile
         call_timeout_s: float = DEFAULT_CALL_TIMEOUT_S,
     ):
         self.console = console or Console(stderr=True)
@@ -710,11 +710,21 @@ class Orchestrator:
         self._runtimes: Dict[str, ToolkitRuntime] = {}
         self._proxy_tools: List[Any] = []
         self._shutdown_initiated = False
-        # When set, the resolver has decided which toolkits and (optionally)
-        # which tools per toolkit to expose. None means "serve everything
-        # discoverable" (legacy behavior).
-        self._resolved = resolved
+        # The active profile (``serve.profiles.ResolvedProfile``) decides
+        # which toolkits and which tools per toolkit to expose. None means
+        # "serve every discovered toolkit, uncurated" — used by lower-level
+        # callers (e.g. crash-recovery tests). The CLI always resolves a
+        # profile and passes it, so the "no active profile" requirement is
+        # enforced at the CLI boundary, not here.
+        self._profile = profile
         self._call_timeout_s = call_timeout_s
+
+    def _selection_for(self, name: str):
+        """Return the ``ToolkitSelection`` for a toolkit under the active
+        profile, or ``None`` when no profile is active (serve-all mode)."""
+        if self._profile is None:
+            return None
+        return self._profile.toolkits.get(name)
 
     # ── startup ─────────────────────────────────────────────────────────
 
@@ -735,13 +745,23 @@ class Orchestrator:
             )
             raise RuntimeError("no toolkits installed")
 
-        # If the resolver has narrowed the set, filter discoveries to match.
-        if self._resolved is not None:
-            target_names = set(self._resolved.toolkits)
+        # Filter discoveries to the active profile: only toolkits named in
+        # the profile are served, minus the absolute serve.yaml blocklist.
+        # When no profile is active (serve-all mode) every discovered
+        # toolkit is served.
+        if self._profile is not None:
+            served = set(self._profile.toolkits.keys())
+            disabled_tk = set(self._profile.disabled_toolkits)
             for d in discoveries:
-                if d.skip_reason is None and d.name not in target_names:
-                    d.skip_reason = "not in this serve session"
-            for w in self._resolved.warnings:
+                if d.skip_reason is not None:
+                    continue
+                if d.name in disabled_tk:
+                    d.skip_reason = "disabled in serve.yaml"
+                elif d.name not in served:
+                    d.skip_reason = (
+                        f"not in active profile '{self._profile.name}'"
+                    )
+            for w in self._profile.warnings:
                 self.console.print(f"  [yellow]warning:[/yellow] {w}")
 
         self._print_startup_banner_pre(discoveries)
@@ -951,102 +971,54 @@ class Orchestrator:
         # Build proxies from the canonical MCP listing (richer schema info
         # than the bare tool name list in the handshake).
         from .proxy_tool import make_proxy_tool
-        from .tool_groups import format_skip_log_line
+        from .bundles import format_skip_log_line
 
-        # Determine which tools from this toolkit to actually expose.
-        # `tool_filter` is one of:
-        #   None       — expose all tools (no per-tool filter active)
-        #   List[str]  — expose only tools in this allowlist
-        # Disabled tools (when tool_filter is None) are subtracted via
-        # `tool_disable_set`.
-        tool_filter: Optional[List[str]] = None
-        tool_disable_set: set = set()
-        if self._resolved is not None:
-            allow = self._resolved.tools.get(disc.name)
-            if allow is not None:
-                tool_filter = list(allow)
-            # Pull disabled-tools subtraction list (qualified names).
-            for q in self._resolved.disable_qualified:
-                if q.startswith(f"{disc.name}__"):
-                    tool_disable_set.add(q.split("__", 1)[1])
+        # The active profile's per-toolkit selection (bundles / enabled /
+        # disabled). None when no profile is active (serve-all mode).
+        sel = self._selection_for(disc.name)
 
-        # 0.5.1: evaluate tool_groups against the resolved two-layer
-        # config. Tools whose ``group:`` field names an unavailable
-        # group are dropped from the served set. One stderr line per
-        # dropped group, fired once at startup (NOT per call).
-        availability, name_to_group = _resolve_group_availability(disc)
-        if availability.dropped_groups:
-            # ``--enable-group <tk>__<group>`` requests for unavailable
-            # groups on this toolkit are surfaced separately below; the
-            # logging here covers the implicit-drop case.
-            for gname, missing in availability.dropped_groups.items():
-                line = format_skip_log_line(disc.name, gname, missing)
+        # Global absolute blocklist of qualified tool names (serve.yaml
+        # default.disabled.tools), restricted to this toolkit.
+        global_disabled: set = set()
+        if self._profile is not None:
+            prefix = f"{disc.name}__"
+            for q in self._profile.disabled_tools:
+                if q.startswith(prefix):
+                    global_disabled.add(q.split("__", 1)[1])
+
+        # 0.5.1: evaluate bundles against the resolved two-layer
+        # config. Tools whose ``bundle:`` field names an unavailable
+        # bundle are dropped from the served set. One stderr line per
+        # dropped bundle, fired once at startup (NOT per call).
+        availability, name_to_bundle = _resolve_bundle_availability(disc)
+        if availability.dropped_bundles:
+            for bname, missing in availability.dropped_bundles.items():
+                line = format_skip_log_line(disc.name, bname, missing)
                 # stderr console for visibility + serve.log for grepping.
                 self.console.print(f"  [yellow]⊘[/yellow] [dim]{line}[/dim]")
                 self.logger.log_event(
-                    "group_skipped",
+                    "bundle_skipped",
                     toolkit=disc.name,
-                    group=gname,
+                    bundle=bname,
                     reason="missing_config",
                     missing_keys=",".join(missing),
                     level="warn",
                 )
 
-        # If --enable-group requested specific groups for this toolkit,
-        # translate that into a per-tool allowlist (filter to tools
-        # whose group: is in the requested set). Unavailable requested
-        # groups produce a clear stderr message but don't crash serve.
-        requested_groups: Optional[List[str]] = None
-        if self._resolved is not None:
-            requested = self._resolved.enable_groups.get(disc.name)
-            if requested is not None:
-                requested_groups = list(requested)
-                unavailable = [
-                    g for g in requested_groups
-                    if g in availability.dropped_groups
-                ]
-                undeclared = [
-                    g for g in requested_groups
-                    if g not in availability.dropped_groups
-                    and g not in availability.available_groups
-                ]
-                for g in unavailable:
-                    missing = availability.dropped_groups.get(g, [])
-                    self.console.print(
-                        f"  [red]✗[/red] [dim]{disc.name}__{g}:[/dim] "
-                        f"[red]group not available — "
-                        f"missing config keys [{', '.join(missing)}][/red]"
-                    )
-                for g in undeclared:
-                    self.console.print(
-                        f"  [red]✗[/red] [dim]{disc.name}__{g}:[/dim] "
-                        f"[red]group not declared in toolkit.yaml's "
-                        f"tool_groups: block[/red]"
-                    )
-
         # Forwarder is bound to the toolkit *name*, not the client. The
         # forwarder looks up the live MCPClient on every call so a restart
         # that swaps the client is picked up transparently.
+        from .profiles import tool_is_served
+
         exposed_tools: List[str] = []
         forward = self._make_forwarder(disc.name)
         for defn in spawn.client.get_tool_definitions():
             upstream_name = defn["name"]
-            if tool_filter is not None and upstream_name not in tool_filter:
+            tool_bundle = name_to_bundle.get(upstream_name)
+            if not tool_is_served(
+                upstream_name, tool_bundle, sel, availability, global_disabled
+            ):
                 continue
-            if upstream_name in tool_disable_set:
-                continue
-            # tool_groups gating: drop tools belonging to unavailable
-            # groups. Tools without a group: field always pass.
-            tool_group = name_to_group.get(upstream_name)
-            if not availability.is_group_available(tool_group):
-                continue
-            # --enable-group narrowing: when active for this toolkit,
-            # only tools whose group: is in the requested set are
-            # served. Tools without a group: field are dropped under
-            # this mode (the user opted into a curated subset).
-            if requested_groups is not None:
-                if tool_group is None or tool_group not in requested_groups:
-                    continue
             namespaced = f"{disc.name}__{upstream_name}"
             self._proxy_tools.append(make_proxy_tool(
                 upstream_name=upstream_name,
@@ -1457,16 +1429,17 @@ class Orchestrator:
 def serve(
     *,
     no_tui: bool = True,
-    resolved: Optional[Any] = None,
+    profile: Optional[Any] = None,
     call_timeout_s: float = DEFAULT_CALL_TIMEOUT_S,
 ) -> int:
     """Top-level entry point for ``toolbase serve``.
 
     For now ``no_tui=False`` is rejected (TUI not implemented yet).
 
-    ``resolved`` is an optional ``serve.config.ResolvedSet`` that narrows
-    which toolkits and tools to serve. When None, the legacy "everything"
-    behavior is used.
+    ``profile`` is the resolved active profile (``serve.profiles.
+    ResolvedProfile``) that decides which toolkits and tools to serve.
+    The CLI resolves it before calling here; None means "serve every
+    discovered toolkit, uncurated" (lower-level / test path).
 
     ``call_timeout_s`` is the upper bound on each upstream tool call as
     enforced by Orchestral's MCPClient. Default 60 s.
@@ -1478,7 +1451,7 @@ def serve(
     # stream we're handing to Claude Code.
     console = Console(stderr=True)
     orch = Orchestrator(
-        console=console, resolved=resolved, call_timeout_s=call_timeout_s,
+        console=console, profile=profile, call_timeout_s=call_timeout_s,
     )
 
     try:

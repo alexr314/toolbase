@@ -6,6 +6,31 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ---
 
+## [Unreleased]
+
+Serve/curation revamp. **Breaking** (v0, clean cutover — no compatibility aliases).
+
+### Added
+
+- `toolbase connect <client>` / `disconnect <client>` — write (or remove) the toolbase MCP entry in an agent client's config, replacing the manual JSON copy-paste. Claude Code in v1 (`~/.claude.json` for user scope, `.mcp.json` for `-l` project scope), via a pluggable adapter so Codex / Orchestral can follow. `--list` shows where toolbase is wired; `--clients` lists targets; `--profile` also sets the active profile; `--abspath` writes an absolute binary path. Non-destructive merge, atomic write.
+- `toolbase activate` / `deactivate <toolkit | toolkit/bundle | toolkit__tool>` — expose or hide tools in the active profile. The casual-tier surface; users never need to learn "profiles" to curate.
+- **Profiles** — named curated tool sets, one file per profile under `<scope>/.toolbase/profiles/<name>.yaml`. `toolbase profile <list|show|create|edit|delete|set-default|path|tools>` manages them (replaces `toolbase groups`).
+- `toolbase install -a/--activate` — install and activate in one step.
+- `toolbase list -v` — per-tool served/hidden view with bundle + config-gating annotations; `tb list` now marks each toolkit active/inactive, and `--json` gains an `active` field.
+
+### Changed
+
+- **Nothing-active by default.** Installing a toolkit places it in the cache but serves nothing until you `activate` it (conda-style: install ≠ activate). `tb serve` resolves an active profile — there is no "serve everything" fallback.
+- `serve.yaml` is now defaults-only: `default.profile` (the active profile) and `default.disabled` (absolute blocklists), with a two-layer user→project merge.
+- **Vocabulary:** the author-side intra-toolkit grouping is now a **bundle** (was `tool_groups:` / per-tool `group:`); the user-side curated subset is now a **profile** (was the `groups:` block in `serve.yaml`). The developer unit stays a **toolkit**. `tb serve --enable-bundle` replaces `--enable-group`.
+
+### Removed
+
+- `toolbase groups` and the `groups:` block in `serve.yaml` (replaced by profiles).
+- `tb serve` positional toolkit names and the `--group` / `--enable-tool` / `--disable-tool` one-shot flags (curation now lives in profiles; `--profile` selects one).
+
+---
+
 ## [0.1.0] — 2026-05-22
 
 Initial Toolbase release. Toolbase is the community registry and CLI for AI agent toolkits — a **toolkit** is the publishable unit, and each toolkit bundles one or more **tools** that agents call over the [Model Context Protocol](https://modelcontextprotocol.io). You author and ship toolkits, install them into isolated environments, and serve them to coding agents (Claude Code, Codex) or any MCP client.

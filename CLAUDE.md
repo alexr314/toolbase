@@ -85,7 +85,12 @@ toolbase-package/
 │   ├── serve/
 │   │   ├── orchestrator.py       # discovery → spawn → serve MCP stdio (persistent stdio)
 │   │   ├── proxy_tool.py         # synthesized BaseTool that forwards via MCPClient
-│   │   ├── config.py / tool_groups.py
+│   │   ├── config.py             # serve.yaml: default.profile + default.disabled (defaults only)
+│   │   ├── profiles.py           # per-file profiles, resolution chain, tool_is_served
+│   │   ├── profile_scaffold.py   # ruamel round-trip engine behind tb activate/deactivate
+│   │   ├── bundles.py            # author bundle-availability gating (was tool_groups.py)
+│   ├── connect/                  # tb connect: client-wiring adapters
+│   │   ├── base.py / claude_code.py   # ClientAdapter + Claude Code (.mcp.json / ~/.claude.json)
 │   └── templates/                # init scaffolding (toolkit.yaml, tool_example, mcp/, skills/)
 ├── tests/                        # 51 unit modules (980 tests)
 │   ├── test_categories_api.py / test_interactive_flags.py

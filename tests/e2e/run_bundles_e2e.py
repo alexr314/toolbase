@@ -1,14 +1,14 @@
-"""End-to-end test for the 0.5.1 ``tool_groups.requires:`` micro-feature.
+"""End-to-end test for the 0.5.1 ``bundles.requires:`` micro-feature.
 
 Drives the full conditional-availability surface against a synthetic
 HEPTAPOD-shaped fixture (synthetic config keys; no real MG5 needed):
 
-1. Toolkit declares ``tool_groups:`` with three groups —
+1. Toolkit declares ``bundles:`` with three bundles —
    ``pdg`` (no requires), ``mg5`` (requires ``mg5_path``),
    ``feynrules`` (requires ``wolframscript_path`` + ``feynrules_path``).
-2. Each tool carries a ``group:`` field.
+2. Each tool carries a ``bundle:`` field.
 3. With **no** user config: ``pdg`` is available; ``mg5`` and
-   ``feynrules`` are dropped; tools belonging to those groups don't
+   ``feynrules`` are dropped; tools belonging to those bundles don't
    reach the serve set.
 4. With ``mg5_path`` set at the user layer: ``mg5`` unlocks, ``feynrules``
    stays dropped.
@@ -17,12 +17,12 @@ HEPTAPOD-shaped fixture (synthetic config keys; no real MG5 needed):
 6. With ``<NEEDS VALUE>`` sentinel: still counts as unset.
 7. ``toolbase validate`` rejects a toolkit.yaml whose ``requires:``
    references a config key not in the ``config:`` block.
-8. A 0.5.0-shaped toolkit (no ``tool_groups:`` block) loads on 0.5.1
+8. A 0.5.0-shaped toolkit (no ``bundles:`` block) loads on 0.5.1
    unchanged — backwards-compat sanity.
 
 Run from the repo root:
 
-    python tests/e2e/run_tool_groups_e2e.py
+    python tests/e2e/run_bundles_e2e.py
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ import yaml
 
 
 THIS_DIR = Path(__file__).resolve().parent
-WORK_ROOT = Path(tempfile.gettempdir()) / "tb-tool-groups-e2e"
+WORK_ROOT = Path(tempfile.gettempdir()) / "tb-tool-bundles-e2e"
 FAKE_HOME = WORK_ROOT / "fake-home"
 INSTALL_ROOT = FAKE_HOME / ".toolbase"
 
@@ -51,16 +51,16 @@ VERSION = "0.1.0"
 # ──────────────────────────────────────────────────────────────────
 
 
-def _write_toolkit_yaml(dest: Path, *, with_tool_groups: bool) -> None:
+def _write_toolkit_yaml(dest: Path, *, with_bundles: bool) -> None:
     """Drop a synthetic HEPTAPOD-shaped toolkit.yaml at ``dest``.
 
-    ``with_tool_groups=False`` is the 0.5.0-shape used for the
+    ``with_bundles=False`` is the 0.5.0-shape used for the
     backwards-compat assertion.
     """
     data = {
         "name": TOOLKIT_NAME,
         "version": VERSION,
-        "description": "Synthetic HEPTAPOD-shaped fixture for tool_groups e2e",
+        "description": "Synthetic HEPTAPOD-shaped fixture for bundles e2e",
         "author": "Toolbase test",
         "category": "hep",
         "config": [
@@ -87,27 +87,27 @@ def _write_toolkit_yaml(dest: Path, *, with_tool_groups: bool) -> None:
             {
                 "name": "loose_tool",
                 "function": "tools.loose.loose_tool",
-                "description": "Tool without a group — always served",
+                "description": "Tool without a bundle — always served",
             },
         ],
     }
-    if with_tool_groups:
-        data["tool_groups"] = {
+    if with_bundles:
+        data["bundles"] = {
             "pdg": {},
             "mg5": {"requires": ["mg5_path"]},
             "feynrules": {"requires": ["wolframscript_path", "feynrules_path"]},
         }
-        # Assign tools to groups.
-        data["tools"][0]["group"] = "pdg"
-        data["tools"][1]["group"] = "mg5"
-        data["tools"][2]["group"] = "feynrules"
-        # loose_tool: no group — always served regardless.
+        # Assign tools to bundles.
+        data["tools"][0]["bundle"] = "pdg"
+        data["tools"][1]["bundle"] = "mg5"
+        data["tools"][2]["bundle"] = "feynrules"
+        # loose_tool: no bundle — always served regardless.
     (dest / "toolkit.yaml").write_text(yaml.safe_dump(data, sort_keys=False))
 
 
-def _scaffold_toolkit(dest: Path, *, with_tool_groups: bool) -> None:
+def _scaffold_toolkit(dest: Path, *, with_bundles: bool) -> None:
     dest.mkdir(parents=True, exist_ok=True)
-    _write_toolkit_yaml(dest, with_tool_groups=with_tool_groups)
+    _write_toolkit_yaml(dest, with_bundles=with_bundles)
     (dest / "tools").mkdir(exist_ok=True)
     (dest / "tools" / "__init__.py").write_text("# synthetic\n")
     (dest / "requirements.txt").write_text("orchestral-ai>=1.0.0\n")
@@ -162,17 +162,17 @@ def main() -> int:
     reload(_envs_config)
     from toolbase.serve import orchestrator
     reload(orchestrator)
-    from toolbase.serve import tool_groups as _tg
+    from toolbase.serve import bundles as _tg
     reload(_tg)
 
     # Drop a synthetic toolkit cache slot.
     cache_dir = INSTALL_ROOT / "cache" / TOOLKIT_NAME / VERSION
-    _scaffold_toolkit(cache_dir, with_tool_groups=True)
+    _scaffold_toolkit(cache_dir, with_bundles=True)
 
     from toolbase.serve.orchestrator import (
         ToolkitDiscovery,
-        _resolve_group_availability,
-        _read_tool_groups_and_membership,
+        _resolve_bundle_availability,
+        _read_bundles_and_membership,
     )
 
     disc = ToolkitDiscovery(
@@ -181,38 +181,38 @@ def main() -> int:
 
     # ── Step 1: no config at all → mg5 and feynrules dropped, pdg available.
     print("=" * 60)
-    print("Step 1: no config → groups requiring keys are dropped")
+    print("Step 1: no config → bundles requiring keys are dropped")
     print("=" * 60)
-    availability, mapping = _resolve_group_availability(disc)
-    print(f"  available: {availability.available_groups}")
-    print(f"  dropped:   {dict(availability.dropped_groups)}")
-    if "pdg" not in availability.available_groups:
+    availability, mapping = _resolve_bundle_availability(disc)
+    print(f"  available: {availability.available_bundles}")
+    print(f"  dropped:   {dict(availability.dropped_bundles)}")
+    if "pdg" not in availability.available_bundles:
         print("!!! pdg should be available with no requires")
         return 10
-    if "mg5" not in availability.dropped_groups:
+    if "mg5" not in availability.dropped_bundles:
         print("!!! mg5 should be dropped — missing mg5_path")
         return 11
-    if availability.dropped_groups["mg5"] != ["mg5_path"]:
-        print(f"!!! mg5 dropped_keys mismatch: {availability.dropped_groups['mg5']}")
+    if availability.dropped_bundles["mg5"] != ["mg5_path"]:
+        print(f"!!! mg5 dropped_keys mismatch: {availability.dropped_bundles['mg5']}")
         return 12
-    if "feynrules" not in availability.dropped_groups:
+    if "feynrules" not in availability.dropped_bundles:
         print("!!! feynrules should be dropped")
         return 13
-    # Check the membership map: loose_tool has no group.
+    # Check the membership map: loose_tool has no bundle.
     if mapping.get("loose_tool") is not None:
-        print(f"!!! loose_tool should have group=None, got {mapping['loose_tool']}")
+        print(f"!!! loose_tool should have bundle=None, got {mapping['loose_tool']}")
         return 14
     if mapping.get("mg5_run") != "mg5":
-        print(f"!!! mg5_run should belong to group 'mg5', got {mapping.get('mg5_run')}")
+        print(f"!!! mg5_run should belong to bundle 'mg5', got {mapping.get('mg5_run')}")
         return 15
-    # is_group_available semantics:
-    if not availability.is_group_available(None):
-        print("!!! group=None should always be available")
+    # is_bundle_available semantics:
+    if not availability.is_bundle_available(None):
+        print("!!! bundle=None should always be available")
         return 16
-    if availability.is_group_available("mg5"):
+    if availability.is_bundle_available("mg5"):
         print("!!! mg5 should be reported unavailable")
         return 17
-    print("  ✓ pdg available, mg5 + feynrules dropped, loose_tool has no group")
+    print("  ✓ pdg available, mg5 + feynrules dropped, loose_tool has no bundle")
 
     # ── Step 2: set mg5_path at user layer → mg5 unlocks.
     print()
@@ -220,13 +220,13 @@ def main() -> int:
     print("Step 2: user layer sets mg5_path → mg5 unlocks")
     print("=" * 60)
     _write_user_config(TOOLKIT_NAME, {"mg5_path": "/opt/mg5"})
-    availability, _ = _resolve_group_availability(disc)
-    print(f"  available: {availability.available_groups}")
-    print(f"  dropped:   {dict(availability.dropped_groups)}")
-    if "mg5" not in availability.available_groups:
+    availability, _ = _resolve_bundle_availability(disc)
+    print(f"  available: {availability.available_bundles}")
+    print(f"  dropped:   {dict(availability.dropped_bundles)}")
+    if "mg5" not in availability.available_bundles:
         print("!!! mg5 should be available after setting mg5_path")
         return 20
-    if "feynrules" not in availability.dropped_groups:
+    if "feynrules" not in availability.dropped_bundles:
         print("!!! feynrules still needs more keys; should be dropped")
         return 21
     print("  ✓ mg5 unlocked, feynrules still dropped")
@@ -246,9 +246,9 @@ def main() -> int:
     orig = _cli._resolve_active_project_root
     _cli._resolve_active_project_root = lambda: (project, "test-override")
     try:
-        availability, _ = _resolve_group_availability(disc)
-        print(f"  available: {availability.available_groups}")
-        if "mg5" not in availability.available_groups:
+        availability, _ = _resolve_bundle_availability(disc)
+        print(f"  available: {availability.available_bundles}")
+        if "mg5" not in availability.available_bundles:
             print("!!! mg5 should be available with project-level mg5_path")
             return 30
     finally:
@@ -260,10 +260,10 @@ def main() -> int:
     print("Step 4: <NEEDS VALUE> sentinel counts as unset")
     print("=" * 60)
     _write_user_config(TOOLKIT_NAME, {"mg5_path": "<NEEDS VALUE>"})
-    availability, _ = _resolve_group_availability(disc)
-    print(f"  available: {availability.available_groups}")
-    print(f"  dropped:   {dict(availability.dropped_groups)}")
-    if "mg5" not in availability.dropped_groups:
+    availability, _ = _resolve_bundle_availability(disc)
+    print(f"  available: {availability.available_bundles}")
+    print(f"  dropped:   {dict(availability.dropped_bundles)}")
+    if "mg5" not in availability.dropped_bundles:
         print("!!! sentinel should keep mg5 dropped")
         return 40
     print("  ✓ <NEEDS VALUE> treated as unset")
@@ -275,7 +275,7 @@ def main() -> int:
     print("=" * 60)
     bad = WORK_ROOT / "bad-toolkit"
     bad.mkdir()
-    # config: declares mg5_path; tool_groups.requires references foo_unknown.
+    # config: declares mg5_path; bundles.requires references foo_unknown.
     bad_yaml = {
         "name": "bad-toolkit",
         "version": "0.1.0",
@@ -285,7 +285,7 @@ def main() -> int:
         "config": [
             {"name": "mg5_path", "type": "path", "required": False},
         ],
-        "tool_groups": {
+        "bundles": {
             "broken": {"requires": ["foo_unknown"]},
         },
         "tools": [
@@ -312,23 +312,23 @@ def main() -> int:
         return 51
     print(f"  ✓ validate rejected; error: {joined.strip()}")
 
-    # ── Step 6: 0.5.0-shape toolkit (no tool_groups:) still loads on 0.5.1.
+    # ── Step 6: 0.5.0-shape toolkit (no bundles:) still loads on 0.5.1.
     print()
     print("=" * 60)
-    print("Step 6: backwards-compat — 0.5.0-shaped toolkit (no tool_groups:)")
+    print("Step 6: backwards-compat — 0.5.0-shaped toolkit (no bundles:)")
     print("=" * 60)
     legacy = WORK_ROOT / "cache-legacy" / "legacy-tk" / "0.1.0"
-    _scaffold_toolkit(legacy, with_tool_groups=False)
+    _scaffold_toolkit(legacy, with_bundles=False)
     legacy_disc = ToolkitDiscovery(
         name="legacy-tk", path=legacy, meta={"environment": "venv"},
     )
-    availability, mapping = _resolve_group_availability(legacy_disc)
-    if availability.has_tool_groups_block:
-        print("!!! 0.5.0 toolkit should have no tool_groups block")
+    availability, mapping = _resolve_bundle_availability(legacy_disc)
+    if availability.has_bundles_block:
+        print("!!! 0.5.0 toolkit should have no bundles block")
         return 60
-    # No gating: every tool is available regardless of group field.
+    # No gating: every tool is available regardless of bundle field.
     for tool_name in ("pdg_lookup", "mg5_run", "fr_export", "loose_tool"):
-        if not availability.is_group_available(mapping.get(tool_name)):
+        if not availability.is_bundle_available(mapping.get(tool_name)):
             print(f"!!! tool {tool_name} should be available in legacy mode")
             return 61
     # ToolkitMetadata parses (full validate succeeds).
@@ -343,11 +343,11 @@ def main() -> int:
     print("=" * 60)
     print("Step 7: log line format")
     print("=" * 60)
-    from toolbase.serve.tool_groups import format_skip_log_line
+    from toolbase.serve.bundles import format_skip_log_line
     line = format_skip_log_line(TOOLKIT_NAME, "mg5", ["mg5_path"])
     print(f"  -> {line}")
     expected_bits = [
-        "[toolbase.serve] group_skipped",
+        "[toolbase.serve] bundle_skipped",
         f"toolkit={TOOLKIT_NAME}",
         "name=mg5",
         "reason=missing_config",
@@ -360,7 +360,7 @@ def main() -> int:
 
     print()
     print("=" * 60)
-    print("✓ tool_groups.requires e2e passed")
+    print("✓ bundles.requires e2e passed")
     print("=" * 60)
     return 0
 
