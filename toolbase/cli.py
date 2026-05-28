@@ -998,8 +998,8 @@ def _print_merge_summary(result) -> None:
         console.print("\n[bold]Next steps:[/bold]")
         if m.added:
             console.print(
-                "  - Assign [cyan]group:[/cyan] to the new tools if you "
-                "want tool_groups gating."
+                "  - Assign [cyan]bundle:[/cyan] to the new tools if you "
+                "want bundles gating."
             )
         console.print("  - Run [cyan]toolbase validate[/cyan].")
 
@@ -1049,12 +1049,12 @@ def ingest(path, output, force, prune, dry_run, yes, no_, no_input):
     Two modes, auto-detected by whether a toolkit.yaml already exists:
       - No toolkit.yaml  -> scaffold a fresh one from the discovered tools.
       - Existing yaml    -> MERGE: append newly-discovered tools to the
-                            tools: list (ungrouped), leave existing entries
+                            tools: list (unbundled), leave existing entries
                             byte-for-byte untouched (custom description:,
-                            group:, ordering, comments all preserved), and
+                            bundle:, ordering, comments all preserved), and
                             report any entries whose source vanished. Only
                             the tools: list is touched — metadata, config:,
-                            and tool_groups: are never modified.
+                            and bundles: are never modified.
       - --force          -> overwrite the yaml from scratch (escape hatch).
 
     Use --prune to actually remove stale entries in merge mode (default
@@ -4852,11 +4852,11 @@ class _ServeGroup(click.Group):
     ),
 )
 @click.option(
-    '--enable-group', 'enable_group', multiple=True, metavar='TOOLKIT__GROUP',
+    '--enable-bundle', 'enable_bundle', multiple=True, metavar='TOOLKIT__BUNDLE',
     help=(
-        'Serve only tools belonging to the named tool group within that '
+        'Serve only tools belonging to the named bundle within that '
         'toolkit (one-shot). Requires the toolkit to declare a '
-        'tool_groups: block in its toolkit.yaml. If the group is currently '
+        'bundles: block in its toolkit.yaml. If the bundle is currently '
         'unavailable (missing required config keys) or undeclared, a clear '
         'reason is surfaced at startup without crashing. Repeatable.'
     ),
@@ -4879,7 +4879,7 @@ class _ServeGroup(click.Group):
     help='Run without TUI. Currently the only supported mode.',
 )
 @click.pass_context
-def serve(ctx, toolkits_flag, group_name, enable_tool, disable_tool, enable_group, dry_run, call_timeout, no_tui):
+def serve(ctx, toolkits_flag, group_name, enable_tool, disable_tool, enable_bundle, dry_run, call_timeout, no_tui):
     """
     Start the MCP server for installed toolkits.
 
@@ -4958,7 +4958,7 @@ def serve(ctx, toolkits_flag, group_name, enable_tool, disable_tool, enable_grou
             group_name=group_name,
             enable_tools=list(enable_tool),
             disable_tools=list(disable_tool),
-            enable_groups=list(enable_group),
+            enable_bundles=list(enable_bundle),
         )
     except ServeConfigError as e:
         console.print(f"[red]{e}[/red]")
@@ -4972,7 +4972,7 @@ def serve(ctx, toolkits_flag, group_name, enable_tool, disable_tool, enable_grou
     # (serve everything, no resolver). Only thread the resolved set when
     # the user actually narrowed something.
     narrowed = bool(toolkits or group_name or enable_tool or disable_tool
-                    or enable_group
+                    or enable_bundle
                     or cfg.default.disabled_toolkits or cfg.default.disabled_tools)
 
     # The MCP stdio protocol owns this process's stdin/stdout, so we do NOT

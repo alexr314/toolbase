@@ -359,81 +359,81 @@ def test_resolve_group_plus_disable_tool_filters_further():
     assert "aster__slow" in path_str
 
 
-# ── 0.5.1: --enable-group (per-toolkit tool-group selection) ────────────────
+# ── 0.5.1: --enable-bundle (per-toolkit bundle selection) ────────────────
 
 
-def test_resolve_enable_group_captures_request():
-    """``--enable-group heptapod__mg5`` lands in ``ResolvedSet.enable_groups``
+def test_resolve_enable_bundle_captures_request():
+    """``--enable-bundle heptapod__mg5`` lands in ``ResolvedSet.enable_bundles``
     keyed by toolkit name, with the group name in the list."""
     out = resolve_serve_set(
         installed_toolkits=["heptapod"],
         config=ServeConfig(),
-        enable_groups=["heptapod__mg5"],
+        enable_bundles=["heptapod__mg5"],
     )
-    assert out.enable_groups == {"heptapod": ["mg5"]}
+    assert out.enable_bundles == {"heptapod": ["mg5"]}
     assert "heptapod" in out.toolkits
     # The orchestrator handles the available/unavailable decision —
     # the resolver just routes the request.
 
 
-def test_resolve_enable_group_multiple_per_toolkit():
+def test_resolve_enable_bundle_multiple_per_toolkit():
     out = resolve_serve_set(
         installed_toolkits=["heptapod"],
         config=ServeConfig(),
-        enable_groups=["heptapod__pdg", "heptapod__nda"],
+        enable_bundles=["heptapod__pdg", "heptapod__nda"],
     )
-    assert out.enable_groups["heptapod"] == ["pdg", "nda"]
+    assert out.enable_bundles["heptapod"] == ["pdg", "nda"]
 
 
-def test_resolve_enable_group_across_toolkits():
+def test_resolve_enable_bundle_across_toolkits():
     out = resolve_serve_set(
         installed_toolkits=["heptapod", "aster"],
         config=ServeConfig(),
-        enable_groups=["heptapod__pdg", "aster__transit"],
+        enable_bundles=["heptapod__pdg", "aster__transit"],
     )
-    assert out.enable_groups == {
+    assert out.enable_bundles == {
         "heptapod": ["pdg"],
         "aster": ["transit"],
     }
 
 
-def test_resolve_enable_group_malformed_rejected():
-    """``--enable-group <bad-shape>`` errors with the toolkit__group hint."""
+def test_resolve_enable_bundle_malformed_rejected():
+    """``--enable-bundle <bad-shape>`` errors with the toolkit__bundle hint."""
     with pytest.raises(ServeConfigError) as exc:
         resolve_serve_set(
             installed_toolkits=["heptapod"],
             config=ServeConfig(),
-            enable_groups=["just-a-name"],
+            enable_bundles=["just-a-name"],
         )
-    assert "toolkit__group" in str(exc.value)
+    assert "toolkit__bundle" in str(exc.value)
 
 
-def test_resolve_enable_group_for_toolkit_not_in_session_errors():
+def test_resolve_enable_bundle_for_toolkit_not_in_session_errors():
     """Can't request a group for a toolkit that isn't installed /
     isn't in the resolved session."""
     with pytest.raises(ServeConfigError) as exc:
         resolve_serve_set(
             installed_toolkits=["aster"],
             config=ServeConfig(),
-            enable_groups=["heptapod__mg5"],
+            enable_bundles=["heptapod__mg5"],
         )
     assert "heptapod" in str(exc.value)
 
 
-def test_resolve_enable_group_resolution_path_narrative():
-    """``--enable-group`` appears in the dry-run resolution path."""
+def test_resolve_enable_bundle_resolution_path_narrative():
+    """``--enable-bundle`` appears in the dry-run resolution path."""
     out = resolve_serve_set(
         installed_toolkits=["heptapod"],
         config=ServeConfig(),
-        enable_groups=["heptapod__mg5"],
+        enable_bundles=["heptapod__mg5"],
     )
-    assert any("--enable-group" in step for step in out.resolution_path)
+    assert any("--enable-bundle" in step for step in out.resolution_path)
 
 
-def test_resolve_enable_group_empty_omitted():
-    """No ``--enable-group`` flags → ``enable_groups`` is empty."""
+def test_resolve_enable_bundle_empty_omitted():
+    """No ``--enable-bundle`` flags → ``enable_bundles`` is empty."""
     out = resolve_serve_set(
         installed_toolkits=["heptapod"],
         config=ServeConfig(),
     )
-    assert out.enable_groups == {}
+    assert out.enable_bundles == {}

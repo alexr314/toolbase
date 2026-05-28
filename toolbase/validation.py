@@ -175,16 +175,16 @@ class ToolDefinition(BaseModel):
             "docstring at serve time)."
         ),
     )
-    group: Optional[str] = Field(
+    bundle: Optional[str] = Field(
         default=None,
         description=(
-            "Optional tool-group name. When the toolkit declares a "
-            "``tool_groups:`` block (0.5.1+), this tool participates in "
-            "the named group's conditional-availability evaluation. A "
-            "tool whose group's ``requires:`` config keys are not all "
+            "Optional bundle name. When the toolkit declares a "
+            "``bundles:`` block (0.5.1+), this tool participates in "
+            "the named bundle's conditional-availability evaluation. A "
+            "tool whose bundle's ``requires:`` config keys are not all "
             "set is silently dropped from serve's tool list at startup. "
-            "Tools without a ``group:`` field are always served, "
-            "regardless of any ``tool_groups:`` declarations."
+            "Tools without a ``bundle:`` field are always served, "
+            "regardless of any ``bundles:`` declarations."
         ),
     )
 
@@ -196,15 +196,15 @@ class ToolDefinition(BaseModel):
             raise ValueError('Tool name must be alphanumeric (underscores and hyphens allowed)')
         return v
 
-    @field_validator('group')
+    @field_validator('bundle')
     @classmethod
-    def validate_group(cls, v):
-        """Validate group identifier format (same shape as tool names)."""
+    def validate_bundle(cls, v):
+        """Validate bundle identifier format (same shape as tool names)."""
         if v is None:
             return v
         if not v.replace('_', '').replace('-', '').isalnum():
             raise ValueError(
-                "Tool group name must be alphanumeric (underscores and "
+                "Bundle name must be alphanumeric (underscores and "
                 "hyphens allowed)"
             )
         return v
@@ -279,25 +279,25 @@ class ToolkitMetadata(BaseModel):
             "in Phase 3C-2."
         ),
     )
-    # ── 0.5.1: optional conditional tool-group availability ───────────
+    # ── 0.5.1: optional conditional bundle availability ───────────────
     #
-    # Each entry maps a group name → a mapping that currently supports
-    # one key: ``requires: [<config_key>, ...]``. A group whose
+    # Each entry maps a bundle name → a mapping that currently supports
+    # one key: ``requires: [<config_key>, ...]``. A bundle whose
     # ``requires:`` config keys are not all set in the resolved two-layer
     # toolkit config is silently dropped at serve startup, and tools
-    # belonging to it via their ``group:`` field are removed from the
-    # exposed tool list. Tools without a ``group:`` field are always
-    # served. Toolkits without a ``tool_groups:`` block keep working
-    # exactly as in 0.5.0 (no gating, all groups loaded).
-    tool_groups: Optional[Dict[str, Dict[str, Any]]] = Field(
+    # belonging to it via their ``bundle:`` field are removed from the
+    # exposed tool list. Tools without a ``bundle:`` field are always
+    # served. Toolkits without a ``bundles:`` block keep working
+    # exactly as in 0.5.0 (no gating, all bundles loaded).
+    bundles: Optional[Dict[str, Dict[str, Any]]] = Field(
         default=None,
         description=(
-            "Optional named tool-group declarations. Each group may "
+            "Optional named bundle declarations. Each bundle may "
             "declare ``requires: [<config_key>, ...]`` referencing keys "
             "in the toolkit's own ``config:`` block. At serve startup, "
-            "groups whose required keys are not set in the resolved "
+            "bundles whose required keys are not set in the resolved "
             "two-layer toolkit config are silently dropped; tools whose "
-            "``group:`` field names a dropped group are removed from "
+            "``bundle:`` field names a dropped bundle are removed from "
             "the served set."
         ),
     )
@@ -360,29 +360,29 @@ class ToolkitMetadata(BaseModel):
         return v.lower()
 
     @model_validator(mode="after")
-    def _validate_tool_groups(self):
-        """Validate ``tool_groups:`` shape and cross-references.
+    def _validate_bundles(self):
+        """Validate ``bundles:`` shape and cross-references.
 
         Checks (run at validate / publish time so authoring mistakes
         surface before users see them):
 
-        1. Each entry under ``tool_groups`` is a mapping (yaml shape).
-        2. The only recognized key inside a group entry is ``requires``;
+        1. Each entry under ``bundles`` is a mapping (yaml shape).
+        2. The only recognized key inside a bundle entry is ``requires``;
            unknown keys are rejected so typos like ``require:`` don't
            silently no-op.
         3. ``requires:`` is a list of strings.
         4. Every key listed under ``requires:`` is also declared in this
            toolkit's ``config:`` block. Catches typos at publish, not at
            serve.
-        5. Every tool's ``group:`` field (when set) names a group that
-           exists in ``tool_groups``.
+        5. Every tool's ``bundle:`` field (when set) names a bundle that
+           exists in ``bundles``.
         """
-        if not self.tool_groups:
-            # Backward compat: no tool_groups block → nothing to check.
-            # Per-tool ``group:`` fields without a tool_groups block are
-            # harmless metadata (groups have no semantic gate). If a
+        if not self.bundles:
+            # Backward compat: no bundles block → nothing to check.
+            # Per-tool ``bundle:`` fields without a bundles block are
+            # harmless metadata (bundles have no semantic gate). If a
             # toolkit author wants those to start gating, they add the
-            # tool_groups block at the same time.
+            # bundles block at the same time.
             return self
 
         # Build the set of config-block keys to check requires references.
@@ -394,57 +394,57 @@ class ToolkitMetadata(BaseModel):
                     if isinstance(key, str):
                         config_keys.add(key)
 
-        for group_name, group_entry in self.tool_groups.items():
-            if not isinstance(group_name, str) or not group_name:
+        for bundle_name, bundle_entry in self.bundles.items():
+            if not isinstance(bundle_name, str) or not bundle_name:
                 raise ValueError(
-                    f"tool_groups: group name must be a non-empty string, "
-                    f"got {group_name!r}"
+                    f"bundles: bundle name must be a non-empty string, "
+                    f"got {bundle_name!r}"
                 )
-            if not group_name.replace('_', '').replace('-', '').isalnum():
+            if not bundle_name.replace('_', '').replace('-', '').isalnum():
                 raise ValueError(
-                    f"tool_groups: group name '{group_name}' must be "
+                    f"bundles: bundle name '{bundle_name}' must be "
                     "alphanumeric (underscores and hyphens allowed)"
                 )
-            if not isinstance(group_entry, dict):
+            if not isinstance(bundle_entry, dict):
                 raise ValueError(
-                    f"tool_groups['{group_name}']: must be a mapping "
-                    f"(got {type(group_entry).__name__})"
+                    f"bundles['{bundle_name}']: must be a mapping "
+                    f"(got {type(bundle_entry).__name__})"
                 )
-            unknown = set(group_entry.keys()) - {"requires"}
+            unknown = set(bundle_entry.keys()) - {"requires"}
             if unknown:
                 raise ValueError(
-                    f"tool_groups['{group_name}']: unknown key(s) "
+                    f"bundles['{bundle_name}']: unknown key(s) "
                     f"{sorted(unknown)}. Only 'requires:' is recognized "
                     "in this version."
                 )
-            requires = group_entry.get("requires", [])
+            requires = bundle_entry.get("requires", [])
             if not isinstance(requires, list):
                 raise ValueError(
-                    f"tool_groups['{group_name}'].requires: must be a list "
+                    f"bundles['{bundle_name}'].requires: must be a list "
                     f"of config-key names, got {type(requires).__name__}"
                 )
             for entry in requires:
                 if not isinstance(entry, str) or not entry:
                     raise ValueError(
-                        f"tool_groups['{group_name}'].requires: each "
+                        f"bundles['{bundle_name}'].requires: each "
                         f"entry must be a non-empty string, got {entry!r}"
                     )
                 if entry not in config_keys:
                     raise ValueError(
-                        f"tool_groups['{group_name}'].requires references "
+                        f"bundles['{bundle_name}'].requires references "
                         f"config key '{entry}' which is not declared in "
                         f"this toolkit's config: block. Declare the key "
                         "in config: or remove it from requires:."
                     )
 
-        # Each tool's ``group:`` must reference a declared group.
-        declared = set(self.tool_groups.keys())
+        # Each tool's ``bundle:`` must reference a declared bundle.
+        declared = set(self.bundles.keys())
         for tool in self.tools:
-            if tool.group is not None and tool.group not in declared:
+            if tool.bundle is not None and tool.bundle not in declared:
                 raise ValueError(
-                    f"tool '{tool.name}' has group: '{tool.group}' but "
-                    f"that group is not declared in tool_groups. "
-                    f"Declared groups: {sorted(declared) or '(none)'}."
+                    f"tool '{tool.name}' has bundle: '{tool.bundle}' but "
+                    f"that bundle is not declared in bundles. "
+                    f"Declared bundles: {sorted(declared) or '(none)'}."
                 )
 
         return self

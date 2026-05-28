@@ -1,9 +1,9 @@
-"""Orchestrator-side tests for ``tool_groups.requires:`` evaluation.
+"""Orchestrator-side tests for ``bundles.requires:`` evaluation.
 
-These exercise the surface of ``_resolve_group_availability`` and
-``_read_tool_groups_and_membership`` against synthetic toolkit dirs
+These exercise the surface of ``_resolve_bundle_availability`` and
+``_read_bundles_and_membership`` against synthetic toolkit dirs
 without launching a real subprocess. End-to-end coverage (full serve
-spawn + MCP listing) lives in ``tests/e2e/run_tool_groups_e2e.py``.
+spawn + MCP listing) lives in ``tests/e2e/run_bundles_e2e.py``.
 """
 
 from __future__ import annotations
@@ -16,8 +16,8 @@ import yaml
 from toolbase import config as toolbase_config
 from toolbase.serve.orchestrator import (
     ToolkitDiscovery,
-    _read_tool_groups_and_membership,
-    _resolve_group_availability,
+    _read_bundles_and_membership,
+    _resolve_bundle_availability,
 )
 
 
@@ -34,7 +34,7 @@ def _make_toolkit(
     base: Path,
     name: str = "heptapod",
     config_block=None,
-    tool_groups=None,
+    bundles=None,
     tools=None,
 ) -> ToolkitDiscovery:
     """Drop a synthetic toolkit dir under ``base/cache/<name>/0.1.0/``."""
@@ -52,8 +52,8 @@ def _make_toolkit(
     }
     if config_block is not None:
         yaml_data["config"] = config_block
-    if tool_groups is not None:
-        yaml_data["tool_groups"] = tool_groups
+    if bundles is not None:
+        yaml_data["bundles"] = bundles
     (tk / "toolkit.yaml").write_text(yaml.safe_dump(yaml_data, sort_keys=False))
     return ToolkitDiscovery(
         name=name, path=tk, meta={"environment": "venv"},
@@ -72,41 +72,41 @@ def _set_user_config(config_dir: Path, name: str, values: dict) -> None:
 
 
 # ────────────────────────────────────────────────────────────────────
-# _read_tool_groups_and_membership
+# _read_bundles_and_membership
 # ────────────────────────────────────────────────────────────────────
 
 
-class TestReadToolGroupsAndMembership:
+class TestReadToolBundlesAndMembership:
 
-    def test_no_tool_groups_block(self, tmp_path):
+    def test_no_bundles_block(self, tmp_path):
         disc = _make_toolkit(tmp_path)
-        block, mapping = _read_tool_groups_and_membership(disc.path)
+        block, mapping = _read_bundles_and_membership(disc.path)
         assert block is None
-        # Tools without ``group:`` field map to None.
+        # Tools without ``bundle:`` field map to None.
         assert mapping == {"t1": None}
 
-    def test_tool_groups_block_with_membership(self, tmp_path):
+    def test_bundles_block_with_membership(self, tmp_path):
         disc = _make_toolkit(
             tmp_path,
             config_block=[
                 {"name": "mg5_path", "type": "path", "required": False},
             ],
-            tool_groups={"pdg": {}, "mg5": {"requires": ["mg5_path"]}},
+            bundles={"pdg": {}, "mg5": {"requires": ["mg5_path"]}},
             tools=[
                 {
                     "name": "pdg_lookup", "module": "x.pdg",
-                    "group": "pdg",
+                    "bundle": "pdg",
                 },
                 {
                     "name": "mg5_run", "module": "x.mg5",
-                    "group": "mg5",
+                    "bundle": "mg5",
                 },
                 {
                     "name": "loose_tool", "module": "x.loose",
                 },
             ],
         )
-        block, mapping = _read_tool_groups_and_membership(disc.path)
+        block, mapping = _read_bundles_and_membership(disc.path)
         assert block == {"pdg": {}, "mg5": {"requires": ["mg5_path"]}}
         assert mapping == {
             "pdg_lookup": "pdg",
@@ -118,83 +118,83 @@ class TestReadToolGroupsAndMembership:
         disc = ToolkitDiscovery(
             name="nope", path=tmp_path / "missing", meta={},
         )
-        block, mapping = _read_tool_groups_and_membership(disc.path)
+        block, mapping = _read_bundles_and_membership(disc.path)
         assert block is None
         assert mapping == {}
 
     def test_yaml_block_with_none_entries_treated_as_empty(self, tmp_path):
-        """YAML ``foo:`` with no value parses as None; treat as empty group entry."""
+        """YAML ``foo:`` with no value parses as None; treat as empty bundle entry."""
         disc = _make_toolkit(
             tmp_path,
             config_block=[
                 {"name": "mg5_path", "type": "path", "required": False},
             ],
-            tool_groups={"pdg": None, "mg5": {"requires": ["mg5_path"]}},
+            bundles={"pdg": None, "mg5": {"requires": ["mg5_path"]}},
         )
-        block, _ = _read_tool_groups_and_membership(disc.path)
+        block, _ = _read_bundles_and_membership(disc.path)
         assert block["pdg"] == {}
         assert "requires" in block["mg5"]
 
 
 # ────────────────────────────────────────────────────────────────────
-# _resolve_group_availability (full integration with two-layer config)
+# _resolve_bundle_availability (full integration with two-layer config)
 # ────────────────────────────────────────────────────────────────────
 
 
-class TestResolveGroupAvailability:
+class TestResolveBundleAvailability:
 
     def test_no_block_no_gating(self, isolated):
         disc = _make_toolkit(isolated)
-        availability, mapping = _resolve_group_availability(disc)
-        assert availability.has_tool_groups_block is False
-        assert availability.is_group_available(None) is True
+        availability, mapping = _resolve_bundle_availability(disc)
+        assert availability.has_bundles_block is False
+        assert availability.is_bundle_available(None) is True
 
-    def test_user_layer_unlocks_group(self, isolated):
+    def test_user_layer_unlocks_bundle(self, isolated):
         disc = _make_toolkit(
             isolated,
             name="heptapod",
             config_block=[
                 {"name": "mg5_path", "type": "path", "required": False},
             ],
-            tool_groups={"mg5": {"requires": ["mg5_path"]}},
+            bundles={"mg5": {"requires": ["mg5_path"]}},
         )
         _set_user_config(
             toolbase_config.CONFIG_DIR, "heptapod",
             {"mg5_path": "/opt/mg5"},
         )
-        availability, _ = _resolve_group_availability(disc)
-        assert "mg5" in availability.available_groups
-        assert availability.dropped_groups == {}
+        availability, _ = _resolve_bundle_availability(disc)
+        assert "mg5" in availability.available_bundles
+        assert availability.dropped_bundles == {}
 
-    def test_user_layer_missing_drops_group(self, isolated):
+    def test_user_layer_missing_drops_bundle(self, isolated):
         disc = _make_toolkit(
             isolated,
             name="heptapod",
             config_block=[
                 {"name": "mg5_path", "type": "path", "required": False},
             ],
-            tool_groups={"mg5": {"requires": ["mg5_path"]}},
+            bundles={"mg5": {"requires": ["mg5_path"]}},
         )
         # No user-level config written.
-        availability, _ = _resolve_group_availability(disc)
-        assert "mg5" in availability.dropped_groups
-        assert availability.dropped_groups["mg5"] == ["mg5_path"]
+        availability, _ = _resolve_bundle_availability(disc)
+        assert "mg5" in availability.dropped_bundles
+        assert availability.dropped_bundles["mg5"] == ["mg5_path"]
 
-    def test_needs_value_sentinel_drops_group(self, isolated):
+    def test_needs_value_sentinel_drops_bundle(self, isolated):
         disc = _make_toolkit(
             isolated,
             name="heptapod",
             config_block=[
                 {"name": "mg5_path", "type": "path", "required": True},
             ],
-            tool_groups={"mg5": {"requires": ["mg5_path"]}},
+            bundles={"mg5": {"requires": ["mg5_path"]}},
         )
         _set_user_config(
             toolbase_config.CONFIG_DIR, "heptapod",
             {"mg5_path": "<NEEDS VALUE>"},
         )
-        availability, _ = _resolve_group_availability(disc)
-        assert "mg5" in availability.dropped_groups
+        availability, _ = _resolve_bundle_availability(disc)
+        assert "mg5" in availability.dropped_bundles
 
     def test_multi_require_partial_satisfied_drops(self, isolated):
         disc = _make_toolkit(
@@ -204,7 +204,7 @@ class TestResolveGroupAvailability:
                 {"name": "wolframscript_path", "type": "path", "required": False},
                 {"name": "feynrules_path", "type": "path", "required": False},
             ],
-            tool_groups={
+            bundles={
                 "feynrules": {
                     "requires": ["wolframscript_path", "feynrules_path"],
                 },
@@ -214,6 +214,6 @@ class TestResolveGroupAvailability:
             toolbase_config.CONFIG_DIR, "heptapod",
             {"wolframscript_path": "/usr/bin/wolframscript"},
         )
-        availability, _ = _resolve_group_availability(disc)
-        assert "feynrules" in availability.dropped_groups
-        assert availability.dropped_groups["feynrules"] == ["feynrules_path"]
+        availability, _ = _resolve_bundle_availability(disc)
+        assert "feynrules" in availability.dropped_bundles
+        assert availability.dropped_bundles["feynrules"] == ["feynrules_path"]

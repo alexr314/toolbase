@@ -719,10 +719,10 @@ def merge_tools_into_existing(
     """Merge discovered tools into an existing yaml mapping in place.
 
     Keyed on (``module``, ``name``). Matched entries are left completely
-    untouched — custom ``description:``, ``group:``, ordering, and
+    untouched — custom ``description:``, ``bundle:``, ordering, and
     comments all survive because we mutate the existing ruamel
     ``CommentedSeq`` rather than rebuilding it. New tools (in source,
-    absent from the yaml) are appended at the end, ungrouped. Stale
+    absent from the yaml) are appended at the end, unbundled. Stale
     entries (in the yaml, source not found) are reported; with
     ``prune=True`` they're removed from the sequence.
 

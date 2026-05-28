@@ -176,12 +176,12 @@ class ResolvedSet:
     # orchestrator subtracts these at spawn time when ``tools[tk] is None``,
     # i.e. when no allowlist is active for that toolkit.
     disable_qualified: List[str] = field(default_factory=list)
-    # 0.5.1: per-toolkit requested tool-groups (from --enable-group).
-    # Maps toolkit name → list of group names the user explicitly
+    # 0.5.1: per-toolkit requested bundles (from --enable-bundle).
+    # Maps toolkit name → list of bundle names the user explicitly
     # requested. The orchestrator evaluates each against the toolkit's
-    # ``tool_groups:`` block and surfaces a clear message if a
-    # requested group is currently unavailable or undeclared.
-    enable_groups: Dict[str, List[str]] = field(default_factory=dict)
+    # ``bundles:`` block and surfaces a clear message if a
+    # requested bundle is currently unavailable or undeclared.
+    enable_bundles: Dict[str, List[str]] = field(default_factory=dict)
 
 
 def _split_tool(qualified: str) -> Tuple[str, str]:
@@ -206,7 +206,7 @@ def resolve_serve_set(
     group_name: Optional[str] = None,
     enable_tools: List[str] = (),
     disable_tools: List[str] = (),
-    enable_groups: List[str] = (),
+    enable_bundles: List[str] = (),
 ) -> ResolvedSet:
     """Pure resolver: turn flags + config + installed list into a serve set.
 
@@ -365,38 +365,38 @@ def resolve_serve_set(
 
     disable_qualified = [f"{tk}__{t}" for tk, t in disable_pairs]
 
-    # ── --enable-group: per-toolkit requested groups ────────────────────
-    # Format: ``TOOLKIT__GROUP``. Each entry asks the orchestrator to
-    # serve the named group's tools within that toolkit. If the toolkit
+    # ── --enable-bundle: per-toolkit requested bundles ──────────────────
+    # Format: ``TOOLKIT__BUNDLE``. Each entry asks the orchestrator to
+    # serve the named bundle's tools within that toolkit. If the toolkit
     # isn't in the resolved set, that's an error (the user can't ask
-    # for groups from a toolkit they're not serving). If the group is
+    # for bundles from a toolkit they're not serving). If the bundle is
     # currently unavailable (its ``requires:`` aren't satisfied) or
     # undeclared, the orchestrator surfaces a clear message at spawn
     # time — we just collect the request here without crashing.
-    enable_groups_map: Dict[str, List[str]] = {}
+    enable_bundles_map: Dict[str, List[str]] = {}
     final_toolkit_set: Set[str] = set(final_toolkits)
-    for q in enable_groups:
+    for q in enable_bundles:
         if "__" not in q:
             raise ServeConfigError(
-                f"--enable-group '{q}' must be in 'toolkit__group' form"
+                f"--enable-bundle '{q}' must be in 'toolkit__bundle' form"
             )
-        tk, _, gname = q.partition("__")
-        if not tk or not gname:
+        tk, _, bname = q.partition("__")
+        if not tk or not bname:
             raise ServeConfigError(
-                f"--enable-group '{q}' must be in 'toolkit__group' form"
+                f"--enable-bundle '{q}' must be in 'toolkit__bundle' form"
             )
         if tk not in final_toolkit_set:
             raise ServeConfigError(
-                f"Cannot enable group '{q}' — toolkit '{tk}' is not in "
+                f"Cannot enable bundle '{q}' — toolkit '{tk}' is not in "
                 "this serve session."
             )
-        enable_groups_map.setdefault(tk, []).append(gname)
-    if enable_groups_map:
+        enable_bundles_map.setdefault(tk, []).append(bname)
+    if enable_bundles_map:
         path.append(
-            "--enable-group: " + ", ".join(
-                f"{tk}__{g}"
-                for tk, gs in enable_groups_map.items()
-                for g in gs
+            "--enable-bundle: " + ", ".join(
+                f"{tk}__{b}"
+                for tk, bs in enable_bundles_map.items()
+                for b in bs
             )
         )
 
@@ -406,7 +406,7 @@ def resolve_serve_set(
         warnings=warnings,
         resolution_path=path,
         disable_qualified=disable_qualified,
-        enable_groups=enable_groups_map,
+        enable_bundles=enable_bundles_map,
     )
 
 

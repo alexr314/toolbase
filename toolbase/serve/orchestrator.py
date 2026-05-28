@@ -428,18 +428,18 @@ def _read_tools_spec(toolkit_path: Path) -> List[Dict[str, Any]]:
     return out
 
 
-def _read_tool_groups_and_membership(
+def _read_bundles_and_membership(
     toolkit_path: Path,
 ) -> Tuple[Optional[Dict[str, Dict[str, Any]]], Dict[str, Optional[str]]]:
-    """Extract the ``tool_groups:`` block and per-tool group membership.
+    """Extract the ``bundles:`` block and per-tool bundle membership.
 
-    Returns ``(tool_groups_block, name_to_group)``:
+    Returns ``(bundles_block, name_to_bundle)``:
 
-    - ``tool_groups_block``: the parsed ``tool_groups:`` mapping, or
+    - ``bundles_block``: the parsed ``bundles:`` mapping, or
       ``None`` if the toolkit doesn't declare one (backward compat —
       no gating in that case).
-    - ``name_to_group``: tool name → group name (or ``None`` for tools
-      that don't declare a group). Empty if the yaml is missing or
+    - ``name_to_bundle``: tool name → bundle name (or ``None`` for tools
+      that don't declare a bundle). Empty if the yaml is missing or
       malformed (gate-evaluation falls back to "all served").
 
     Defensive reading: any malformed shape returns the safe fallback
@@ -457,26 +457,26 @@ def _read_tool_groups_and_membership(
     if not isinstance(data, dict):
         return None, {}
 
-    raw_block = data.get("tool_groups")
-    tool_groups_block: Optional[Dict[str, Dict[str, Any]]] = None
+    raw_block = data.get("bundles")
+    bundles_block: Optional[Dict[str, Dict[str, Any]]] = None
     if isinstance(raw_block, dict) and raw_block:
         # Keep only mapping-shaped entries; ignore malformed ones rather
         # than failing the whole serve startup. Validation at publish
         # time is the gate for shape correctness.
         cleaned_block: Dict[str, Dict[str, Any]] = {}
-        for gname, gentry in raw_block.items():
-            if not isinstance(gname, str):
+        for bname, bentry in raw_block.items():
+            if not isinstance(bname, str):
                 continue
-            if isinstance(gentry, dict):
-                cleaned_block[gname] = dict(gentry)
-            elif gentry is None:
+            if isinstance(bentry, dict):
+                cleaned_block[bname] = dict(bentry)
+            elif bentry is None:
                 # YAML ``foo:`` with no value parses as None — treat
-                # as an empty group entry (no requires).
-                cleaned_block[gname] = {}
+                # as an empty bundle entry (no requires).
+                cleaned_block[bname] = {}
         if cleaned_block:
-            tool_groups_block = cleaned_block
+            bundles_block = cleaned_block
 
-    name_to_group: Dict[str, Optional[str]] = {}
+    name_to_bundle: Dict[str, Optional[str]] = {}
     tools = data.get("tools") if isinstance(data, dict) else None
     if isinstance(tools, list):
         for entry in tools:
@@ -485,22 +485,22 @@ def _read_tool_groups_and_membership(
             tool_name = entry.get("name")
             if not isinstance(tool_name, str):
                 continue
-            group = entry.get("group")
-            if isinstance(group, str) and group:
-                name_to_group[tool_name] = group
+            bundle = entry.get("bundle")
+            if isinstance(bundle, str) and bundle:
+                name_to_bundle[tool_name] = bundle
             else:
-                name_to_group[tool_name] = None
+                name_to_bundle[tool_name] = None
 
-    return tool_groups_block, name_to_group
+    return bundles_block, name_to_bundle
 
 
-def _resolve_group_availability(
+def _resolve_bundle_availability(
     disc: "ToolkitDiscovery",
 ) -> Tuple[Any, Dict[str, Optional[str]]]:
-    """Evaluate this toolkit's ``tool_groups:`` against its resolved config.
+    """Evaluate this toolkit's ``bundles:`` against its resolved config.
 
-    Returns ``(GroupAvailability, name_to_group)``. The orchestrator
-    uses ``GroupAvailability.is_group_available(group)`` per tool at
+    Returns ``(BundleAvailability, name_to_bundle)``. The orchestrator
+    uses ``BundleAvailability.is_bundle_available(bundle)`` per tool at
     spawn time to decide whether to expose it.
 
     Resolution sourcing: same two-layer user→project merge that the
@@ -514,12 +514,12 @@ def _resolve_group_availability(
     returns an empty availability that gates nothing — pass-through
     behavior so a broken yaml doesn't take down all toolkits.
     """
-    from .tool_groups import (
-        GroupAvailability,
-        evaluate_tool_groups,
+    from .bundles import (
+        BundleAvailability,
+        evaluate_bundles,
     )
 
-    tool_groups_block, name_to_group = _read_tool_groups_and_membership(
+    bundles_block, name_to_bundle = _read_bundles_and_membership(
         disc.path
     )
 
@@ -543,8 +543,8 @@ def _resolve_group_availability(
         # startup over a config-resolution glitch.
         resolved_config = {}
 
-    availability = evaluate_tool_groups(tool_groups_block, resolved_config)
-    return availability, name_to_group
+    availability = evaluate_bundles(bundles_block, resolved_config)
+    return availability, name_to_bundle
 
 
 def _build_host_command(
@@ -951,7 +951,7 @@ class Orchestrator:
         # Build proxies from the canonical MCP listing (richer schema info
         # than the bare tool name list in the handshake).
         from .proxy_tool import make_proxy_tool
-        from .tool_groups import format_skip_log_line
+        from .bundles import format_skip_log_line
 
         # Determine which tools from this toolkit to actually expose.
         # `tool_filter` is one of:
@@ -970,58 +970,58 @@ class Orchestrator:
                 if q.startswith(f"{disc.name}__"):
                     tool_disable_set.add(q.split("__", 1)[1])
 
-        # 0.5.1: evaluate tool_groups against the resolved two-layer
-        # config. Tools whose ``group:`` field names an unavailable
-        # group are dropped from the served set. One stderr line per
-        # dropped group, fired once at startup (NOT per call).
-        availability, name_to_group = _resolve_group_availability(disc)
-        if availability.dropped_groups:
-            # ``--enable-group <tk>__<group>`` requests for unavailable
-            # groups on this toolkit are surfaced separately below; the
+        # 0.5.1: evaluate bundles against the resolved two-layer
+        # config. Tools whose ``bundle:`` field names an unavailable
+        # bundle are dropped from the served set. One stderr line per
+        # dropped bundle, fired once at startup (NOT per call).
+        availability, name_to_bundle = _resolve_bundle_availability(disc)
+        if availability.dropped_bundles:
+            # ``--enable-bundle <tk>__<bundle>`` requests for unavailable
+            # bundles on this toolkit are surfaced separately below; the
             # logging here covers the implicit-drop case.
-            for gname, missing in availability.dropped_groups.items():
-                line = format_skip_log_line(disc.name, gname, missing)
+            for bname, missing in availability.dropped_bundles.items():
+                line = format_skip_log_line(disc.name, bname, missing)
                 # stderr console for visibility + serve.log for grepping.
                 self.console.print(f"  [yellow]⊘[/yellow] [dim]{line}[/dim]")
                 self.logger.log_event(
-                    "group_skipped",
+                    "bundle_skipped",
                     toolkit=disc.name,
-                    group=gname,
+                    bundle=bname,
                     reason="missing_config",
                     missing_keys=",".join(missing),
                     level="warn",
                 )
 
-        # If --enable-group requested specific groups for this toolkit,
+        # If --enable-bundle requested specific bundles for this toolkit,
         # translate that into a per-tool allowlist (filter to tools
-        # whose group: is in the requested set). Unavailable requested
-        # groups produce a clear stderr message but don't crash serve.
-        requested_groups: Optional[List[str]] = None
+        # whose bundle: is in the requested set). Unavailable requested
+        # bundles produce a clear stderr message but don't crash serve.
+        requested_bundles: Optional[List[str]] = None
         if self._resolved is not None:
-            requested = self._resolved.enable_groups.get(disc.name)
+            requested = self._resolved.enable_bundles.get(disc.name)
             if requested is not None:
-                requested_groups = list(requested)
+                requested_bundles = list(requested)
                 unavailable = [
-                    g for g in requested_groups
-                    if g in availability.dropped_groups
+                    b for b in requested_bundles
+                    if b in availability.dropped_bundles
                 ]
                 undeclared = [
-                    g for g in requested_groups
-                    if g not in availability.dropped_groups
-                    and g not in availability.available_groups
+                    b for b in requested_bundles
+                    if b not in availability.dropped_bundles
+                    and b not in availability.available_bundles
                 ]
-                for g in unavailable:
-                    missing = availability.dropped_groups.get(g, [])
+                for b in unavailable:
+                    missing = availability.dropped_bundles.get(b, [])
                     self.console.print(
-                        f"  [red]✗[/red] [dim]{disc.name}__{g}:[/dim] "
-                        f"[red]group not available — "
+                        f"  [red]✗[/red] [dim]{disc.name}__{b}:[/dim] "
+                        f"[red]bundle not available — "
                         f"missing config keys [{', '.join(missing)}][/red]"
                     )
-                for g in undeclared:
+                for b in undeclared:
                     self.console.print(
-                        f"  [red]✗[/red] [dim]{disc.name}__{g}:[/dim] "
-                        f"[red]group not declared in toolkit.yaml's "
-                        f"tool_groups: block[/red]"
+                        f"  [red]✗[/red] [dim]{disc.name}__{b}:[/dim] "
+                        f"[red]bundle not declared in toolkit.yaml's "
+                        f"bundles: block[/red]"
                     )
 
         # Forwarder is bound to the toolkit *name*, not the client. The
@@ -1035,17 +1035,17 @@ class Orchestrator:
                 continue
             if upstream_name in tool_disable_set:
                 continue
-            # tool_groups gating: drop tools belonging to unavailable
-            # groups. Tools without a group: field always pass.
-            tool_group = name_to_group.get(upstream_name)
-            if not availability.is_group_available(tool_group):
+            # bundle gating: drop tools belonging to unavailable
+            # bundles. Tools without a bundle: field always pass.
+            tool_bundle = name_to_bundle.get(upstream_name)
+            if not availability.is_bundle_available(tool_bundle):
                 continue
-            # --enable-group narrowing: when active for this toolkit,
-            # only tools whose group: is in the requested set are
-            # served. Tools without a group: field are dropped under
+            # --enable-bundle narrowing: when active for this toolkit,
+            # only tools whose bundle: is in the requested set are
+            # served. Tools without a bundle: field are dropped under
             # this mode (the user opted into a curated subset).
-            if requested_groups is not None:
-                if tool_group is None or tool_group not in requested_groups:
+            if requested_bundles is not None:
+                if tool_bundle is None or tool_bundle not in requested_bundles:
                     continue
             namespaced = f"{disc.name}__{upstream_name}"
             self._proxy_tools.append(make_proxy_tool(

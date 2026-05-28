@@ -3,7 +3,7 @@
 Re-running ingest over an existing toolkit.yaml re-syncs the tools:
 list against source WITHOUT clobbering hand-edits. The load-bearing
 requirement: matched entries (keyed on module+name) are left
-byte-for-byte untouched — custom description:, group:, ordering, and
+byte-for-byte untouched — custom description:, bundle:, ordering, and
 comments all survive. Only genuinely-new tools are appended (ungrouped);
 stale entries are reported, removed only with --prune.
 
@@ -71,12 +71,12 @@ tools:
   - module: tools.beta
     name: beta
     description: CUSTOM beta description
-    group: extras
+    bundle: extras
   - module: tools.alpha
     name: alpha
     description: CUSTOM alpha description
-    group: core
-tool_groups:
+    bundle: core
+bundles:
   core:
     requires: []
 """
@@ -115,15 +115,15 @@ def test_new_tool_appended_existing_preserved_byte_for_byte(tmp_path):
     # Existing entries unchanged: custom descriptions, groups, ordering.
     assert tools[0]["name"] == "beta"
     assert tools[0]["description"] == "CUSTOM beta description"
-    assert tools[0]["group"] == "extras"
+    assert tools[0]["bundle"] == "extras"
     assert tools[1]["name"] == "alpha"
     assert tools[1]["description"] == "CUSTOM alpha description"
-    assert tools[1]["group"] == "core"
+    assert tools[1]["bundle"] == "core"
     # New tool appended at the END, ungrouped.
     assert tools[2]["module"] == "tools.gamma"
     assert tools[2]["name"] == "gamma"
     assert tools[2]["description"] == "Gamma docstring"
-    assert "group" not in tools[2]
+    assert "bundle" not in tools[2]
 
 
 def test_stale_entry_reported_not_removed_by_default():
@@ -163,10 +163,10 @@ def test_renamed_tool_reports_both_facts_no_migration():
     assert old_alpha["description"] == "CUSTOM alpha description"
     # The new tool is ungrouped (no annotation guessed).
     new_alpha2 = next(e for e in existing["tools"] if e["name"] == "alpha2")
-    assert "group" not in new_alpha2
+    assert "bundle" not in new_alpha2
 
 
-def test_config_and_tool_groups_untouched():
+def test_config_and_bundles_untouched():
     existing = load_existing_yaml_from_str(HAND_EDITED_YAML)
     discovered = [
         _td("tools.alpha", "alpha"),
@@ -174,8 +174,8 @@ def test_config_and_tool_groups_untouched():
         _td("tools.gamma", "gamma"),
     ]
     merge_tools_into_existing(existing, discovered, prune=False)
-    # tool_groups block is byte-identical.
-    assert existing["tool_groups"] == {"core": {"requires": []}}
+    # bundles block is byte-identical.
+    assert existing["bundles"] == {"core": {"requires": []}}
     # Top-level metadata untouched.
     assert existing["name"] == "mykit"
     assert existing["category"] == "hep"
@@ -197,11 +197,11 @@ def test_cli_merge_appends_new_tool(tmp_path):
     _make_repo(tmp_path, {"alpha": "alpha", "beta": "beta"})
     # Scaffold first.
     CliRunner().invoke(main, ["ingest", str(tmp_path), "--no-input"])
-    # Hand-edit: add a custom description + group to alpha.
+    # Hand-edit: add a custom description + bundle to alpha.
     target = tmp_path / "toolkit.yaml"
     data = load_existing_yaml(target)
     data["tools"][0]["description"] = "HAND EDITED"
-    data["tools"][0]["group"] = "core"
+    data["tools"][0]["bundle"] = "core"
     from toolbase.ingest import _dump_yaml
     _dump_yaml(data, target)
     # Add a new tool to source.
@@ -224,7 +224,7 @@ def test_cli_merge_appends_new_tool(tmp_path):
     # Hand edit preserved.
     alpha = next(e for e in after["tools"] if e["name"] == "alpha")
     assert alpha["description"] == "HAND EDITED"
-    assert alpha["group"] == "core"
+    assert alpha["bundle"] == "core"
 
 
 def test_cli_merge_no_op_does_not_rewrite(tmp_path):
