@@ -1,40 +1,61 @@
 # Connecting harnesses
 
 `tb connect` wires toolbase into your agent harness so you don't edit its config
-by hand. Claude Code and Codex connect as MCP clients; Orchestral is a library
-you launch yourself.
+by hand. There are two modalities: **MCP harnesses** (Claude Code, Codex), which
+read a config file that launches toolbase, and **Orchestral**, a library you
+launch yourself.
+
+## MCP harnesses (Claude Code, Codex)
+
+Both connect the same way. `tb connect` writes a config entry that launches
+`toolbase serve` as a stdio MCP server, and the harness talks to it over MCP:
 
 ```bash
-tb connect claude-code
+tb connect claude-code        # or: tb connect codex
 ```
 
-Restart your session. The active profile's tools appear as `<toolkit>__<tool>`.
-You don't run `tb serve`. The harness launches it.
+Then launch the harness. `claude` or `codex` starts a session with toolbase's
+tools wired in (an already-running session needs a restart to pick them up). The
+active profile's tools appear as `<toolkit>__<tool>`.
 
-## Scopes
+**Scopes.** The default is project-local (committed, team-shared). `-g/--global`
+wires it into every session instead:
 
 ```bash
-tb connect claude-code        # project scope: ./.mcp.json (committed, team-shared)
-tb connect claude-code -g     # user scope: ~/.claude.json (all your projects)
+tb connect claude-code        # project: ./.mcp.json (default)
+tb connect claude-code -g     # user: ~/.claude.json (every session)
 ```
 
-The default is project-local, so the wiring lives next to your code and travels
-with the repo. Pass `-g/--global` to wire it into every session instead.
+The first time a harness opens a project with a committed config, it shows a
+one-time approval prompt. That's the harness's own security model, not
+toolbase's.
 
-## The trust prompt
+### Claude Code
 
-The default write, `<repo>/.mcp.json`, is the file you commit so collaborators
-get toolbase wired on clone. Claude Code shows a one-time approval prompt the
-first time anyone opens a project with a `.mcp.json`. That's Claude's security
-model, and each person approves once.
+`tb connect claude-code` writes `.mcp.json` (in your project by default) with a
+stdio MCP server entry:
 
-## Codex
+```json
+{
+  "mcpServers": {
+    "toolbase": {
+      "type": "stdio",
+      "command": "toolbase",
+      "args": ["serve"]
+    }
+  }
+}
+```
 
-Same model as Claude Code, in Codex's TOML config:
+### Codex
 
-```bash
-tb connect codex        # project scope: ./.codex/config.toml
-tb connect codex -g     # user scope: ~/.codex/config.toml
+`tb connect codex` writes the same entry to Codex's TOML config
+(`./.codex/config.toml`, or `~/.codex/config.toml` with `-g`):
+
+```toml
+[mcp_servers.toolbase]
+command = "toolbase"
+args = ["serve"]
 ```
 
 Codex loads a project's `.codex/config.toml` only after you trust the project,
@@ -50,20 +71,42 @@ tb connect orchestral   # writes ./.toolbase/orchestral.py
 tb orchestral           # run it
 ```
 
-The script loads your active profile's tools and hands them to an Orchestral
-`Agent`; you supply the LLM and its API key. Tools load in-process, so there's
-no `tb serve`.
+The generated script (safe to edit) is roughly:
 
-## Activate a profile while connecting
+```python
+"""Launch an orchestral agent wired with your toolbase tools."""
 
-```bash
-tb connect claude-code --profile lab
+from toolbase.connect.orchestral import toolbase_tools
+from orchestral import Agent
+from orchestral.llm import Claude   # swap for GPT, Gemini, ...
+
+def main():
+    with toolbase_tools() as tools:        # one subprocess per served toolkit
+        agent = Agent(llm=Claude(), tools=tools)
+        from orchestral.ui import run_interactive_session
+        run_interactive_session(agent, streaming=True)
+
+if __name__ == "__main__":
+    main()
 ```
 
-Wires the harness and sets `lab` as the active profile in one step. For
-Orchestral, `--profile lab` bakes the profile into the script.
+It loads your active profile's tools and hands them to an Orchestral `Agent`.
+You supply the LLM and its API key. Tools load in-process, so there's no
+`tb serve`. The scaffold also ships commented-out headless and web-GUI launch
+modes.
 
-## Inspect, choose the binary, remove
+## Common operations
+
+Set the active profile while connecting:
+
+```bash
+tb connect claude-code --profile analysis
+```
+
+Wires the harness and sets `analysis` as the active profile in one step. For
+Orchestral, `--profile analysis` bakes the profile into the script.
+
+Inspect, pin the binary, or remove:
 
 ```bash
 tb connect --list        # where toolbase is wired + the toolbase on your PATH
@@ -74,8 +117,51 @@ tb disconnect claude-code          # remove (also: tb connect claude-code --remo
 ```
 
 Use `--abspath` if you have several toolbase installs and want to pin one. Keep
-the bare `toolbase` command in a committed `.mcp.json` so each teammate's
-`PATH` resolves their own.
+the bare `toolbase` command in a committed config so each teammate's `PATH`
+resolves their own.
+
+## How it fits together
+
+For the curious, here's what happens at runtime:
+
+1. **You wire it once.** `tb activate` writes the curated set to the project's
+   `.toolbase/profiles/<name>.yaml` (created in your cwd if there's none above),
+   and `tb connect` writes the harness config.
+2. **The harness starts** and reads that config, launching `toolbase serve` as
+   a stdio MCP server.
+3. **`serve` loads the active profile** and exposes its tools, spawning one
+   subprocess per toolkit. By default that's the `default` profile `tb activate`
+   filled.
+4. **The harness sees the tools** as `<toolkit>__<tool>`.
+
+### Overriding the default with serve.yaml
+
+`serve.yaml` is the easy way to override which profile `serve` runs, and to
+blocklist tools across every profile, without editing a profile file. A command
+writes it for you when you:
+
+- **serve a profile other than `default`.** The harness launches plain
+  `tb serve` (no `--profile`), so to make it serve a named profile you record
+  the choice: `tb profile set-default analysis` (or
+  `tb connect --profile analysis`) writes `default.profile: analysis`.
+- **blocklist a tool everywhere.** `tb serve disable-tool calculator__log`
+  hides it no matter which profile is active.
+- **commit a team default.** Being a project file, it carries the
+  active-profile choice and blocklist to collaborators on clone.
+
+The file is small and human-editable:
+
+```yaml
+# <repo>/.toolbase/serve.yaml
+default:
+  profile: analysis        # which profile serve exposes
+  disabled:
+    tools:
+      - calculator__log     # hidden everywhere, even if the profile includes it
+```
+
+See [Profiles](profiles-power-user.md) for the full active-profile resolution
+order.
 
 ## Next
 

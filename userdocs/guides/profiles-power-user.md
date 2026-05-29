@@ -52,6 +52,12 @@ toolkits:
 - Set `bundles` and/or `tools.enabled` to switch to an allowlist (the union of
   the two), then `tools.disabled` subtracts.
 
+Profiles are created two ways. `tb activate` / `tb deactivate` auto-create and
+edit the `default` profile at `<project>/.toolbase/profiles/default.yaml`,
+materializing `.toolbase/` in your cwd if there's none above. `tb profile create
+<name>` makes additional named ones. Both land under
+`<scope>/.toolbase/profiles/` (`-l` for project, `-g` for user).
+
 ## User vs project profiles
 
 Profiles exist at both scopes. A **project** profile shadows a **user**
@@ -66,6 +72,13 @@ profile of the same name. The project file wins whole.
 3. `default.profile` in your user `serve.yaml`
 4. a profile literally named `default`
 5. otherwise: an error (there's no "serve everything" fallback)
+
+Two things to keep straight. The profile **named `default`** (step 4) is an
+ordinary profile file (`profiles/default.yaml`, the one `tb activate` fills).
+`serve.yaml`'s `default.profile` (steps 2-3) is a separate setting that
+overrides which profile is active. A harness runs plain `tb serve` with no
+`--profile`, so it resolves from step 2 onward. Use `tb profile set-default`
+(or `tb connect --profile`) to serve anything other than `default`.
 
 ## Next
 
