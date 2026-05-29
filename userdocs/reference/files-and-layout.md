@@ -24,21 +24,21 @@ convenience over them.
 ├── profiles/<name>.yaml      project profiles
 ├── serve.yaml                project default.profile + default.disabled
 └── orchestral.py             Orchestral launcher (tb connect orchestral)
-<repo>/.mcp.json              Claude Code wiring (tb connect claude-code -l)
-<repo>/.codex/config.toml     Codex wiring (tb connect codex -l)
+<repo>/.mcp.json              Claude Code wiring (tb connect claude-code)
+<repo>/.codex/config.toml     Codex wiring (tb connect codex)
 ```
 
 Project files override user files where they overlap. Commit `.toolbase/`,
-`.mcp.json`, and `.codex/config.toml`; keep secrets in the user-layer
+`.mcp.json`, and `.codex/config.toml`. Keep secrets in the user-layer
 `config/<toolkit>.yaml`.
 
 ## Harness wiring
 
-| Harness | User (`tb connect`) | Project (`tb connect -l`) |
+| Harness | Project (`tb connect`) | User (`tb connect -g`) |
 |---|---|---|
-| Claude Code | `~/.claude.json` | `<repo>/.mcp.json` |
-| Codex | `~/.codex/config.toml` | `<repo>/.codex/config.toml` |
-| Orchestral | — | `<repo>/.toolbase/orchestral.py` |
+| Claude Code | `<repo>/.mcp.json` | `~/.claude.json` |
+| Codex | `<repo>/.codex/config.toml` | `~/.codex/config.toml` |
+| Orchestral | `<repo>/.toolbase/orchestral.py` | none |
 
 Claude Code and Codex are MCP clients (each spawns `tb serve`). Orchestral is a
 library: `tb connect orchestral` scaffolds the script, `tb orchestral` runs it.

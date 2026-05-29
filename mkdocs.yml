@@ -73,7 +73,7 @@ nav:
       - Configuring toolkits: guides/configuring-toolkits.md
       - Connecting harnesses: guides/connecting-harnesses.md
       - Projects & teams: guides/projects-and-teams.md
-      - Profiles (power user): guides/profiles-power-user.md
+      - Profiles: guides/profiles-power-user.md
       - Multi-version & editable: guides/multi-version-and-editable.md
   - Authoring:
       - Overview: authoring/overview.md
