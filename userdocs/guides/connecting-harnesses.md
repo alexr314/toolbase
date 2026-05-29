@@ -109,16 +109,33 @@ Orchestral, `--profile analysis` bakes the profile into the script.
 Inspect, pin the binary, or remove:
 
 ```bash
-tb connect --list        # where toolbase is wired + the toolbase on your PATH
+tb connect --list        # where toolbase is wired (user + project) + the toolbase on your PATH
 tb connect --harnesses   # which harnesses are supported
 tb connect claude-code --abspath   # write the absolute binary path, not "toolbase"
 tb connect claude-code --dry-run   # show the intended write, change nothing
-tb disconnect claude-code          # remove (also: tb connect claude-code --remove)
 ```
 
-Use `--abspath` if you have several toolbase installs and want to pin one. Keep
-the bare `toolbase` command in a committed config so each teammate's `PATH`
-resolves their own.
+`tb connect --list` reports every scope it's wired into — the user config and
+the project config for each harness — so you can see exactly where an entry
+lives before changing it.
+
+**Removing.** `tb disconnect` mirrors connect's scopes: it removes from this
+project by default, `-g` from the user config, and `--all` from both at once.
+
+```bash
+tb disconnect claude-code          # this project's .mcp.json
+tb disconnect claude-code -g       # user ~/.claude.json (every session)
+tb disconnect claude-code --all    # both at once
+```
+
+(`tb connect claude-code --remove` is the equivalent of the project form.)
+
+**Pinning the binary.** Use `--abspath` when the `toolbase` you want isn't on
+the `PATH` your harness inherits — e.g. it lives in a conda env or venv, or the
+harness is launched from a GUI (Dock/Spotlight) that doesn't see your shell
+`PATH`. It writes the absolute binary path so the harness finds it regardless of
+how it's launched. Keep the bare `toolbase` command in a *committed* config so
+each teammate's `PATH` resolves their own install.
 
 ## How it fits together
 
