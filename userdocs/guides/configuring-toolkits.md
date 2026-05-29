@@ -58,7 +58,8 @@ the key a hidden bundle is waiting on.
 
 ## User vs project layers
 
-Config has two layers; **project overrides user**, key by key.
+Config has two layers, and **project overrides user** key by key. `config`
+writes the project layer by default. Pass `--user` for the user layer.
 
 | Layer | File | For |
 |---|---|---|
@@ -66,11 +67,11 @@ Config has two layers; **project overrides user**, key by key.
 | Project | `<project>/.toolbase/config/<toolkit>.yaml` | values committed with the project |
 
 ```bash
-tb config set calculator precision 10 --project   # committed, shared
-tb config set calculator cas_path /opt/sympy --user  # private, your machine
+tb config set calculator precision 10                # project layer (default, committed)
+tb config set calculator cas_path /opt/sympy --user  # user layer (private, your machine)
 ```
 
-Keep secrets in the user layer (never committed); pin shared, non-secret
+Keep secrets in the user layer (never committed). Pin shared, non-secret
 values in the project layer. Secret-typed fields are masked in `config show`.
 
 ## Toolkits with a setup step

@@ -1,8 +1,9 @@
 # Projects & teams
 
 Pin toolkits, curation, config, and harness wiring into a repo so the setup
-travels with it. `-g` (the default) is user scope: you, everywhere. `-l` is
-project scope: this repository, committed.
+travels with it. Inside a project (any directory with a `.toolbase/`),
+toolbase writes there by default. Use `-g` (config: `--user`) to target your
+user-wide layer instead.
 
 ## Pin toolkits to the project
 
@@ -21,32 +22,26 @@ toolkits:
     version: 0.9.0
 ```
 
-The manifest records which version the project uses; serve respects that pin.
-Binaries live once in the shared cache. Only the pin is project-scoped.
+`install` puts binaries in the global cache, shared across projects. The `-l`
+flag also pins the version into this project's `manifest.yaml`, which `serve`
+respects. It's the one command that needs `-l` for the project. `activate`,
+`config`, and `connect` already default there.
 
-## Curate for the project
+## Curate, configure, and wire
 
-`-l` targets the project's profile instead of your user one:
+Inside the repo these default to the project, so no flags are needed:
 
 ```bash
-tb activate -l calculator/basic
-tb activate -l calculator/scientific
-tb activate -l units/convert
+tb activate calculator/basic           # project profile
+tb config set calculator precision 10  # project config (committed, shared)
+tb connect claude-code                 # writes <repo>/.mcp.json (committed)
 ```
 
-## Configure for the project
-
-Config uses `--project` / `--user` (project overrides user):
-
-```bash
-tb config set calculator precision 10 --project   # committed, shared
-tb config set calculator cas_path /opt/sympy --user  # private, your machine
-```
-
-## Wire the harness for the team
+Reach for the user-wide layer with `-g` (config: `--user`) when something
+shouldn't be committed, like a private secret:
 
 ```bash
-tb connect claude-code -l     # writes <repo>/.mcp.json (committed)
+tb config set calculator cas_path /opt/sympy --user   # private, your machine
 ```
 
 ## Commit

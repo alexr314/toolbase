@@ -1,8 +1,13 @@
-# Profiles (power user)
+# Profiles
 
-A **profile** is a named set of tools the agent sees. `tb activate` /
-`tb deactivate` edit the `default` profile; when you want several you switch
-between, use named profiles.
+A **profile** is a named, curated set of tools the agent sees when toolbase
+serves. It draws from the toolkits you've installed and narrows them to the
+bundles and tools you want for a given task. Because profiles are just named
+selections over the same installed toolkits, you can keep several side by side
+in one project (say a lean `paper` set and a broader `analysis` set) and switch
+which one the agent gets with a single command. `tb activate` and
+`tb deactivate` edit the `default` profile. Create named profiles when you want
+more than one.
 
 ## Manage named profiles
 

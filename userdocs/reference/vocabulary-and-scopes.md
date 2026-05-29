@@ -25,8 +25,10 @@ Quick lookup. For the narrative, see [Concepts](../explanation.md).
 
 | Flag | Scope | Stores in | Applies to |
 |---|---|---|---|
-| `-g` / `--global` (default) | user | `~/.toolbase/` | you, every project |
-| `-l` / `--local` | project | `<repo>/.toolbase/` | this repository (committed) |
+| (default), `-l` / `--local` | project | `<repo>/.toolbase/` (created in the cwd if none) | this repository (committed) |
+| `-g` / `--global` | user | `~/.toolbase/` | you, every project |
 
 `config` uses `--user` / `--project` (and `--layer user\|project`) for the same
-distinction. Project layer overrides user layer where they overlap.
+distinction, with project the default there too. Project layer overrides user
+layer where they overlap. `install` is the exception: its binaries go to the
+global cache, and `-l` pins the version into the project.

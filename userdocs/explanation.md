@@ -28,16 +28,19 @@ Installing never serves anything on its own. You activate what you want
 exposed. This keeps the agent's tool set explicit: installing a new toolkit
 doesn't silently change what the agent sees.
 
-## Scopes: user and project
+## Scopes: project and user
 
-Most commands take `-g` (user) or `-l` (project):
+Most state-changing commands write to one of two layers, and the **project**
+layer is the default:
 
-- **User** (`-g`, the default): applies to you everywhere.
-- **Project** (`-l`): applies to one repository, committed so collaborators
-  share it.
+- **Project** (default): applies to one repository, stored in its `.toolbase/`
+  and committed so collaborators share it. Outside a repo, the command creates
+  `.toolbase/` in the current directory.
+- **User** (`-g`, or `--user` for `config`): applies to you everywhere.
 
-Where they overlap, the project layer wins. See
-[Projects & teams](guides/projects-and-teams.md).
+Where they overlap, the project layer wins. (`install` is the exception: its
+binaries live in a shared global cache, and `-l` pins the version into the
+project.) See [Projects & teams](guides/projects-and-teams.md).
 
 ## The active profile
 
