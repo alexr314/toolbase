@@ -3581,20 +3581,22 @@ def _surface_skills_best_effort(name: str, slot: Path, no_skills: bool) -> None:
         )
 
 
-def _post_install_activate(name: str, *, local_scope: bool) -> None:
+def _post_install_activate(
+    name: str, *, global_scope: bool, local_scope: bool
+) -> None:
     """Activate a just-installed toolkit in the default profile (``-a``).
 
-    Scope mirrors the install: ``-l`` -> project default profile, else
-    user default profile. Best-effort; a failure here doesn't fail the
-    install (the toolkit is in the cache regardless).
+    Uses the same project-first scope resolution as ``tb activate``: the
+    cwd's project by default (creating ``.toolbase/`` there if needed), or
+    the user layer with ``-g``. The install binary always lives in the global
+    cache, but *activation* is per-project -- you install a toolkit once, then
+    activate it where you want it. Best-effort; a failure here doesn't fail
+    the install (the toolkit is in the cache regardless).
     """
     from .serve.profile_scaffold import activate as _activate
     try:
-        if local_scope:
-            root, _src = _resolve_active_project_root()
-            result = _activate(name, scope="project", project_root=root)
-        else:
-            result = _activate(name, scope="user")
+        scope, project_root = _resolve_profile_scope(global_scope, local_scope)
+        result = _activate(name, scope=scope, project_root=project_root)
     except Exception as e:
         console.print(f"[yellow]Installed, but could not activate: {e}[/yellow]")
         console.print(f"Run [cyan]toolbase activate {name}[/cyan] manually.")
@@ -3640,8 +3642,10 @@ def _post_install_activate(name: str, *, local_scope: bool) -> None:
     '--activate', '-a', 'activate_after', is_flag=True, default=False,
     help=(
         "Also activate the toolkit in the default profile after installing "
-        "(adds it to what `tb serve` exposes). Without this, install only "
-        "places the toolkit in the cache; nothing is served until you "
+        "(adds it to what `tb serve` exposes). Activates the cwd's project "
+        "by default (creating .toolbase/ there), like `tb activate`; pass "
+        "-g to activate the user-level profile instead. Without -a, install "
+        "only places the toolkit in the cache; nothing is served until you "
         "activate it."
     ),
 )
@@ -3721,7 +3725,9 @@ def install(name, version, global_scope, local_scope, editable, no_skills, activ
             mode=mode,
         )
         if activate_after and installed_name:
-            _post_install_activate(installed_name, local_scope=local_scope)
+            _post_install_activate(
+                installed_name, global_scope=global_scope, local_scope=local_scope
+            )
         return
 
     # Registry-name branch below (the common case).
@@ -4065,7 +4071,9 @@ def install(name, version, global_scope, local_scope, editable, no_skills, activ
     console.print(f"\n[bold green]✓ Successfully installed {name} v{version}[/bold green]\n")
 
     if activate_after:
-        _post_install_activate(name, local_scope=local_scope)
+        _post_install_activate(
+            name, global_scope=global_scope, local_scope=local_scope
+        )
 
     if env_type == 'venv':
         console.print(f"Environment: venv (Python {python_version})")
@@ -5746,7 +5754,13 @@ def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
         return
 
     if do_list:
-        project_root, _src = _resolve_active_project_root()
+        # Resolve the project the same way connect *writes* (cwd's .toolbase/
+        # or the cwd itself), not the read-side default-project fallback --
+        # otherwise --list misses a .mcp.json sitting in a dir that has no
+        # .toolbase/ yet.
+        _, project_root = _resolve_connect_scope(
+            global_scope=False, local_scope=False
+        )
         _connect_print_status(all_adapters(), project_root)
         return
 
@@ -5850,8 +5864,20 @@ def _connect_print_status(adapters, project_root) -> None:
     import shutil
     any_present = False
     console.print("\n[bold]toolbase harness registrations:[/bold]")
+    if project_root is not None:
+        console.print(f"  [dim]project scope -> {project_root}[/dim]")
     for ad in adapters:
-        for entry in ad.status(project_root):
+        try:
+            entries = ad.status(project_root)
+        except Exception as e:
+            # A broken/unreadable single adapter (e.g. a missing optional
+            # parser dep) must not crash the whole listing.
+            console.print(
+                f"  [yellow]·[/yellow] [yellow]{ad.name}: could not read "
+                f"config ({e})[/yellow]"
+            )
+            continue
+        for entry in entries:
             if entry.present:
                 any_present = True
                 console.print(
@@ -5954,8 +5980,15 @@ def _connect_orchestral(*, profile_name, out, force, dry_run, remove) -> None:
 @main.command()
 @click.argument('harness')
 @_scope_flags
-def disconnect(harness, global_scope, local_scope):
-    """Remove toolbase from a harness (alias for `tb connect --remove`)."""
+@click.option('--all', 'all_scopes', is_flag=True, default=False,
+              help='Remove from BOTH the user and project config at once.')
+def disconnect(harness, global_scope, local_scope, all_scopes):
+    """Remove toolbase from a harness (alias for `tb connect --remove`).
+
+    \b
+    Defaults to THIS project's config (the .mcp.json here); -g removes the
+    user-wide config (~/.claude.json); --all removes both at once.
+    """
     from .connect import get_adapter, available_adapter_names
     from .connect.base import HarnessConfigError
 
@@ -5966,6 +5999,11 @@ def disconnect(harness, global_scope, local_scope):
         )
         return
 
+    if all_scopes and (global_scope or local_scope):
+        raise click.UsageError(
+            "--all can't be combined with -g/--global or -l/--local."
+        )
+
     try:
         adapter = get_adapter(harness)
     except KeyError:
@@ -5974,19 +6012,30 @@ def disconnect(harness, global_scope, local_scope):
             f"{', '.join(available_adapter_names())}, orchestral.[/red]"
         )
         sys.exit(2)
-    scope, project_root = _resolve_connect_scope(global_scope, local_scope)
-    try:
-        removed = adapter.uninstall(
-            scope=scope, project_root=project_root, server_name="toolbase",
+
+    if all_scopes:
+        _, proj_root = _resolve_connect_scope(
+            global_scope=False, local_scope=False
         )
-    except HarnessConfigError as e:
-        console.print(f"[red]✗ {e}[/red]")
-        sys.exit(1)
-    path = adapter.config_path(scope, project_root)
-    if removed:
-        console.print(f"[green]✓[/green] Removed toolbase from {path}.")
+        targets = [("user", None), ("project", proj_root)]
     else:
-        console.print(f"[dim]No toolbase entry in {path}; nothing to remove.[/dim]")
+        targets = [_resolve_connect_scope(global_scope, local_scope)]
+
+    for scope, project_root in targets:
+        try:
+            removed = adapter.uninstall(
+                scope=scope, project_root=project_root, server_name="toolbase",
+            )
+        except HarnessConfigError as e:
+            console.print(f"[red]✗ {e}[/red]")
+            continue
+        path = adapter.config_path(scope, project_root)
+        if removed:
+            console.print(f"[green]✓[/green] Removed toolbase from {path}.")
+        else:
+            console.print(
+                f"[dim]No toolbase entry in {path}; nothing to remove.[/dim]"
+            )
 
 
 @main.command()

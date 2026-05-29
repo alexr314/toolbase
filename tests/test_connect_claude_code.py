@@ -129,3 +129,47 @@ def test_status_reports_presence(tmp_path: Path):
     proj = next(e for e in entries if e.scope == "project")
     assert proj.present is True
     assert proj.command == "toolbase"
+
+
+def test_cli_disconnect_all_removes_both_scopes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from click.testing import CliRunner
+    from toolbase import cli
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    monkeypatch.chdir(proj)
+
+    # Wire toolbase into BOTH the user (~/.claude.json) and project (.mcp.json).
+    _adapter().install(
+        scope="user", project_root=None, server_name="toolbase",
+        command="toolbase", args=["serve"],
+    )
+    _adapter().install(
+        scope="project", project_root=proj, server_name="toolbase",
+        command="toolbase", args=["serve"],
+    )
+
+    r = CliRunner().invoke(cli.main, ["disconnect", "claude-code", "--all"])
+    assert r.exit_code == 0, r.output
+
+    user_data = json.loads((home / ".claude.json").read_text())
+    proj_data = json.loads((proj / ".mcp.json").read_text())
+    assert "toolbase" not in user_data.get("mcpServers", {})
+    assert "toolbase" not in proj_data.get("mcpServers", {})
+
+
+def test_cli_disconnect_all_conflicts_with_scope_flags(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    from click.testing import CliRunner
+    from toolbase import cli
+
+    monkeypatch.setenv("HOME", str(tmp_path))
+    r = CliRunner().invoke(cli.main, ["disconnect", "claude-code", "--all", "-g"])
+    assert r.exit_code != 0
+    assert "--all" in r.output

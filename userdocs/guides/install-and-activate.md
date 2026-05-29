@@ -14,8 +14,9 @@ tb install calculator           # latest
 tb install calculator@1.4.0     # a specific version
 ```
 
-Installing builds the toolkit an isolated environment. It does **not** serve
-it. That's `activate`.
+Installing builds the toolkit an isolated environment in the shared global
+cache (`~/.toolbase/cache/`), available to every project on your machine. It
+does **not** serve it. That's `activate`.
 
 ## Activate
 
@@ -27,7 +28,19 @@ tb activate calculator
 ✓ Activated calculator (whole toolkit).
 ```
 
-`tb install calculator -a` does both at once.
+Activation is **project-local by default**: it writes a profile under the
+current directory's `.toolbase/` (creating it if needed), so the toolkit is
+exposed only when you work here. Add `-g` to activate it **user-wide** (every
+session, any directory) instead:
+
+```bash
+tb activate calculator        # this project only (creates ./.toolbase/)
+tb activate calculator -g     # user-wide
+```
+
+`tb install calculator -a` installs and activates in one step, following the
+same rule: project-local by default, `-g` for user-wide. The binary still
+lands in the shared global cache either way; only the activation is scoped.
 
 ## See what you have
 
