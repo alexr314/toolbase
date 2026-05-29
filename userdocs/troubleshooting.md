@@ -12,11 +12,11 @@ tb profile set-default <name>    # or point at an existing one
 
 ## The agent sees no tools
 
-Installing doesn't serve. Check the toolkit is active and the client is wired:
+Installing doesn't serve. Check the toolkit is active and the harness is wired:
 
 ```bash
 tb list                # is it ✓ active?
-tb connect --list      # is toolbase wired into your client?
+tb connect --list      # is toolbase wired into your harness?
 tb serve --dry-run     # what would be served
 ```
 
@@ -47,7 +47,7 @@ tb config set <toolkit> <key> <value>
 tb config validate <toolkit>
 ```
 
-## Client launches the wrong toolbase (or none)
+## Harness launches the wrong toolbase (or none)
 
 The wired command resolves via `PATH`. Check what's wired vs. what's current:
 

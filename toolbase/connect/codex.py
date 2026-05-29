@@ -28,17 +28,17 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .base import (
-    AvailabilityStatus, ClientAdapter, ClientConfigError, RegistrationEntry,
+    AvailabilityStatus, HarnessAdapter, HarnessConfigError, RegistrationEntry,
 )
 
 _SERVERS_TABLE = "mcp_servers"
 
 
-class CodexConfigError(ClientConfigError):
+class CodexConfigError(HarnessConfigError):
     """Existing Codex config is unreadable / malformed."""
 
 
-class CodexAdapter(ClientAdapter):
+class CodexAdapter(HarnessAdapter):
     name = "codex"
 
     def project_scope_note(self) -> str:
@@ -193,7 +193,7 @@ class CodexAdapter(ClientAdapter):
                             if raw_args is not None else None
                         )
             out.append(RegistrationEntry(
-                client=self.name, scope=scope, path=path,
+                harness=self.name, scope=scope, path=path,
                 present=present, command=command, args=args,
             ))
         return out

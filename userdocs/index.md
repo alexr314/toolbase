@@ -2,7 +2,7 @@
 
 **toolbase is the package manager and runtime for AI agent tools.** Install
 toolkits into isolated environments, curate which tools your agent sees, and
-serve them to your client over the
+serve them to your harness over the
 [Model Context Protocol](https://modelcontextprotocol.io). This site is the
 reference for the toolbase CLI: installing, curating, configuring, and
 authoring toolkits.

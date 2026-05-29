@@ -5019,7 +5019,7 @@ def serve(ctx, profile_name, dry_run, call_timeout, no_tui):
     then an implicit profile named "default". If none resolve, serve errors
     with a hint — there is no "serve everything" fallback.
 
-    You normally don't run this yourself: your agent client (e.g. Claude
+    You normally don't run this yourself: your agent harness (e.g. Claude
     Code) spawns it. Curate what's served with `tb activate` /
     `tb deactivate`, or manage named profiles with `tb profile`.
 
@@ -5662,7 +5662,7 @@ def profile_tools(toolkit):
             )
 
 
-# ── tb connect: wire toolbase into an agent client ─────────────────────
+# ── tb connect: wire toolbase into an agent harness ────────────────────
 
 
 def _resolve_connect_scope(global_scope: bool, local_scope: bool):
@@ -5680,7 +5680,7 @@ def _resolve_connect_scope(global_scope: bool, local_scope: bool):
 
 
 def _toolbase_command(abspath: bool) -> str:
-    """The command string to write into the client config.
+    """The command string to write into the harness's config.
 
     Default is the bare ``toolbase`` (PATH-resolved, portable across
     machines — important for team-shared project configs). ``--abspath``
@@ -5694,33 +5694,33 @@ def _toolbase_command(abspath: bool) -> str:
 
 
 @main.command()
-@click.argument('client', required=False)
+@click.argument('harness', required=False)
 @_scope_flags
 @click.option('--profile', 'profile_name', default=None, metavar='NAME',
               help='Also set NAME as the active profile (writes default.profile).')
 @click.option('--remove', 'remove', is_flag=True, default=False,
-              help='Remove the toolbase entry from the client config.')
+              help="Remove the toolbase entry from the harness's config.")
 @click.option('--dry-run', 'dry_run', is_flag=True, default=False,
               help='Print the intended write without changing anything.')
 @click.option('--abspath', 'abspath', is_flag=True, default=False,
               help='Write the absolute toolbase binary path instead of relying on PATH.')
 @click.option('--list', 'do_list', is_flag=True, default=False,
-              help='Show where toolbase is wired across clients, then exit.')
-@click.option('--clients', 'do_clients', is_flag=True, default=False,
-              help='List available client adapters and detection status, then exit.')
+              help='Show where toolbase is wired across harnesses, then exit.')
+@click.option('--harnesses', 'do_harnesses', is_flag=True, default=False,
+              help='List supported harnesses and detection status, then exit.')
 @click.option('--out', 'out_path', default=None, metavar='PATH',
               help='(orchestral) Path for the generated agent script '
-                   '(default: ./toolbase_agent.py).')
+                   '(default: .toolbase/orchestral.py).')
 @click.option('--force', 'force', is_flag=True, default=False,
               help='(orchestral) Overwrite an existing generated script.')
-def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
-            abspath, do_list, do_clients, out_path, force):
-    """Wire toolbase into an agent client.
+def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
+            abspath, do_list, do_harnesses, out_path, force):
+    """Wire toolbase into an agent harness.
 
     \b
-    For MCP config clients (claude-code) this writes a server entry into the
-    client's config. For orchestral -- a Python library, not a config-file
-    client -- it writes a runnable agent script you launch yourself.
+    Claude Code and Codex are MCP clients: this writes a server entry into the
+    harness's config. Orchestral is a Python library, not a config-file harness,
+    so it writes a runnable agent script you launch yourself.
 
     \b
     Examples:
@@ -5728,23 +5728,23 @@ def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
         tb connect claude-code -l           # project scope (.mcp.json)
         tb connect claude-code -l --profile paper
         tb connect claude-code --remove
-        tb connect orchestral               # write ./toolbase_agent.py
+        tb connect orchestral               # write .toolbase/orchestral.py
         tb connect orchestral --profile paper --out agent.py
         tb connect --list                   # where is toolbase wired?
-        tb connect --clients                # which clients are supported?
+        tb connect --harnesses              # which harnesses are supported?
     """
     from .connect import (
         get_adapter, all_adapters, available_adapter_names,
     )
-    from .connect.base import ClientConfigError
+    from .connect.base import HarnessConfigError
     from .connect.orchestral import is_orchestral_available
 
-    if do_clients:
+    if do_harnesses:
         for ad in all_adapters():
             avail = ad.is_available()
             mark = "[green]✓[/green]" if avail.detected else "[dim]·[/dim]"
             console.print(f"{mark} [cyan]{ad.name}[/cyan] [dim]({avail.detail})[/dim]")
-        # Orchestral is a library, not a file-config client -- list it apart.
+        # Orchestral is a library harness, not a config-file one -- list it apart.
         oavail = is_orchestral_available()
         omark = "[green]✓[/green]" if oavail else "[dim]·[/dim]"
         odetail = (
@@ -5760,14 +5760,14 @@ def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
         _connect_print_status(all_adapters(), project_root)
         return
 
-    if client is None:
+    if harness is None:
         console.print(
-            "[red]Specify a client, e.g. [cyan]tb connect claude-code[/cyan], "
-            "or use --list / --clients.[/red]"
+            "[red]Specify a harness, e.g. [cyan]tb connect claude-code[/cyan], "
+            "or use --list / --harnesses.[/red]"
         )
         sys.exit(2)
 
-    if client == "orchestral":
+    if harness == "orchestral":
         _connect_orchestral(
             profile_name=profile_name, out=out_path, force=force,
             dry_run=dry_run, remove=remove,
@@ -5775,10 +5775,10 @@ def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
         return
 
     try:
-        adapter = get_adapter(client)
+        adapter = get_adapter(harness)
     except KeyError:
         console.print(
-            f"[red]Unknown client '{client}'. Available: "
+            f"[red]Unknown harness '{harness}'. Available: "
             f"{', '.join(available_adapter_names())}, orchestral.[/red]"
         )
         sys.exit(2)
@@ -5790,7 +5790,7 @@ def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
             removed = adapter.uninstall(
                 scope=scope, project_root=project_root, server_name="toolbase",
             )
-        except ClientConfigError as e:
+        except HarnessConfigError as e:
             console.print(f"[red]✗ {e}[/red]")
             sys.exit(1)
         path = adapter.config_path(scope, project_root)
@@ -5806,7 +5806,7 @@ def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
             scope=scope, project_root=project_root, server_name="toolbase",
             command=command, args=["serve"], dry_run=dry_run,
         )
-    except ClientConfigError as e:
+    except HarnessConfigError as e:
         console.print(f"[red]✗ {e}[/red]")
         sys.exit(1)
     except ValueError as e:
@@ -5817,7 +5817,7 @@ def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
         console.print(f"[dim]Would write toolbase ({command} serve) to {path}.[/dim]")
         return
 
-    console.print(f"[green]✓[/green] Wired toolbase into {client} at {path}.")
+    console.print(f"[green]✓[/green] Wired toolbase into {harness} at {path}.")
 
     # --profile: set the active profile in the matching serve.yaml scope.
     if profile_name is not None:
@@ -5859,24 +5859,24 @@ def _connect_print_status(adapters, project_root) -> None:
     """Render `tb connect --list`: registrations + a binary freshness check."""
     import shutil
     any_present = False
-    console.print("\n[bold]toolbase client registrations:[/bold]")
+    console.print("\n[bold]toolbase harness registrations:[/bold]")
     for ad in adapters:
         for entry in ad.status(project_root):
             if entry.present:
                 any_present = True
                 console.print(
-                    f"  [green]✓[/green] [cyan]{entry.client}[/cyan] "
+                    f"  [green]✓[/green] [cyan]{entry.harness}[/cyan] "
                     f"[dim]({entry.scope})[/dim]  {entry.path}  "
                     f"[dim]-> {entry.command} "
                     f"{' '.join(entry.args or [])}[/dim]"
                 )
             else:
                 console.print(
-                    f"  [dim]·[/dim] [dim]{entry.client} ({entry.scope}): "
+                    f"  [dim]·[/dim] [dim]{entry.harness} ({entry.scope}): "
                     f"not wired ({entry.path})[/dim]"
                 )
     if not any_present:
-        console.print("  [dim](toolbase is not wired into any client yet)[/dim]")
+        console.print("  [dim](toolbase is not wired into any harness yet)[/dim]")
         console.print(
             "\nWire it with [cyan]tb connect claude-code[/cyan]."
         )
@@ -5904,10 +5904,10 @@ def _orchestral_script_path(out=None):
 
 def _connect_orchestral(*, profile_name, out, force, dry_run, remove) -> None:
     """Handle `tb connect orchestral`: write (or remove) a runnable agent
-    script at ``<project>/.toolbase/orchestral.py``. Orchestral is a Python
-    library, not a config-file client, so "connecting" means scaffolding the
-    code that hands toolbase's tools to an orchestral Agent -- the user owns
-    the agent (LLM, prompt, launch modality). Launch it with `tb orchestral`.
+    script at ``<project>/.toolbase/orchestral.py``. Orchestral is a library
+    harness, not a config-file one, so "connecting" means scaffolding the code
+    that hands toolbase's tools to an orchestral Agent -- the user owns the
+    agent (LLM, prompt, launch modality). Launch it with `tb orchestral`.
     """
     from .connect.orchestral import (
         agent_script, is_orchestral_available, GENERATED_MARKER,
@@ -5962,14 +5962,14 @@ def _connect_orchestral(*, profile_name, out, force, dry_run, remove) -> None:
 
 
 @main.command()
-@click.argument('client')
+@click.argument('harness')
 @_scope_flags
-def disconnect(client, global_scope, local_scope):
-    """Remove toolbase from a client config (alias for `tb connect --remove`)."""
+def disconnect(harness, global_scope, local_scope):
+    """Remove toolbase from a harness (alias for `tb connect --remove`)."""
     from .connect import get_adapter, available_adapter_names
-    from .connect.base import ClientConfigError
+    from .connect.base import HarnessConfigError
 
-    if client == "orchestral":
+    if harness == "orchestral":
         _connect_orchestral(
             profile_name=None, out=None, force=False, dry_run=False,
             remove=True,
@@ -5977,10 +5977,10 @@ def disconnect(client, global_scope, local_scope):
         return
 
     try:
-        adapter = get_adapter(client)
+        adapter = get_adapter(harness)
     except KeyError:
         console.print(
-            f"[red]Unknown client '{client}'. Available: "
+            f"[red]Unknown harness '{harness}'. Available: "
             f"{', '.join(available_adapter_names())}, orchestral.[/red]"
         )
         sys.exit(2)
@@ -5989,7 +5989,7 @@ def disconnect(client, global_scope, local_scope):
         removed = adapter.uninstall(
             scope=scope, project_root=project_root, server_name="toolbase",
         )
-    except ClientConfigError as e:
+    except HarnessConfigError as e:
         console.print(f"[red]✗ {e}[/red]")
         sys.exit(1)
     path = adapter.config_path(scope, project_root)
