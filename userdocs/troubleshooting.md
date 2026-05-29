@@ -12,7 +12,7 @@ tb profile set-default <name>    # or point at an existing one
 
 ## The agent sees no tools
 
-Installing doesn't serve — check the toolkit is active and the client is wired:
+Installing doesn't serve. Check the toolkit is active and the client is wired:
 
 ```bash
 tb list                # is it ✓ active?
@@ -61,7 +61,7 @@ the exact binary).
 ## Project's `.mcp.json` prompts teammates
 
 Claude Code shows a one-time trust prompt per person for a project's
-`.mcp.json`. That's expected — approve once.
+`.mcp.json`. That's expected. Approve once.
 
 ## Start over
 

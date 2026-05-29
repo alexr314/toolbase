@@ -29,7 +29,7 @@ layer. From the consumer side: [Configuring toolkits](../guides/configuring-tool
 
 ## Gate a bundle on config
 
-A bundle can require config keys; its tools stay hidden until they're set:
+A bundle can require config keys. Its tools stay hidden until they're set:
 
 ```yaml
 bundles:
@@ -37,13 +37,13 @@ bundles:
     requires: [cas_path]   # keys must exist in config:
 ```
 
-Use this for optional, heavyweight capability that needs a prerequisite —
-users without it just don't see those tools.
+Use this for optional, heavyweight capability that needs a prerequisite.
+Users without it just don't see those tools.
 
 ## Heavier setup (`setup.py`)
 
-When config values aren't enough — downloads, derived files, environment
-probing — ship a `setup.py` and declare it:
+When config values aren't enough (downloads, derived files, environment
+probing), ship a `setup.py` and declare it:
 
 ```yaml
 setup_script: true
@@ -59,9 +59,40 @@ clear message.
 
 ## Skills
 
-Markdown files in `skills/` are surfaced to the agent (Claude Code reads
-`~/.claude/skills/`) when the toolkit is installed. Drop guidance there to
-teach the agent how to use your tools well.
+A skill is an agent-facing how-to guide: markdown that teaches the model
+when and how to use your tools. Each is a `.md` file in `skills/` with
+frontmatter:
+
+```markdown
+---
+name: Using calculator for exact math
+description: When to reach for these tools, with usage tips.
+---
+
+# ...guidance for the agent...
+```
+
+On `tb install`, each skill is surfaced to
+`~/.claude/skills/<toolkit>__<skill>/SKILL.md`, where Claude Code reads it.
+`tb uninstall` removes it.
+
+### Scope a skill to a bundle
+
+Add `bundle:` to a skill's frontmatter to tie it to a bundle. The skill is
+surfaced only when that bundle is available, the same config gating that
+governs the bundle's tools:
+
+```markdown
+---
+name: Using the symbolic tools
+description: How and when to reach for symbolic algebra.
+bundle: symbolic
+---
+```
+
+With `symbolic` gated on `cas_path` (above), this guide appears only once
+the user sets that key. A skill with no `bundle:` is toolkit-wide and
+always surfaced.
 
 ## Next
 

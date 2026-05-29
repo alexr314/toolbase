@@ -50,7 +50,7 @@ toolkits:
 ## User vs project profiles
 
 Profiles exist at both scopes. A **project** profile shadows a **user**
-profile of the same name — the project file wins whole.
+profile of the same name. The project file wins whole.
 
 ## How the active profile is chosen
 
@@ -64,5 +64,5 @@ profile of the same name — the project file wins whole.
 
 ## Next
 
-- [Curating tools](curating-tools.md) — the `activate`/`deactivate` shortcuts
-- [Reference → Schemas](../reference/schemas.md) — the full profile schema
+- [Curating tools](curating-tools.md): the `activate`/`deactivate` shortcuts
+- [Reference → Schemas](../reference/schemas.md): the full profile schema

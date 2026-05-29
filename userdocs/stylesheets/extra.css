@@ -28,3 +28,26 @@
   --md-typeset-a-color: var(--tb-teal-bright);
 }
 
+/* Home-page wordmark: "tool" pure black in light mode (white in dark so it
+ * doesn't vanish); "base" the brand teal to echo the header gutter. Teal
+ * directly (not --md-primary-fg-color) so it stays teal in dark mode, where
+ * the gutter itself goes black. */
+.md-typeset h1 .tb-base {
+  color: var(--tb-teal);
+}
+[data-md-color-scheme="default"] .md-typeset h1 .tb-tool {
+  color: #000;
+}
+[data-md-color-scheme="slate"] .md-typeset h1 .tb-tool {
+  color: #fff;
+}
+/* Render the wordmark in Courier for a CLI/code feel. */
+.md-typeset h1 .tb-tool,
+.md-typeset h1 .tb-base {
+  font-family: "Courier New", Courier, monospace;
+}
+/* Same treatment for the site title in the top header gutter. */
+.md-header__title {
+  font-family: "Courier New", Courier, monospace;
+}
+

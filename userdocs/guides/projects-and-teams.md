@@ -1,8 +1,8 @@
 # Projects & teams
 
 Pin toolkits, curation, config, and client wiring into a repo so the setup
-travels with it. `-g` (the default) is user scope — you, everywhere. `-l` is
-project scope — this repository, committed.
+travels with it. `-g` (the default) is user scope: you, everywhere. `-l` is
+project scope: this repository, committed.
 
 ## Pin toolkits to the project
 
@@ -22,7 +22,7 @@ toolkits:
 ```
 
 The manifest records which version the project uses; serve respects that pin.
-Binaries live once in the shared cache — only the pin is project-scoped.
+Binaries live once in the shared cache. Only the pin is project-scoped.
 
 ## Curate for the project
 
@@ -74,12 +74,12 @@ tb install units@0.9.0
 ```
 
 !!! note
-    There's no one-command "install everything in the manifest" yet — install
+    There's no one-command "install everything in the manifest" yet. Install
     the pinned toolkits explicitly (the versions are listed in
     `.toolbase/manifest.yaml`). The committed profile and project config mean
     the agent then sees exactly what the project intends.
 
 ## Next
 
-- [Profiles](profiles-power-user.md) — multiple named profiles per project
-- [Multi-version & editable](multi-version-and-editable.md) — version pinning in depth
+- [Profiles](profiles-power-user.md): multiple named profiles per project
+- [Multi-version & editable](multi-version-and-editable.md): version pinning in depth

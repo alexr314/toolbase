@@ -1,7 +1,7 @@
 # Configuring toolkits
 
-Some toolkits need values to work — an API key, a path, a default setting.
-This is separate from curation: configuration is the data a toolkit needs;
+Some toolkits need values to work: an API key, a path, a default setting.
+This is separate from curation. Configuration is the data a toolkit needs,
 profiles are which tools the agent sees.
 
 ## See what a toolkit needs
@@ -36,7 +36,7 @@ tb config validate calculator   # check required fields are filled
 tb config unset calculator precision
 ```
 
-The file (`~/.toolbase/config/calculator.yaml`) is canonical — `config set`
+The file (`~/.toolbase/config/calculator.yaml`) is canonical. `config set`
 just writes it for you.
 
 ## Config-gated bundles
@@ -86,5 +86,5 @@ tb setup calculator --reset   # start over
 
 ## Next
 
-- [Curating tools](curating-tools.md) — the curation half
-- [Projects & teams](projects-and-teams.md) — the project layer in context
+- [Curating tools](curating-tools.md): the curation half
+- [Projects & teams](projects-and-teams.md): the project layer in context

@@ -32,7 +32,7 @@ Type hints become the input schema. The docstring is what the agent sees.
 
 ## Export it
 
-Tools are discovered through `tools/__init__.py` — import and list each one:
+Tools are discovered through `tools/__init__.py`. Import and list each one:
 
 ```python
 # tools/__init__.py
@@ -46,7 +46,7 @@ A tool that isn't exported here won't be served, even if it appears in
 
 ## Declare it
 
-List each tool in `toolkit.yaml` — the manifest the registry and `tb` read
+List each tool in `toolkit.yaml`, the manifest the registry and `tb` read
 for names, descriptions, and bundle membership:
 
 ```yaml
@@ -57,8 +57,8 @@ tools:
     bundle: basic                  # optional
 ```
 
-Don't want to hand-write the list? `tb ingest` generates it from your code —
-see [From existing tools](existing-tools.md).
+Don't want to hand-write the list? `tb ingest` generates it from your code
+(see [From existing tools](existing-tools.md)).
 
 ## Dependencies
 
@@ -72,6 +72,8 @@ sympy>=1.12
 `tb install` installs them into the toolkit's isolated environment.
 
 ## Group into bundles
+
+A bundle is a named group of tools. Assign one with `bundle:`:
 
 ```yaml
 bundles:
@@ -87,9 +89,10 @@ tools:
     bundle: scientific
 ```
 
-Tools with no `bundle:` are always served.
+Bundles let users serve a subset of a toolkit, and let you gate a group of
+tools (and their skills) on config (see [Config & setup](config-and-setup.md)).
 
 ## Next
 
-- [Config & setup](config-and-setup.md) — config schema, gated bundles, setup.py
+- [Config & setup](config-and-setup.md): config schema, gated bundles, skills, setup.py
 - [Validate & publish](publish.md)

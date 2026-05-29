@@ -1,12 +1,11 @@
-# **toolbase**
+# **<span class="tb-tool">tool</span><span class="tb-base">base</span>**
 
 **toolbase is the package manager and runtime for AI agent tools.** Install
 toolkits into isolated environments, curate which tools your agent sees, and
 serve them to your client over the
-[Model Context Protocol](https://modelcontextprotocol.io).
-
-This site is the setup, installation, and configuration reference. `tb` is a
-short alias for `toolbase`.
+[Model Context Protocol](https://modelcontextprotocol.io). This site is the
+reference for the toolbase CLI: installing, curating, configuring, and
+authoring toolkits.
 
 ## Install toolbase
 
@@ -14,9 +13,10 @@ short alias for `toolbase`.
 pip install toolbase     # Python 3.12+
 ```
 
-## Get a tool in front of your agent
+## Arm your agent
 
-The loop is **install → activate → connect**.
+The loop is **install → activate → connect**. `tb` is a short alias for
+`toolbase`.
 
 ```bash
 tb install arxiv-search      # download into an isolated environment
@@ -37,6 +37,6 @@ tb logs              # tool calls, live
 
 ## Next
 
-- [Guides](guides/install-and-activate.md) — install, curate, configure, connect
-- [Authoring](authoring/overview.md) — write and publish a toolkit
-- [Reference](reference/commands.md) — commands, files, schemas
+- [Guides](guides/install-and-activate.md): install, curate, configure, connect
+- [Authoring](authoring/overview.md): write and publish a toolkit
+- [Reference](reference/commands.md): commands, files, schemas

@@ -3,7 +3,7 @@
 Where toolbase keeps things. All files are human-editable; the CLI is a
 convenience over them.
 
-## User scope — `~/.toolbase/`
+## User scope: `~/.toolbase/`
 
 ```
 ~/.toolbase/
@@ -15,7 +15,7 @@ convenience over them.
 └── default-project/          fallback project used outside any repo
 ```
 
-## Project scope — `<repo>/.toolbase/`
+## Project scope: `<repo>/.toolbase/`
 
 ```
 <repo>/.toolbase/

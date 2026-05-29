@@ -6,7 +6,7 @@ Quick lookup. For the narrative, see [Concepts](../explanation.md).
 
 | Term | Definition |
 |---|---|
-| **toolkit** | The installable unit — one isolated environment, published by an author. |
+| **toolkit** | The installable unit: one isolated environment, published by an author. |
 | **bundle** | An author-defined group of tools within a toolkit. |
 | **tool** | A single callable the agent invokes; namespaced `<toolkit>__<tool>`. |
 | **profile** | A user-defined set of tools the agent sees, across toolkits. |

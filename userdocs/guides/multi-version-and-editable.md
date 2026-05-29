@@ -31,7 +31,7 @@ See [Projects & teams](projects-and-teams.md).
 
 ## Editable installs (developing a toolkit)
 
-Symlink a local source dir into the cache so edits are live — the
+Symlink a local source dir into the cache so edits are live, the
 `pip install -e .` of toolbase:
 
 ```bash
@@ -50,5 +50,5 @@ machine-specific). For the authoring loop, see
 
 ## Next
 
-- [Projects & teams](projects-and-teams.md) — version pinning across a team
-- [Install & activate](install-and-activate.md) — the basic loop
+- [Projects & teams](projects-and-teams.md): version pinning across a team
+- [Install & activate](install-and-activate.md): the basic loop
