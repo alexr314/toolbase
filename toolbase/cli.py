@@ -6216,7 +6216,12 @@ def create_tarball(source_dir: Path, output_path: Path, toolkit_name: str):
     """
     Create a gzipped tarball of the toolkit.
 
-    Excludes: .git/, __pycache__/, *.pyc, .DS_Store, venv/, .venv/
+    Excludes build/VCS/editor cruft AND consumer-side state that a dir
+    accumulates when it doubles as a place you install/serve the toolkit
+    from: .toolbase/ (manifest, profiles, project config), .mcp.json and
+    .codex/ (harness wiring with machine-specific paths), and .claude/
+    (local agent settings). Publishing those would leak local state and
+    absolute paths into the public package.
 
     Args:
         source_dir: Source directory to package
@@ -6227,7 +6232,9 @@ def create_tarball(source_dir: Path, output_path: Path, toolkit_name: str):
         '.git', '__pycache__', '.pyc', '.DS_Store',
         'venv', '.venv', '.pytest_cache', '.mypy_cache',
         '.egg-info', 'dist', 'build', '.tox', 'htmlcov',
-        '.coverage', '.env', '.vscode', '.idea'
+        '.coverage', '.env', '.vscode', '.idea',
+        # Consumer/harness state — never part of the published toolkit.
+        '.toolbase', '.mcp.json', '.claude', '.codex', 'node_modules',
     }
 
     def should_exclude(path: Path) -> bool:
