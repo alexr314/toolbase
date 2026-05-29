@@ -5708,9 +5708,19 @@ def _toolbase_command(abspath: bool) -> str:
               help='Show where toolbase is wired across clients, then exit.')
 @click.option('--clients', 'do_clients', is_flag=True, default=False,
               help='List available client adapters and detection status, then exit.')
+@click.option('--out', 'out_path', default=None, metavar='PATH',
+              help='(orchestral) Path for the generated agent script '
+                   '(default: ./toolbase_agent.py).')
+@click.option('--force', 'force', is_flag=True, default=False,
+              help='(orchestral) Overwrite an existing generated script.')
 def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
-            abspath, do_list, do_clients):
-    """Wire toolbase into an agent client's MCP config.
+            abspath, do_list, do_clients, out_path, force):
+    """Wire toolbase into an agent client.
+
+    \b
+    For MCP config clients (claude-code) this writes a server entry into the
+    client's config. For orchestral -- a Python library, not a config-file
+    client -- it writes a runnable agent script you launch yourself.
 
     \b
     Examples:
@@ -5718,6 +5728,8 @@ def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
         tb connect claude-code -l           # project scope (.mcp.json)
         tb connect claude-code -l --profile paper
         tb connect claude-code --remove
+        tb connect orchestral               # write ./toolbase_agent.py
+        tb connect orchestral --profile paper --out agent.py
         tb connect --list                   # where is toolbase wired?
         tb connect --clients                # which clients are supported?
     """
@@ -5725,12 +5737,22 @@ def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
         get_adapter, all_adapters, available_adapter_names,
     )
     from .connect.claude_code import ClaudeCodeConfigError
+    from .connect.orchestral import is_orchestral_available
 
     if do_clients:
         for ad in all_adapters():
             avail = ad.is_available()
             mark = "[green]✓[/green]" if avail.detected else "[dim]·[/dim]"
             console.print(f"{mark} [cyan]{ad.name}[/cyan] [dim]({avail.detail})[/dim]")
+        # Orchestral is a library, not a file-config client -- list it apart.
+        oavail = is_orchestral_available()
+        omark = "[green]✓[/green]" if oavail else "[dim]·[/dim]"
+        odetail = (
+            "orchestral library importable; writes a runnable agent script"
+            if oavail
+            else "orchestral library not importable"
+        )
+        console.print(f"{omark} [cyan]orchestral[/cyan] [dim]({odetail})[/dim]")
         return
 
     if do_list:
@@ -5745,12 +5767,19 @@ def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
         )
         sys.exit(2)
 
+    if client == "orchestral":
+        _connect_orchestral(
+            profile_name=profile_name, out=out_path, force=force,
+            dry_run=dry_run, remove=remove,
+        )
+        return
+
     try:
         adapter = get_adapter(client)
     except KeyError:
         console.print(
             f"[red]Unknown client '{client}'. Available: "
-            f"{', '.join(available_adapter_names())}.[/red]"
+            f"{', '.join(available_adapter_names())}, orchestral.[/red]"
         )
         sys.exit(2)
 
@@ -5861,6 +5890,79 @@ def _connect_print_status(adapters, project_root) -> None:
     )
 
 
+def _orchestral_script_path(out=None):
+    """Resolve the orchestral launcher path: ``--out`` if given, else
+    ``<project-root>/.toolbase/orchestral.py`` (project discovered by walking
+    up from the cwd; falls back to the cwd when not in a project)."""
+    from pathlib import Path as _Path
+    from .connect.orchestral import DEFAULT_SCRIPT_NAME
+    from .envs import find_project_root
+
+    if out:
+        return _Path(out)
+    root = find_project_root() or _Path.cwd()
+    return root / ".toolbase" / DEFAULT_SCRIPT_NAME
+
+
+def _connect_orchestral(*, profile_name, out, force, dry_run, remove) -> None:
+    """Handle `tb connect orchestral`: write (or remove) a runnable agent
+    script at ``<project>/.toolbase/orchestral.py``. Orchestral is a Python
+    library, not a config-file client, so "connecting" means scaffolding the
+    code that hands toolbase's tools to an orchestral Agent -- the user owns
+    the agent (LLM, prompt, launch modality). Launch it with `tb orchestral`.
+    """
+    from .connect.orchestral import (
+        agent_script, is_orchestral_available, GENERATED_MARKER,
+    )
+
+    path = _orchestral_script_path(out)
+
+    if remove:
+        if not path.exists():
+            console.print(
+                f"[dim]No agent script at {path}; nothing to remove.[/dim]"
+            )
+            return
+        first_line = path.read_text(encoding="utf-8").split("\n", 1)[0]
+        if not first_line.startswith(GENERATED_MARKER):
+            console.print(
+                f"[yellow]{path} wasn't generated by toolbase (no marker) "
+                "-- refusing to delete. Remove it yourself if you meant to."
+                "[/yellow]"
+            )
+            sys.exit(1)
+        path.unlink()
+        console.print(f"[green]✓[/green] Removed {path}.")
+        return
+
+    content = agent_script(profile_name)
+
+    if dry_run:
+        console.print(f"[dim]Would write the following to {path}:[/dim]\n")
+        console.print(content)
+        return
+
+    if path.exists() and not force:
+        console.print(
+            f"[yellow]{path} already exists.[/yellow] Use [cyan]--force[/cyan] "
+            "to overwrite, or [cyan]--out PATH[/cyan] to write elsewhere."
+        )
+        sys.exit(1)
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+    console.print(f"[green]✓[/green] Wrote orchestral agent scaffold to {path}.")
+    if not is_orchestral_available():
+        console.print(
+            "[yellow]Note: the orchestral package isn't importable here; "
+            "the script needs it (and an LLM API key) at runtime.[/yellow]"
+        )
+    console.print(
+        "[dim]Configure orchestral (LLM + API key), then launch with "
+        "[cyan]tb orchestral[/cyan].[/dim]"
+    )
+
+
 @main.command()
 @click.argument('client')
 @_scope_flags
@@ -5869,12 +5971,19 @@ def disconnect(client, global_scope, local_scope):
     from .connect import get_adapter, available_adapter_names
     from .connect.claude_code import ClaudeCodeConfigError
 
+    if client == "orchestral":
+        _connect_orchestral(
+            profile_name=None, out=None, force=False, dry_run=False,
+            remove=True,
+        )
+        return
+
     try:
         adapter = get_adapter(client)
     except KeyError:
         console.print(
             f"[red]Unknown client '{client}'. Available: "
-            f"{', '.join(available_adapter_names())}.[/red]"
+            f"{', '.join(available_adapter_names())}, orchestral.[/red]"
         )
         sys.exit(2)
     scope, project_root = _resolve_connect_scope(global_scope, local_scope)
@@ -5890,6 +5999,39 @@ def disconnect(client, global_scope, local_scope):
         console.print(f"[green]✓[/green] Removed toolbase from {path}.")
     else:
         console.print(f"[dim]No toolbase entry in {path}; nothing to remove.[/dim]")
+
+
+@main.command()
+@click.option('--script', 'script', default=None, metavar='PATH',
+              help='Path to the agent script (default: .toolbase/orchestral.py).')
+def orchestral(script):
+    """Launch your orchestral agent script (the one `tb connect orchestral`
+    wrote). This just runs `python .toolbase/orchestral.py` -- the script owns
+    the agent (LLM, prompt, launch modality); toolbase only runs it.
+
+    \b
+    Examples:
+        tb connect orchestral        # scaffold .toolbase/orchestral.py
+        tb orchestral                # run it
+    """
+    import subprocess
+    from pathlib import Path as _Path
+    from .envs import find_project_root
+
+    path = _orchestral_script_path(script)
+    if not path.exists():
+        console.print(
+            f"[red]No agent script at {path}.[/red] Create one with "
+            "[cyan]tb connect orchestral[/cyan] first."
+        )
+        sys.exit(1)
+    # Run with the interpreter toolbase runs under (toolbase + orchestral live
+    # there), cwd = the project root so the script resolves the active profile
+    # and orchestral persists its conversation under the project.
+    root = find_project_root() or _Path.cwd()
+    console.print(f"[dim]Running {path} ...[/dim]")
+    rc = subprocess.run([sys.executable, str(path)], cwd=str(root)).returncode
+    sys.exit(rc)
 
 
 @main.command()

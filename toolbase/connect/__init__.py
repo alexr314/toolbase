@@ -1,10 +1,15 @@
-"""Client wiring for ``tb connect`` — write toolbase into an agent
-client's MCP configuration so the user never copy-pastes JSON.
+"""Client wiring for ``tb connect`` — make toolbase's tools available to an
+agent client so the user never copy-pastes config by hand.
 
-Adapter pattern: one ``ClientAdapter`` per client (Claude Code in v1;
-Codex / Orchestral later). The CLI surface (``tb connect``) is shared;
-each adapter knows its own config-file location, JSON shape, scope
-vocabulary, and merge rules.
+Two shapes of client:
+
+- **Config-file clients** (Claude Code; Codex later) get a ``ClientAdapter``
+  (see ``base.py``). The adapter knows the client's config-file location,
+  format, scope vocabulary, and merge rules; the CLI surface is shared.
+- **Library clients** (orchestral) aren't configured by a file — they import
+  toolbase. ``orchestral.py`` holds that integration (``toolbase_tools`` and
+  the ``tb connect orchestral`` script generator); it is not a
+  ``ClientAdapter`` and is dispatched separately in the CLI.
 """
 
 from __future__ import annotations
