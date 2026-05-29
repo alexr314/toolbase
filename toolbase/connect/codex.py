@@ -1,19 +1,27 @@
-"""Claude Code adapter for ``tb connect``.
+"""Codex CLI adapter for ``tb connect``.
 
-Scopes (toolbase -> Claude Code):
-- ``user``    -> ``~/.claude.json``, top-level ``mcpServers`` (all projects)
-- ``project`` -> ``<root>/.mcp.json``, top-level ``mcpServers`` (team-shared,
-  git-tracked)
+Scopes (toolbase -> Codex):
+- ``user``    -> ``~/.codex/config.toml``, ``[mcp_servers.toolbase]`` (all projects)
+- ``project`` -> ``<root>/.codex/config.toml``, ``[mcp_servers.toolbase]``
+  (git-tracked, team-shared; Codex loads it only for *trusted* projects)
 
-The entry is a stdio server: ``{"type": "stdio", "command": ..., "args": [...]}``.
-Writes are a non-destructive merge (only the toolbase key is touched; every
-other server and top-level key is preserved) and atomic (tmp file + rename).
-Malformed existing JSON is refused rather than clobbered.
+The entry is a stdio MCP server::
+
+    [mcp_servers.toolbase]
+    command = "toolbase"
+    args = ["serve"]
+
+Writes are a non-destructive, comment-preserving round-trip via ``tomlkit``
+(only the toolbase entry is touched; every other server, top-level key, and
+comment is preserved) and atomic (tmp file + rename). Malformed existing TOML
+is refused rather than clobbered.
+
+(The stdlib only *reads* TOML via ``tomllib``; ``tomlkit`` is the writer, the
+same role ``ruamel.yaml`` plays for toolbase's YAML.)
 """
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 from pathlib import Path
@@ -23,30 +31,31 @@ from .base import (
     AvailabilityStatus, ClientAdapter, ClientConfigError, RegistrationEntry,
 )
 
-
-class ClaudeCodeConfigError(ClientConfigError):
-    """Existing client config is unreadable / malformed."""
+_SERVERS_TABLE = "mcp_servers"
 
 
-class ClaudeCodeAdapter(ClientAdapter):
-    name = "claude-code"
+class CodexConfigError(ClientConfigError):
+    """Existing Codex config is unreadable / malformed."""
+
+
+class CodexAdapter(ClientAdapter):
+    name = "codex"
 
     def project_scope_note(self) -> str:
         return (
-            "Claude Code shows a one-time approval prompt the first time a "
-            "project's .mcp.json is opened -- this is Claude's security model. "
-            "Teammates who clone the repo see it once."
+            "Codex loads a project's .codex/config.toml only after you trust "
+            "the project (run `codex` in the repo and approve it once)."
         )
 
     # ── detection ────────────────────────────────────────────────────
 
     def is_available(self) -> AvailabilityStatus:
-        if shutil.which("claude"):
-            return AvailabilityStatus(True, "claude CLI found on PATH")
-        if (Path.home() / ".claude.json").exists():
-            return AvailabilityStatus(True, "found ~/.claude.json")
+        if shutil.which("codex"):
+            return AvailabilityStatus(True, "codex CLI found on PATH")
+        if (Path.home() / ".codex").exists():
+            return AvailabilityStatus(True, "found ~/.codex")
         return AvailabilityStatus(
-            False, "no `claude` CLI on PATH and no ~/.claude.json"
+            False, "no `codex` CLI on PATH and no ~/.codex"
         )
 
     def supported_scopes(self) -> Dict[str, str]:
@@ -56,47 +65,54 @@ class ClaudeCodeAdapter(ClientAdapter):
 
     def config_path(self, scope: str, project_root: Optional[Path]) -> Path:
         if scope == "user":
-            return Path.home() / ".claude.json"
+            return Path.home() / ".codex" / "config.toml"
         if scope == "project":
             if project_root is None:
                 raise ValueError("project scope requires a project_root")
-            return project_root / ".mcp.json"
+            return project_root / ".codex" / "config.toml"
         raise ValueError(f"unknown scope {scope!r}")
 
     # ── read / write ─────────────────────────────────────────────────
 
     @staticmethod
-    def _read(path: Path) -> dict:
+    def _parse(path: Path):
+        """Parse the TOML file into a tomlkit document (preserving comments).
+
+        Returns an empty document if the file is absent. Refuses malformed
+        TOML rather than clobbering it.
+        """
+        import tomlkit
+        from tomlkit.exceptions import TOMLKitError
+
         if not path.exists():
-            return {}
+            return tomlkit.document()
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-        except json.JSONDecodeError as e:
-            raise ClaudeCodeConfigError(
-                f"{path} is not valid JSON ({e}); refusing to overwrite. "
+            return tomlkit.parse(path.read_text(encoding="utf-8"))
+        except TOMLKitError as e:
+            raise CodexConfigError(
+                f"{path} is not valid TOML ({e}); refusing to overwrite. "
                 "Fix or remove it, then re-run."
             ) from e
-        if not isinstance(data, dict):
-            raise ClaudeCodeConfigError(
-                f"{path} must be a JSON object at the top level."
-            )
-        return data
 
     @staticmethod
-    def _write_atomic(path: Path, data: dict) -> None:
+    def _write_atomic(path: Path, doc) -> None:
+        import tomlkit
+
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(path.suffix + ".tmp")
         with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, sort_keys=False)
-            f.write("\n")
+            f.write(tomlkit.dumps(doc))
             f.flush()
             os.fsync(f.fileno())
         os.replace(tmp, path)
 
     @staticmethod
-    def _entry(command: str, args: List[str], env: Optional[Dict[str, str]]) -> dict:
-        entry: dict = {"type": "stdio", "command": command, "args": list(args)}
+    def _entry(command: str, args: List[str], env: Optional[Dict[str, str]]):
+        import tomlkit
+
+        entry = tomlkit.table()
+        entry["command"] = command
+        entry["args"] = list(args)
         if env:
             entry["env"] = dict(env)
         return entry
@@ -114,19 +130,19 @@ class ClaudeCodeAdapter(ClientAdapter):
         env: Optional[Dict[str, str]] = None,
         dry_run: bool = False,
     ) -> Path:
+        import tomlkit
+
         path = self.config_path(scope, project_root)
-        data = self._read(path)
-        servers = data.get("mcpServers")
+        doc = self._parse(path)
+        servers = doc.get(_SERVERS_TABLE)
         if servers is None:
-            servers = {}
-        elif not isinstance(servers, dict):
-            raise ClaudeCodeConfigError(
-                f"{path}: 'mcpServers' must be a JSON object."
-            )
+            # Super-table so it renders as `[mcp_servers.toolbase]`, not an
+            # empty `[mcp_servers]` header followed by the sub-table.
+            servers = tomlkit.table(is_super_table=True)
+            doc[_SERVERS_TABLE] = servers
         servers[server_name] = self._entry(command, args, env)
-        data["mcpServers"] = servers
         if not dry_run:
-            self._write_atomic(path, data)
+            self._write_atomic(path, doc)
         return path
 
     def uninstall(
@@ -139,14 +155,13 @@ class ClaudeCodeAdapter(ClientAdapter):
         path = self.config_path(scope, project_root)
         if not path.exists():
             return False
-        data = self._read(path)
-        servers = data.get("mcpServers")
-        if not isinstance(servers, dict) or server_name not in servers:
+        doc = self._parse(path)
+        servers = doc.get(_SERVERS_TABLE)
+        if servers is None or server_name not in servers:
             return False
         del servers[server_name]
-        # Leave an empty mcpServers object rather than reshaping the file.
-        data["mcpServers"] = servers
-        self._write_atomic(path, data)
+        # Leave an empty mcp_servers table rather than reshaping the file.
+        self._write_atomic(path, doc)
         return True
 
     # ── status ───────────────────────────────────────────────────────
@@ -163,16 +178,20 @@ class ClaudeCodeAdapter(ClientAdapter):
             args: Optional[List[str]] = None
             if path.exists():
                 try:
-                    data = self._read(path)
-                except ClaudeCodeConfigError:
-                    data = {}
-                servers = data.get("mcpServers")
-                if isinstance(servers, dict) and "toolbase" in servers:
-                    entry = servers["toolbase"]
-                    if isinstance(entry, dict):
+                    doc = self._parse(path)
+                except CodexConfigError:
+                    doc = None
+                if doc is not None:
+                    servers = doc.get(_SERVERS_TABLE)
+                    if servers is not None and "toolbase" in servers:
+                        entry = servers["toolbase"]
                         present = True
-                        command = entry.get("command", "")
-                        args = entry.get("args")
+                        command = str(entry.get("command", ""))
+                        raw_args = entry.get("args")
+                        args = (
+                            [str(a) for a in raw_args]
+                            if raw_args is not None else None
+                        )
             out.append(RegistrationEntry(
                 client=self.name, scope=scope, path=path,
                 present=present, command=command, args=args,

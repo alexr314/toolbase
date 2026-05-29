@@ -5724,7 +5724,7 @@ def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
     from .connect import (
         get_adapter, all_adapters, available_adapter_names,
     )
-    from .connect.claude_code import ClaudeCodeConfigError
+    from .connect.base import ClientConfigError
 
     if do_clients:
         for ad in all_adapters():
@@ -5761,7 +5761,7 @@ def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
             removed = adapter.uninstall(
                 scope=scope, project_root=project_root, server_name="toolbase",
             )
-        except ClaudeCodeConfigError as e:
+        except ClientConfigError as e:
             console.print(f"[red]✗ {e}[/red]")
             sys.exit(1)
         path = adapter.config_path(scope, project_root)
@@ -5795,11 +5795,9 @@ def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
         _connect_set_profile(profile_name, scope, project_root)
 
     if scope == "project":
-        console.print(
-            "[dim]Note: Claude Code shows a one-time approval prompt the "
-            "first time a project's .mcp.json is opened — this is Claude's "
-            "security model. Teammates who clone the repo see it once.[/dim]"
-        )
+        note = adapter.project_scope_note()
+        if note:
+            console.print(f"[dim]Note: {note}[/dim]")
 
 
 def _connect_set_profile(profile_name, scope, project_root) -> None:
@@ -5867,7 +5865,7 @@ def _connect_print_status(adapters, project_root) -> None:
 def disconnect(client, global_scope, local_scope):
     """Remove toolbase from a client config (alias for `tb connect --remove`)."""
     from .connect import get_adapter, available_adapter_names
-    from .connect.claude_code import ClaudeCodeConfigError
+    from .connect.base import ClientConfigError
 
     try:
         adapter = get_adapter(client)
