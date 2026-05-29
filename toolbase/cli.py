@@ -5666,17 +5666,24 @@ def profile_tools(toolkit):
 
 
 def _resolve_connect_scope(global_scope: bool, local_scope: bool):
-    """Connect scope -> (scope, project_root). Default is user (-g); -l
-    writes the project's team-shared config. Explicit by design — writing
-    into a repo's shared config is a deliberate act."""
+    """Connect scope -> (scope, project_root).
+
+    Default is project-local: the client config for the directory you launch
+    the agent from. The project root is the nearest ``.toolbase/`` above the
+    cwd, or the cwd itself -- never the global ``default-project``, whose
+    ``.mcp.json`` no client ever reads. ``-g/--global`` writes the user-wide
+    config (e.g. ``~/.claude.json``) that every session sees.
+    """
     if global_scope and local_scope:
         raise click.UsageError(
             "-g/--global and -l/--local are mutually exclusive."
         )
-    if local_scope:
-        root, _src = _resolve_active_project_root()
-        return "project", root
-    return "user", None
+    if global_scope:
+        return "user", None
+    from .envs import find_project_root as _find_project_root
+    cwd = Path.cwd()
+    root = _find_project_root(cwd=cwd) or cwd
+    return "project", root
 
 
 def _toolbase_command(abspath: bool) -> str:
@@ -5724,9 +5731,9 @@ def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
 
     \b
     Examples:
-        tb connect claude-code              # user scope (~/.claude.json)
-        tb connect claude-code -l           # project scope (.mcp.json)
-        tb connect claude-code -l --profile paper
+        tb connect claude-code              # project: .mcp.json here (default)
+        tb connect claude-code -g           # user: ~/.claude.json (every session)
+        tb connect claude-code --profile paper
         tb connect claude-code --remove
         tb connect orchestral               # write ./toolbase_agent.py
         tb connect orchestral --profile paper --out agent.py
