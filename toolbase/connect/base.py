@@ -8,6 +8,14 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 
+class ClientConfigError(Exception):
+    """A client's existing config is unreadable / malformed.
+
+    Shared base so the CLI can catch one type across all adapters; each
+    adapter may subclass it (e.g. ``ClaudeCodeConfigError``, ``CodexConfigError``).
+    """
+
+
 @dataclass
 class AvailabilityStatus:
     """Whether a client is usable as a connect target on this machine."""
@@ -76,3 +84,8 @@ class ClientAdapter(ABC):
     @abstractmethod
     def status(self, project_root: Optional[Path]) -> List[RegistrationEntry]:
         """Report toolbase registrations across this client's scopes."""
+
+    def project_scope_note(self) -> Optional[str]:
+        """A client-specific caveat to print after a project-scope connect
+        (e.g. a first-use trust prompt). ``None`` means nothing to add."""
+        return None

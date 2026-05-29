@@ -5736,7 +5736,7 @@ def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
     from .connect import (
         get_adapter, all_adapters, available_adapter_names,
     )
-    from .connect.claude_code import ClaudeCodeConfigError
+    from .connect.base import ClientConfigError
     from .connect.orchestral import is_orchestral_available
 
     if do_clients:
@@ -5790,7 +5790,7 @@ def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
             removed = adapter.uninstall(
                 scope=scope, project_root=project_root, server_name="toolbase",
             )
-        except ClaudeCodeConfigError as e:
+        except ClientConfigError as e:
             console.print(f"[red]✗ {e}[/red]")
             sys.exit(1)
         path = adapter.config_path(scope, project_root)
@@ -5806,7 +5806,7 @@ def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
             scope=scope, project_root=project_root, server_name="toolbase",
             command=command, args=["serve"], dry_run=dry_run,
         )
-    except ClaudeCodeConfigError as e:
+    except ClientConfigError as e:
         console.print(f"[red]✗ {e}[/red]")
         sys.exit(1)
     except ValueError as e:
@@ -5824,11 +5824,9 @@ def connect(client, global_scope, local_scope, profile_name, remove, dry_run,
         _connect_set_profile(profile_name, scope, project_root)
 
     if scope == "project":
-        console.print(
-            "[dim]Note: Claude Code shows a one-time approval prompt the "
-            "first time a project's .mcp.json is opened — this is Claude's "
-            "security model. Teammates who clone the repo see it once.[/dim]"
-        )
+        note = adapter.project_scope_note()
+        if note:
+            console.print(f"[dim]Note: {note}[/dim]")
 
 
 def _connect_set_profile(profile_name, scope, project_root) -> None:
@@ -5969,7 +5967,7 @@ def _connect_orchestral(*, profile_name, out, force, dry_run, remove) -> None:
 def disconnect(client, global_scope, local_scope):
     """Remove toolbase from a client config (alias for `tb connect --remove`)."""
     from .connect import get_adapter, available_adapter_names
-    from .connect.claude_code import ClaudeCodeConfigError
+    from .connect.base import ClientConfigError
 
     if client == "orchestral":
         _connect_orchestral(
@@ -5991,7 +5989,7 @@ def disconnect(client, global_scope, local_scope):
         removed = adapter.uninstall(
             scope=scope, project_root=project_root, server_name="toolbase",
         )
-    except ClaudeCodeConfigError as e:
+    except ClientConfigError as e:
         console.print(f"[red]✗ {e}[/red]")
         sys.exit(1)
     path = adapter.config_path(scope, project_root)

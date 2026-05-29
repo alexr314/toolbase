@@ -3,9 +3,10 @@ agent client so the user never copy-pastes config by hand.
 
 Two shapes of client:
 
-- **Config-file clients** (Claude Code; Codex later) get a ``ClientAdapter``
-  (see ``base.py``). The adapter knows the client's config-file location,
-  format, scope vocabulary, and merge rules; the CLI surface is shared.
+- **Config-file clients** (Claude Code writes JSON; Codex writes TOML) get a
+  ``ClientAdapter`` (see ``base.py``). The adapter knows the client's
+  config-file location, format, scope vocabulary, and merge rules; the CLI
+  surface is shared.
 - **Library clients** (orchestral) aren't configured by a file — they import
   toolbase. ``orchestral.py`` holds that integration (``toolbase_tools`` and
   the ``tb connect orchestral`` script generator); it is not a
@@ -18,12 +19,14 @@ from typing import Dict, List
 
 from .base import ClientAdapter, RegistrationEntry, AvailabilityStatus
 from .claude_code import ClaudeCodeAdapter
+from .codex import CodexAdapter
 
 
 # Registry of known adapters, keyed by the name the user types
 # (``tb connect <name>``).
 _ADAPTERS: Dict[str, ClientAdapter] = {
     "claude-code": ClaudeCodeAdapter(),
+    "codex": CodexAdapter(),
 }
 
 
@@ -45,6 +48,7 @@ __all__ = [
     "RegistrationEntry",
     "AvailabilityStatus",
     "ClaudeCodeAdapter",
+    "CodexAdapter",
     "get_adapter",
     "available_adapter_names",
     "all_adapters",
