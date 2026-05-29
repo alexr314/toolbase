@@ -4,15 +4,8 @@ Get a toolkit onto your machine and expose it to the agent.
 
 !!! abstract "Running example"
     The guides use a toy `calculator` toolkit (bundles `basic`, `scientific`,
-    `symbolic`) and a companion `units` toolkit — stand-ins for whatever you
+    `symbolic`) and a companion `units` toolkit, stand-ins for whatever you
     actually install.
-
-## Find
-
-```bash
-tb search calc
-tb search --category math
-```
 
 ## Install
 
@@ -22,7 +15,7 @@ tb install calculator@1.4.0     # a specific version
 ```
 
 Installing builds the toolkit an isolated environment. It does **not** serve
-it — that's `activate`.
+it. That's `activate`.
 
 ## Activate
 
@@ -49,7 +42,7 @@ Active profile: default
 ✗ units        0.9.0   (inactive)
 ```
 
-`tb list -v` adds a per-tool view — see [Curating tools](curating-tools.md).
+`tb list -v` adds a per-tool view (see [Curating tools](curating-tools.md)).
 
 ## Update & uninstall
 
@@ -60,6 +53,6 @@ tb uninstall calculator       # remove it
 
 ## Next
 
-- [Curating tools](curating-tools.md) — serve only the bundles/tools you want
-- [Configuring toolkits](configuring-toolkits.md) — API keys, paths
-- [Connecting clients](connecting-clients.md) — wire toolbase into your agent
+- [Curating tools](curating-tools.md): serve only the bundles/tools you want
+- [Configuring toolkits](configuring-toolkits.md): API keys, paths
+- [Connecting clients](connecting-clients.md): wire toolbase into your agent

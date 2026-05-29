@@ -6,7 +6,7 @@
 tb validate
 ```
 
-Checks structure and `toolkit.yaml` — tool entries, bundles, config schema,
+Checks structure and `toolkit.yaml`: tool entries, bundles, config schema,
 cross-references (a tool's `bundle` must be declared; a bundle's `requires`
 keys must exist in `config`). Fix everything here before publishing.
 

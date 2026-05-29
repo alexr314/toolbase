@@ -8,7 +8,7 @@ tb connect claude-code
 ```
 
 Restart your session; the active profile's tools appear as `<toolkit>__<tool>`.
-You don't run `tb serve` — the client launches it.
+You don't run `tb serve`. The client launches it.
 
 ## Scopes
 
@@ -21,8 +21,8 @@ tb connect claude-code -l     # project scope: ./.mcp.json (committed, team-shar
 
 `-l` writes `<repo>/.mcp.json`, which you commit so collaborators get toolbase
 wired on clone. Claude Code shows a one-time approval prompt the first time
-anyone opens a project with a `.mcp.json` — that's Claude's security model;
-each person approves once.
+anyone opens a project with a `.mcp.json`. That's Claude's security model,
+and each person approves once.
 
 ## Activate a profile while connecting
 
@@ -48,5 +48,5 @@ resolves their own.
 
 ## Next
 
-- [Projects & teams](projects-and-teams.md) — `-l` wiring + reproducible setup
-- [Profiles](profiles-power-user.md) — named profiles and `--profile`
+- [Projects & teams](projects-and-teams.md): `-l` wiring + reproducible setup
+- [Profiles](profiles-power-user.md): named profiles and `--profile`

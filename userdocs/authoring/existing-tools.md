@@ -23,7 +23,7 @@ tb ingest -o toolkit.yaml  # choose where to write
 ## Fill in the metadata
 
 `ingest` writes the `tools:` list; add the toolkit's identity at the top of
-`toolkit.yaml` — `name`, `version`, `author`, `description` (see
+`toolkit.yaml`: `name`, `version`, `author`, `description` (see
 [Schemas](../reference/schemas.md)).
 
 ## Re-syncing
@@ -48,5 +48,5 @@ tb ingest            # merge it into toolkit.yaml
 
 ## Next
 
-- [Config & setup](config-and-setup.md) — group tools into bundles, add config
+- [Config & setup](config-and-setup.md): group tools into bundles, add config
 - [Validate & publish](publish.md)

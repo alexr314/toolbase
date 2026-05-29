@@ -9,7 +9,9 @@ What the agent sees is controlled per-bundle and per-tool, not just per-toolkit.
 | `<toolkit>/<bundle>` | one bundle | `tb activate calculator/scientific` |
 | `<toolkit>__<tool>` | one tool | `tb deactivate calculator__log` |
 
-A **bundle** is an author-defined group of tools. `calculator` ships three:
+A **bundle** is a self-contained capability an author carves out of a
+toolkit: a coherent group of tools and the skills that go with them, meant to
+stand on its own. `calculator` ships three:
 
 ```
 calculator
@@ -57,5 +59,5 @@ needs config you haven't set ([Configuring toolkits](configuring-toolkits.md)).
 
 ## Next
 
-- [Configuring toolkits](configuring-toolkits.md) — unlock config-gated bundles
-- [Profiles](profiles-power-user.md) — save and switch named tool sets
+- [Configuring toolkits](configuring-toolkits.md): unlock config-gated bundles
+- [Profiles](profiles-power-user.md): save and switch named tool sets

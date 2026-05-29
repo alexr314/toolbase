@@ -7,7 +7,6 @@
 
 | Command | Purpose | Key flags |
 |---|---|---|
-| `tb search [QUERY]` | Find toolkits in the registry | `-c/--category` |
 | `tb install NAME` | Install a toolkit (registry name, `name@version`, or a local path) | `-g`, `-l`, `-e`, `-a/--activate`, `--version`, `--no-skills` |
 | `tb uninstall NAME` | Remove a toolkit (all versions) | `-y`/`--no`/`--no-input` |
 | `tb list` | List installed toolkits, active/inactive | `-v/--verbose`, `--json` |
@@ -27,17 +26,17 @@
 | `tb config unset TOOLKIT KEY` | Remove one field | layer flags |
 | `tb config edit TOOLKIT` | Open the config file in `$EDITOR` | layer flags |
 | `tb config path TOOLKIT` | Print the config file path | layer flags |
-| `tb config validate TOOLKIT` | Check required fields/types | — |
-| `tb profile list` | List profiles (user + project), active marked | — |
-| `tb profile show [NAME]` | Print a profile (defaults to active) | — |
+| `tb config validate TOOLKIT` | Check required fields/types | none |
+| `tb profile list` | List profiles (user + project), active marked | none |
+| `tb profile show [NAME]` | Print a profile (defaults to active) | none |
 | `tb profile create NAME` | New profile | `-g`, `-l`, `--from`, `--empty` |
 | `tb profile edit [NAME]` | Edit a profile in `$EDITOR` | `-g`, `-l` |
 | `tb profile delete NAME` | Delete a profile | `-g`, `-l` |
 | `tb profile set-default NAME` | Set the active profile (writes `serve.yaml`) | `-g`, `-l` |
-| `tb profile path NAME` | Print a profile's file path | — |
-| `tb profile tools [TOOLKIT]` | List available bundles + tools | — |
+| `tb profile path NAME` | Print a profile's file path | none |
+| `tb profile tools [TOOLKIT]` | List available bundles + tools | none |
 | `tb setup TOOLKIT` | Run a toolkit's `setup.py` | `--check`, `--reset` |
-| `tb project init` | Create `.toolbase/` + empty manifest here | — |
+| `tb project init` | Create `.toolbase/` + empty manifest here | none |
 
 ## Authoring & publishing
 
@@ -46,8 +45,8 @@
 | `tb init NAME` | Scaffold a toolkit from template | `-p/--path`, `--with-docker`, `--with-setup` |
 | `tb ingest` | Generate/re-sync `toolkit.yaml` from existing code | `--prune`, `--force` |
 | `tb create NAME` | Reserve a name on the registry | `-c/--category` (req), `-d/--description` (req), `--version` |
-| `tb validate` | Check toolkit structure | — |
-| `tb login` / `tb logout` / `tb whoami` | Registry auth | — |
+| `tb validate` | Check toolkit structure | none |
+| `tb login` / `tb logout` / `tb whoami` | Registry auth | none |
 | `tb publish` | Package + upload to the registry | `--dry-run`, `--allow-version-decrease` |
 
 ## Maintenance

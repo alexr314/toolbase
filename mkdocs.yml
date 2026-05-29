@@ -1,7 +1,7 @@
 site_name: toolbase
 site_description: >-
-  Setup, installation, and configuration guide for toolbase — the package
-  manager and runtime for AI agent tools.
+  Reference for the toolbase CLI: installing, curating, configuring, and
+  authoring toolkits for AI agents.
 site_url: https://toolbase-ai.com/docs/
 repo_url: https://github.com/alexr314/toolbase
 repo_name: alexr314/toolbase
