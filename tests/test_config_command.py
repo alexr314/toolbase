@@ -92,7 +92,7 @@ def _install_synthetic(
 
 def test_config_path_prints_absolute(isolated: Path):
     _install_synthetic(isolated)
-    r = CliRunner().invoke(cli.main, ["config", "path", "demo"])
+    r = CliRunner().invoke(cli.main, ["config", "path", "demo", "--user"])
     assert r.exit_code == 0
     assert "demo.yaml" in r.output
     assert str(isolated) in r.output
@@ -156,7 +156,7 @@ def test_config_set_writes_value(isolated: Path):
     _install_synthetic(isolated, config_block=[
         {"name": "host", "type": "string"},
     ])
-    r = CliRunner().invoke(cli.main, ["config", "set", "demo", "host", "myhost"])
+    r = CliRunner().invoke(cli.main, ["config", "set", "demo", "host", "myhost", "--user"])
     assert r.exit_code == 0
     assert load_config("demo")["host"] == "myhost"
 
@@ -165,7 +165,7 @@ def test_config_set_coerces_per_type(isolated: Path):
     _install_synthetic(isolated, config_block=[
         {"name": "port", "type": "integer", "min": 1, "max": 65535},
     ])
-    r = CliRunner().invoke(cli.main, ["config", "set", "demo", "port", "8080"])
+    r = CliRunner().invoke(cli.main, ["config", "set", "demo", "port", "8080", "--user"])
     assert r.exit_code == 0
     # Stored as int, not str.
     assert load_config("demo")["port"] == 8080
@@ -185,7 +185,7 @@ def test_config_set_undeclared_field_warns_but_writes(isolated: Path):
     _install_synthetic(isolated, config_block=[
         {"name": "host", "type": "string"},
     ])
-    r = CliRunner().invoke(cli.main, ["config", "set", "demo", "extra", "value"])
+    r = CliRunner().invoke(cli.main, ["config", "set", "demo", "extra", "value", "--user"])
     assert r.exit_code == 0
     assert "not declared" in r.output.lower() or "warning" in r.output.lower()
     assert load_config("demo")["extra"] == "value"
@@ -197,7 +197,7 @@ def test_config_set_preserves_other_fields(isolated: Path):
         {"name": "b", "type": "string"},
     ])
     save_config("demo", {"a": "1", "b": "2"})
-    CliRunner().invoke(cli.main, ["config", "set", "demo", "a", "99"])
+    CliRunner().invoke(cli.main, ["config", "set", "demo", "a", "99", "--user"])
     data = load_config("demo")
     assert data["a"] == "99"
     assert data["b"] == "2"
@@ -211,7 +211,7 @@ def test_config_unset_removes_field(isolated: Path):
         {"name": "a", "type": "string"},
     ])
     save_config("demo", {"a": "x", "extra": "y"})
-    r = CliRunner().invoke(cli.main, ["config", "unset", "demo", "a"])
+    r = CliRunner().invoke(cli.main, ["config", "unset", "demo", "a", "--user"])
     assert r.exit_code == 0
     assert "a" not in load_config("demo")
 
@@ -283,7 +283,7 @@ def test_config_edit_drops_template_for_schema(isolated: Path, monkeypatch):
     monkeypatch.setenv("EDITOR", "/usr/bin/nano")
     monkeypatch.setattr("toolbase.cli.subprocess.call", lambda argv: 0)
 
-    r = CliRunner().invoke(cli.main, ["config", "edit", "demo"])
+    r = CliRunner().invoke(cli.main, ["config", "edit", "demo", "--user"])
     assert r.exit_code == 0
 
     cfg = config_path("demo")

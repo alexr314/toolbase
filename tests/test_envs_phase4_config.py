@@ -346,10 +346,11 @@ def test_config_set_in_project_writes_project_layer_by_default(
     assert not (fake_home / "config" / "demo.yaml").exists()
 
 
-def test_config_set_in_default_project_writes_user_layer(
+def test_config_set_outside_project_creates_cwd_project(
     tmp_path, fake_home, monkeypatch,
 ):
-    """No project anywhere upward → default to user layer."""
+    """No project upward → config writes to a .toolbase/ created in the cwd
+    (project-first default), not the user layer."""
     nowhere = tmp_path / "nowhere"
     nowhere.mkdir()
 
@@ -359,13 +360,15 @@ def test_config_set_in_default_project_writes_user_layer(
 
     monkeypatch.chdir(nowhere)
     r = CliRunner().invoke(
-        cli.main, ["config", "set", "demo", "host", "user-default"],
+        cli.main, ["config", "set", "demo", "host", "cwd-default"],
     )
     assert r.exit_code == 0, r.output
-    # User layer file exists.
-    user_file = fake_home / "config" / "demo.yaml"
-    assert user_file.exists()
-    assert "user-default" in user_file.read_text()
+    # Project layer in the cwd's new .toolbase/.
+    project_file = nowhere / ".toolbase" / "config" / "demo.yaml"
+    assert project_file.exists()
+    assert "cwd-default" in project_file.read_text()
+    # The user layer is left untouched.
+    assert not (fake_home / "config" / "demo.yaml").exists()
 
 
 def test_config_set_explicit_user_flag_in_project_writes_user(

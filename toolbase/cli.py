@@ -482,37 +482,25 @@ def _stash_project_dir_override(ctx, value):
     return value
 
 
-def _resolve_active_project_root(
-    *,
-    cwd: Optional[Path] = None,
-    allow_implicit_create: bool = False,
-    mode: str = "ask",
-    create_message: Optional[str] = None,
-):
+def _resolve_active_project_root(*, cwd: Optional[Path] = None):
     """Return the active project root (Path) for the current command.
 
-    Honors (in priority order):
+    Read-side resolution, in priority order:
       1. ``--project-dir`` global override (stashed on the Click context).
       2. Discovery walk upward from ``cwd`` for a ``.toolbase/manifest.yaml``.
-      3. ``allow_implicit_create=True`` + TTY: prompt to create
-         ``.toolbase/`` in ``cwd`` (default-Y).
-      4. Fall back to ``~/.toolbase/default-project/``.
+      3. Fall back to ``~/.toolbase/default-project/``.
 
     Returns a ``(project_root, source)`` tuple where source is one of
-    ``"override" | "walk" | "implicit-create" | "fallback"``. A greppable
-    log line ``[toolbase.envs] project_discovered ...`` is emitted on
-    every call for debug visibility.
+    ``"override" | "walk" | "fallback"``. A greppable log line
+    ``[toolbase.envs] project_discovered ...`` is emitted on every call.
 
-    ``allow_implicit_create`` is True for ``tb install``; False for
-    every other command that reads the project (uninstall, serve, list,
-    config, setup) — those silently fall back if no project exists,
-    matching the "casual user shouldn't be upgraded into a project just
-    by reading state" lean.
+    This is the read path (serve, list, uninstall, ...): it never creates a
+    project. Commands that *write* project state and want a real local
+    project -- activate, config -- use ``_cwd_project_root()`` instead.
     """
     from .envs import (
         find_project_root as _find_project_root,
         default_project_root as _default_project_root,
-        project_manifest_path as _project_manifest_path,
     )
 
     # 1. Override stashed by the eager top-level callback.
@@ -536,24 +524,7 @@ def _resolve_active_project_root(
         _log_project_discovered(found, "walk")
         return found, "walk"
 
-    # 3. Optional implicit creation (only on ``tb install`` in a TTY).
-    if allow_implicit_create and mode == "ask":
-        msg = create_message or (
-            f"No .toolbase/ found above {cwd}. Create one here?"
-        )
-        try:
-            if click.confirm(msg, default=True):
-                target = cwd.resolve()
-                _materialize_project_dir(target)
-                _log_project_discovered(target, "implicit-create")
-                return target, "implicit-create"
-        except click.exceptions.Abort:
-            # User Ctrl-C'd the prompt — fall through to default-project
-            # silently. The command they invoked still proceeds; they
-            # just don't get a new project dir created behind their back.
-            pass
-
-    # 4. Default-project fallback.
+    # 3. Default-project fallback.
     default = _default_project_root()
     _log_project_discovered(default, "fallback")
     return default, "fallback"
@@ -576,6 +547,30 @@ def _materialize_project_dir(project_root: Path) -> Path:
     if not manifest_path.exists():
         _save_manifest(manifest_path, _Manifest())
     return manifest_path
+
+
+def _cwd_project_root() -> Path:
+    """The project root to write project-scoped state into by default.
+
+    The nearest ``.toolbase/`` above the cwd, or the cwd itself with
+    ``.toolbase/`` created there if there's none. This is the project-first
+    default for ``activate`` / ``config`` (and mirrors ``tb install -l``):
+    state lands in a real, visible project dir you can see, never the hidden
+    global ``default-project``.
+    """
+    # Honor an explicit --project-dir override (stashed on ctx) first.
+    ctx = click.get_current_context(silent=True)
+    if ctx is not None and ctx.obj and isinstance(ctx.obj, dict):
+        override = ctx.obj.get("project_dir_override")
+        if override is not None:
+            return override.resolve()
+    from .envs import find_project_root as _find_project_root
+    cwd = Path.cwd()
+    root = _find_project_root(cwd=cwd)
+    if root is None:
+        root = cwd.resolve()
+        _materialize_project_dir(root)
+    return root
 
 
 def _log_project_discovered(path: Path, source: str) -> None:
@@ -1854,12 +1849,9 @@ def _resolve_config_layer(
     Priority:
         1. Explicit ``--layer user|project`` flag.
         2. Explicit ``--user`` / ``--project`` flag.
-        3. Default: walk discovery. In a project context, default is
-           ``"project"``. In default-project context, default is
-           ``"user"``.
-
-    The default chosen mirrors the brief's lean: "writes go to project
-    in a project; writes go to user in default-project context."
+        3. Default: the cwd's project -- the nearest ``.toolbase/`` above the
+           cwd, or the cwd itself with ``.toolbase/`` created there. Config
+           is project-first; pass ``--user`` for the user-wide layer.
     """
     # Conflicts: at most one explicit choice.
     explicit = []
@@ -1877,18 +1869,14 @@ def _resolve_config_layer(
     if explicit:
         layer = explicit[0]
     else:
-        # Default: peek at discovery to decide.
-        project_root, source = _resolve_active_project_root()
-        if source == "fallback":
-            return "user", None
-        # In any real project context (walk / override / implicit-create)
-        # the project layer is the default target.
-        return "project", project_root
+        # Default: the cwd's project (create .toolbase/ if there's none
+        # above, mirroring `tb activate` / `tb install -l`). --user targets
+        # the user layer.
+        return "project", _cwd_project_root()
 
     # Explicit layer specified.
     if layer == "project":
-        project_root, _source = _resolve_active_project_root()
-        return "project", project_root
+        return "project", _cwd_project_root()
     return "user", None
 
 
@@ -5249,8 +5237,9 @@ def _installed_toolkit_names() -> set:
 def _resolve_profile_scope(global_scope: bool, local_scope: bool):
     """Resolve activate/deactivate/create scope -> (scope, project_root).
 
-    -g forces user; -l forces project; default mirrors ``tb install``:
-    project when inside a real project, else user.
+    Default (and -l): the cwd's project -- the nearest ``.toolbase/`` above
+    the cwd, or the cwd itself, creating ``.toolbase/`` there if there's none
+    (mirrors ``tb install -l``). ``-g/--global`` forces the user layer.
     """
     if global_scope and local_scope:
         raise click.UsageError(
@@ -5258,13 +5247,7 @@ def _resolve_profile_scope(global_scope: bool, local_scope: bool):
         )
     if global_scope:
         return "user", None
-    if local_scope:
-        root, _src = _resolve_active_project_root()
-        return "project", root
-    root, source = _resolve_active_project_root()
-    if source == "fallback":
-        return "user", None
-    return "project", root
+    return "project", _cwd_project_root()
 
 
 def _print_mutation(result) -> None:
@@ -5666,17 +5649,24 @@ def profile_tools(toolkit):
 
 
 def _resolve_connect_scope(global_scope: bool, local_scope: bool):
-    """Connect scope -> (scope, project_root). Default is user (-g); -l
-    writes the project's team-shared config. Explicit by design — writing
-    into a repo's shared config is a deliberate act."""
+    """Connect scope -> (scope, project_root).
+
+    Default is project-local: the client config for the directory you launch
+    the agent from. The project root is the nearest ``.toolbase/`` above the
+    cwd, or the cwd itself -- never the global ``default-project``, whose
+    ``.mcp.json`` no client ever reads. ``-g/--global`` writes the user-wide
+    config (e.g. ``~/.claude.json``) that every session sees.
+    """
     if global_scope and local_scope:
         raise click.UsageError(
             "-g/--global and -l/--local are mutually exclusive."
         )
-    if local_scope:
-        root, _src = _resolve_active_project_root()
-        return "project", root
-    return "user", None
+    if global_scope:
+        return "user", None
+    from .envs import find_project_root as _find_project_root
+    cwd = Path.cwd()
+    root = _find_project_root(cwd=cwd) or cwd
+    return "project", root
 
 
 def _toolbase_command(abspath: bool) -> str:
@@ -5724,9 +5714,9 @@ def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
 
     \b
     Examples:
-        tb connect claude-code              # user scope (~/.claude.json)
-        tb connect claude-code -l           # project scope (.mcp.json)
-        tb connect claude-code -l --profile paper
+        tb connect claude-code              # project: .mcp.json here (default)
+        tb connect claude-code -g           # user: ~/.claude.json (every session)
+        tb connect claude-code --profile paper
         tb connect claude-code --remove
         tb connect orchestral               # write .toolbase/orchestral.py
         tb connect orchestral --profile paper --out agent.py

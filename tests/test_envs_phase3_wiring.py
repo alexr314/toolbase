@@ -81,66 +81,55 @@ def test_resolve_override_via_context(tmp_path, fake_home):
     assert source == "override"
 
 
-def test_resolve_no_implicit_create_when_disabled(tmp_path, fake_home):
-    """Read paths (uninstall/list/serve/config) never auto-create."""
+def test_resolve_read_path_never_creates(tmp_path, fake_home):
+    """The read path (uninstall/list/serve/config-read) never auto-creates;
+    outside a project it falls back to default-project."""
     cwd = tmp_path / "no-proj"
     cwd.mkdir()
-    root, source = cli._resolve_active_project_root(
-        cwd=cwd, allow_implicit_create=False,
-    )
+    root, source = cli._resolve_active_project_root(cwd=cwd)
     assert source == "fallback"
     # No .toolbase/ created in cwd.
     assert not (cwd / ".toolbase").exists()
 
 
-def test_resolve_no_implicit_create_in_skip_mode(tmp_path, fake_home):
-    """Non-TTY (--no-input) bypasses the prompt; falls back silently."""
-    cwd = tmp_path / "no-proj"
+# ── _cwd_project_root: the write path for activate / config ──────────
+
+
+def test_cwd_project_root_creates_in_cwd(tmp_path, fake_home, monkeypatch):
+    """Outside a project, the write path materializes .toolbase/ in the cwd
+    (project-first default for activate/config)."""
+    cwd = tmp_path / "fresh"
     cwd.mkdir()
-    root, source = cli._resolve_active_project_root(
-        cwd=cwd, allow_implicit_create=True, mode="skip",
-    )
-    assert source == "fallback"
-    assert not (cwd / ".toolbase").exists()
-
-
-def test_resolve_no_implicit_create_in_yes_mode(tmp_path, fake_home):
-    """--yes also bypasses the create prompt (skip semantics for project)."""
-    cwd = tmp_path / "no-proj"
-    cwd.mkdir()
-    # We pass mode="yes" — same lean as skip: don't auto-create unless
-    # the user is interactive and gets to see the prompt.
-    root, source = cli._resolve_active_project_root(
-        cwd=cwd, allow_implicit_create=True, mode="yes",
-    )
-    assert source == "fallback"
-
-
-def test_resolve_implicit_create_prompt_default_y(tmp_path, fake_home, monkeypatch):
-    """In TTY (mode=ask), the prompt defaults to Yes and creates ``.toolbase/``."""
-    cwd = tmp_path / "fresh-proj"
-    cwd.mkdir()
-    # Stub click.confirm to confirm Yes.
-    monkeypatch.setattr("click.confirm", lambda msg, default=True: True)
-    root, source = cli._resolve_active_project_root(
-        cwd=cwd, allow_implicit_create=True, mode="ask",
-    )
-    assert source == "implicit-create"
+    monkeypatch.chdir(cwd)
+    root = cli._cwd_project_root()
     assert root == cwd.resolve()
     assert (cwd / ".toolbase" / "manifest.yaml").exists()
 
 
-def test_resolve_implicit_create_declined_falls_back(tmp_path, fake_home, monkeypatch):
-    cwd = tmp_path / "fresh-proj"
-    cwd.mkdir()
-    monkeypatch.setattr("click.confirm", lambda msg, default=True: False)
-    root, source = cli._resolve_active_project_root(
-        cwd=cwd, allow_implicit_create=True, mode="ask",
-    )
-    assert source == "fallback"
-    from toolbase.envs import default_project_root
-    assert root == default_project_root()
-    assert not (cwd / ".toolbase").exists()
+def test_cwd_project_root_uses_existing_project_above(tmp_path, fake_home, monkeypatch):
+    """Inside a project, the write path uses the nearest .toolbase/ above the
+    cwd, not a new one in the subdir."""
+    project = tmp_path / "p"
+    project.mkdir()
+    _drop_manifest(project)
+    sub = project / "src"
+    sub.mkdir()
+    monkeypatch.chdir(sub)
+    root = cli._cwd_project_root()
+    assert root == project.resolve()
+    assert not (sub / ".toolbase").exists()
+
+
+def test_cwd_project_root_honors_override(tmp_path, fake_home):
+    """--project-dir override (stashed on ctx) wins over cwd discovery."""
+    forced = tmp_path / "forced"
+    forced.mkdir()
+    import click as _click
+    ctx = _click.Context(cli.main)
+    ctx.obj = {"project_dir_override": forced}
+    with ctx:
+        root = cli._cwd_project_root()
+    assert root == forced.resolve()
 
 
 # ── author-mode orthogonality ────────────────────────────────────────
@@ -154,10 +143,8 @@ def test_toolkit_yaml_in_cwd_does_not_affect_discovery(tmp_path, fake_home):
     # Author mode marker — just toolkit.yaml at top level.
     (cwd / "toolkit.yaml").write_text("name: foo\nversion: 0.1.0\n")
     # No .toolbase/ — so user-mode discovery should NOT consider this
-    # a project. Discovery walks past it.
-    root, source = cli._resolve_active_project_root(
-        cwd=cwd, allow_implicit_create=False,
-    )
+    # a project. Discovery walks past it (read path).
+    root, source = cli._resolve_active_project_root(cwd=cwd)
     assert source == "fallback"
 
 
