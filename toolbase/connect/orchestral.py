@@ -28,7 +28,7 @@ Entry points:
   agent (orchestral already ships headless / TUI / web-GUI launchers).
 - ``agent_script(...)`` -- the runnable scaffold ``tb connect orchestral``
   writes to disk (the library-client analogue of writing ``.mcp.json``).
-- ``is_orchestral_available()`` -- detection for ``tb connect --clients``.
+- ``is_orchestral_available()`` -- detection for ``tb connect --harnesses``.
 """
 
 from __future__ import annotations
@@ -56,8 +56,8 @@ def is_orchestral_available() -> bool:
     """Whether the orchestral library is importable in this environment.
 
     Orchestral is a hard dependency of toolbase, so this is normally True;
-    it only fails in a broken install. ``tb connect --clients`` uses it to
-    render orchestral's detection status alongside the file-based clients.
+    it only fails in a broken install. ``tb connect --harnesses`` uses it to
+    render orchestral's detection status alongside the config-file harnesses.
     """
     import importlib.util
 

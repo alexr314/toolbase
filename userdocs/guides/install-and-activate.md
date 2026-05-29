@@ -55,4 +55,4 @@ tb uninstall calculator       # remove it
 
 - [Curating tools](curating-tools.md): serve only the bundles/tools you want
 - [Configuring toolkits](configuring-toolkits.md): API keys, paths
-- [Connecting clients](connecting-clients.md): wire toolbase into your agent
+- [Connecting harnesses](connecting-harnesses.md): wire toolbase into your agent

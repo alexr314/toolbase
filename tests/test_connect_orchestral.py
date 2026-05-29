@@ -232,8 +232,8 @@ def test_cli_remove_absent_is_friendly_noop(tmp_path):
     assert "nothing to remove" in res.output.lower()
 
 
-def test_cli_clients_lists_orchestral():
-    res = _run(["connect", "--clients"])
+def test_cli_harnesses_lists_orchestral():
+    res = _run(["connect", "--harnesses"])
     assert res.exit_code == 0, res.output
     assert "orchestral" in res.output
 

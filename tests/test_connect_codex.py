@@ -166,7 +166,7 @@ def test_has_project_scope_note():
 # ── CLI surface ───────────────────────────────────────────────────────
 
 
-def test_cli_clients_lists_codex():
-    res = CliRunner().invoke(cli.main, ["connect", "--clients"])
+def test_cli_harnesses_lists_codex():
+    res = CliRunner().invoke(cli.main, ["connect", "--harnesses"])
     assert res.exit_code == 0, res.output
     assert "codex" in res.output

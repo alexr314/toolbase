@@ -20,15 +20,15 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from .base import (
-    AvailabilityStatus, ClientAdapter, ClientConfigError, RegistrationEntry,
+    AvailabilityStatus, HarnessAdapter, HarnessConfigError, RegistrationEntry,
 )
 
 
-class ClaudeCodeConfigError(ClientConfigError):
-    """Existing client config is unreadable / malformed."""
+class ClaudeCodeConfigError(HarnessConfigError):
+    """Existing Claude Code config is unreadable / malformed."""
 
 
-class ClaudeCodeAdapter(ClientAdapter):
+class ClaudeCodeAdapter(HarnessAdapter):
     name = "claude-code"
 
     def project_scope_note(self) -> str:
@@ -174,7 +174,7 @@ class ClaudeCodeAdapter(ClientAdapter):
                         command = entry.get("command", "")
                         args = entry.get("args")
             out.append(RegistrationEntry(
-                client=self.name, scope=scope, path=path,
+                harness=self.name, scope=scope, path=path,
                 present=present, command=command, args=args,
             ))
         return out

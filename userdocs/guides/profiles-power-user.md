@@ -21,7 +21,7 @@ tb profile delete paper
 
 ```bash
 tb profile set-default paper          # persist: write default.profile to serve.yaml
-tb connect claude-code --profile paper   # wire a client to a specific profile
+tb connect claude-code --profile paper   # wire a harness to a specific profile
 tb serve --profile paper --dry-run    # one-shot preview of a profile
 ```
 

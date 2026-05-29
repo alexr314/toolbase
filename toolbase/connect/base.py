@@ -1,4 +1,10 @@
-"""Adapter contract for ``tb connect``."""
+"""Adapter contract for ``tb connect``.
+
+A *harness* is an agent runtime you serve tools to (Claude Code, Codex,
+Orchestral). Config-file harnesses (Claude Code, Codex) connect as MCP clients
+and get a ``HarnessAdapter`` here; library harnesses (Orchestral) are handled
+separately (see ``orchestral.py``).
+"""
 
 from __future__ import annotations
 
@@ -8,8 +14,8 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 
-class ClientConfigError(Exception):
-    """A client's existing config is unreadable / malformed.
+class HarnessConfigError(Exception):
+    """A harness's existing config is unreadable / malformed.
 
     Shared base so the CLI can catch one type across all adapters; each
     adapter may subclass it (e.g. ``ClaudeCodeConfigError``, ``CodexConfigError``).
@@ -18,7 +24,7 @@ class ClientConfigError(Exception):
 
 @dataclass
 class AvailabilityStatus:
-    """Whether a client is usable as a connect target on this machine."""
+    """Whether a harness is usable as a connect target on this machine."""
 
     detected: bool
     detail: str  # human-readable ("found ~/.claude.json", "claude CLI on PATH", ...)
@@ -28,7 +34,7 @@ class AvailabilityStatus:
 class RegistrationEntry:
     """One discovered toolbase registration, for ``tb connect --list``."""
 
-    client: str
+    harness: str
     scope: str            # toolbase scope: "user" | "project"
     path: Path            # the config file
     present: bool         # is a toolbase server entry present?
@@ -36,18 +42,23 @@ class RegistrationEntry:
     args: Optional[List[str]] = None
 
 
-class ClientAdapter(ABC):
-    """Per-client adapter. Knows one client's config layout + scope map."""
+class HarnessAdapter(ABC):
+    """Per-harness adapter for a config-file harness (Claude Code, Codex).
+
+    Knows one harness's config layout + scope map. Library harnesses that
+    import toolbase rather than reading a config file (Orchestral) are not
+    adapters — see ``orchestral.py``.
+    """
 
     name: str  # e.g. "claude-code"
 
     @abstractmethod
     def is_available(self) -> AvailabilityStatus:
-        """Whether this client is present / wireable on this machine."""
+        """Whether this harness is present / wireable on this machine."""
 
     @abstractmethod
     def supported_scopes(self) -> Dict[str, str]:
-        """Map toolbase scope -> this client's native scope name."""
+        """Map toolbase scope -> this harness's native scope name."""
 
     @abstractmethod
     def config_path(self, scope: str, project_root: Optional[Path]) -> Path:
@@ -83,9 +94,9 @@ class ClientAdapter(ABC):
 
     @abstractmethod
     def status(self, project_root: Optional[Path]) -> List[RegistrationEntry]:
-        """Report toolbase registrations across this client's scopes."""
+        """Report toolbase registrations across this harness's scopes."""
 
     def project_scope_note(self) -> Optional[str]:
-        """A client-specific caveat to print after a project-scope connect
+        """A harness-specific caveat to print after a project-scope connect
         (e.g. a first-use trust prompt). ``None`` means nothing to add."""
         return None

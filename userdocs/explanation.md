@@ -22,7 +22,7 @@ Three states, three commands:
 |---|---|
 | Installed (in the cache) | `tb install` |
 | Active (in the profile, served) | `tb activate` |
-| Wired (in your client's config) | `tb connect` |
+| Wired (into your harness) | `tb connect` |
 
 Installing never serves anything on its own. You activate what you want
 exposed. This keeps the agent's tool set explicit: installing a new toolkit

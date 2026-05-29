@@ -1,6 +1,6 @@
 # Projects & teams
 
-Pin toolkits, curation, config, and client wiring into a repo so the setup
+Pin toolkits, curation, config, and harness wiring into a repo so the setup
 travels with it. `-g` (the default) is user scope: you, everywhere. `-l` is
 project scope: this repository, committed.
 
@@ -43,7 +43,7 @@ tb config set calculator precision 10 --project   # committed, shared
 tb config set calculator cas_path /opt/sympy --user  # private, your machine
 ```
 
-## Wire the client for the team
+## Wire the harness for the team
 
 ```bash
 tb connect claude-code -l     # writes <repo>/.mcp.json (committed)
@@ -57,7 +57,7 @@ tb connect claude-code -l     # writes <repo>/.mcp.json (committed)
   serve.yaml               # default.profile + blocklists
   config/<toolkit>.yaml    # shared, non-secret config
   profiles/default.yaml    # the project's curated tool set
-<repo>/.mcp.json           # client wiring
+<repo>/.mcp.json           # harness wiring (Claude Code)
 ```
 
 Commit all of `.toolbase/` and `.mcp.json`. Keep per-user secrets in your user
