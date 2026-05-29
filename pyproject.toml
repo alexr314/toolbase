@@ -40,6 +40,10 @@ dependencies = [
     # Phase 3C-1 setup system relies on for state-field declaration.
     "orchestral-ai>=1.4",
     "mcp>=1.0",
+    # Round-trips ~/.codex/config.toml for `tb connect codex` while preserving
+    # the user's comments + formatting. The stdlib only reads TOML (tomllib);
+    # tomlkit is the writer (same role ruamel.yaml plays for our YAML).
+    "tomlkit>=0.12",
 ]
 
 [project.urls]
