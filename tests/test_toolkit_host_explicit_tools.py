@@ -164,30 +164,158 @@ class TestImportExplicitTools:
         assert len(tools) == 1
         assert isinstance(tools[0], BaseTool)
 
-    def test_rejects_non_basetool_attribute(self, tmp_path):
+    def test_skips_non_basetool_attribute(self, tmp_path, capsys):
+        # Bad entries no longer raise — they skip and emit a structured
+        # tool_import_skipped JSON line on stderr (captured by the
+        # per-toolkit log in production).
         _make_pkg(
             tmp_path,
             ("pkg/__init__.py", ""),
             ("pkg/junk.py", "not_a_tool = 42\n"),
         )
         spec = [{"name": "not_a_tool", "module": "pkg.junk"}]
-        with pytest.raises(TypeError, match="not a BaseTool"):
-            _import_explicit_tools(spec, tmp_path)
+        tools = _import_explicit_tools(spec, tmp_path)
+        assert tools == []
+        err = capsys.readouterr().err
+        assert '"event": "tool_import_skipped"' in err
+        assert '"tool": "not_a_tool"' in err
+        assert "not a BaseTool" in err
 
-    def test_rejects_missing_attribute(self, tmp_path):
+    def test_skips_missing_attribute(self, tmp_path, capsys):
         _make_pkg(
             tmp_path,
             ("pkg/__init__.py", ""),
             ("pkg/empty.py", "# empty\n"),
         )
         spec = [{"name": "missing_attr", "module": "pkg.empty"}]
-        with pytest.raises(AttributeError, match="has no attribute"):
-            _import_explicit_tools(spec, tmp_path)
+        tools = _import_explicit_tools(spec, tmp_path)
+        assert tools == []
+        err = capsys.readouterr().err
+        assert '"event": "tool_import_skipped"' in err
+        assert "has no attribute" in err
 
-    def test_rejects_entry_missing_module(self, tmp_path):
+    def test_skips_entry_missing_module(self, tmp_path, capsys):
         spec = [{"name": "no_module"}]
-        with pytest.raises(ValueError, match="missing 'module'"):
-            _import_explicit_tools(spec, tmp_path)
+        tools = _import_explicit_tools(spec, tmp_path)
+        assert tools == []
+        err = capsys.readouterr().err
+        assert '"event": "tool_import_skipped"' in err
+        assert "missing 'module'" in err
+
+    def test_one_bad_tool_does_not_block_the_others(self, tmp_path, capsys):
+        # The whole reason for skip-on-fail: a toolkit with one broken
+        # entry must still come up with its other tools served. This is
+        # the regression that motivated the change — a heptapod tool with
+        # a missing state field was halting the entire toolkit import.
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            (
+                "pkg/good.py",
+                "from orchestral import define_tool\n"
+                "@define_tool\n"
+                "def good_tool():\n"
+                "    \"\"\"works.\"\"\"\n"
+                "    return 'ok'\n",
+            ),
+            ("pkg/bad.py", "not_a_tool = 42\n"),
+        )
+        spec = [
+            {"name": "good_tool", "module": "pkg.good"},
+            {"name": "not_a_tool", "module": "pkg.bad"},
+        ]
+        tools = _import_explicit_tools(spec, tmp_path)
+        from orchestral.tools.base.tool import BaseTool
+        assert len(tools) == 1
+        assert isinstance(tools[0], BaseTool)
+        err = capsys.readouterr().err
+        assert '"event": "tool_import_skipped"' in err
+        assert '"tool": "not_a_tool"' in err
+
+    def test_passes_state_config_to_subclass_constructor(self, tmp_path):
+        # A class with a no-default StateField must receive its value
+        # via state_config; toolbase forwards matching entries as kwargs.
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            (
+                "pkg/stateful.py",
+                "from orchestral.tools import BaseTool\n"
+                "from orchestral.tools.base.field_utils import StateField\n"
+                "class StatefulTool(BaseTool):\n"
+                "    name: str = 'stateful'\n"
+                "    description: str = 'needs state'\n"
+                "    base_directory: str = StateField(description='wd')\n"
+                "    def _run(self, **kw):\n"
+                "        return self.base_directory\n",
+            ),
+        )
+        spec = [{"name": "StatefulTool", "module": "pkg.stateful"}]
+        tools = _import_explicit_tools(
+            spec, tmp_path, state_config={"base_directory": "/sandbox"}
+        )
+        assert len(tools) == 1
+        assert tools[0].base_directory == "/sandbox"
+
+    def test_subclass_missing_required_state_is_skipped(self, tmp_path, capsys):
+        # Without state_config, a class with a required-no-default StateField
+        # fails to construct (pydantic ValidationError). Toolbase skips it
+        # with a tool_import_skipped warning rather than halting the whole
+        # toolkit, so other tools in the toolkit still come up.
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            (
+                "pkg/stateful.py",
+                "from orchestral.tools import BaseTool\n"
+                "from orchestral.tools.base.field_utils import StateField\n"
+                "class StatefulTool(BaseTool):\n"
+                "    name: str = 'stateful'\n"
+                "    description: str = 'needs state'\n"
+                "    base_directory: str = StateField(description='wd')\n"
+                "    def _run(self, **kw):\n"
+                "        return 'ok'\n",
+            ),
+        )
+        spec = [{"name": "StatefulTool", "module": "pkg.stateful"}]
+        tools = _import_explicit_tools(spec, tmp_path)
+        assert tools == []
+        err = capsys.readouterr().err
+        assert '"event": "tool_import_skipped"' in err
+        assert '"tool": "StatefulTool"' in err
+        assert "base_directory" in err
+
+    def test_state_config_filtered_to_declared_state_fields(self, tmp_path):
+        # Extra keys in state_config that don't correspond to declared
+        # StateFields must not be forwarded to the constructor (orchestral
+        # BaseTool sets `extra="allow"`, so they'd land as instance attrs
+        # otherwise, which would silently mask author mistakes).
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            (
+                "pkg/stateful.py",
+                "from orchestral.tools import BaseTool\n"
+                "from orchestral.tools.base.field_utils import StateField\n"
+                "class StatefulTool(BaseTool):\n"
+                "    name: str = 'stateful'\n"
+                "    description: str = 'needs state'\n"
+                "    base_directory: str = StateField(description='wd')\n"
+                "    def _run(self, **kw):\n"
+                "        return self.base_directory\n",
+            ),
+        )
+        spec = [{"name": "StatefulTool", "module": "pkg.stateful"}]
+        tools = _import_explicit_tools(
+            spec,
+            tmp_path,
+            state_config={
+                "base_directory": "/sandbox",
+                "unrelated_key": "ignored",
+            },
+        )
+        assert tools[0].base_directory == "/sandbox"
+        assert not hasattr(tools[0], "unrelated_key")
 
     def test_handles_multiple_entries(self, tmp_path):
         _make_pkg(
