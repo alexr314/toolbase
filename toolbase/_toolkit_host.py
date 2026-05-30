@@ -70,7 +70,7 @@ import os
 import sys
 import traceback
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Dict, Iterable, Optional
 
 
 def _redirect_stderr_to_log() -> None:
@@ -279,7 +279,9 @@ def _import_module_no_syspath(
 
 
 def _import_explicit_tools(
-    tools_spec: list, toolkit_dir: Path
+    tools_spec: list,
+    toolkit_dir: Path,
+    state_config: Optional[Dict[str, Any]] = None,
 ) -> list:
     """Load tools listed in the explicit ``tools:`` form.
 
@@ -295,40 +297,87 @@ def _import_explicit_tools(
     - a ``BaseTool`` instance (already-instantiated tool, including
       ``@define_tool``-decorated functions which the decorator wraps
       into instances at module load time);
-    - a ``BaseTool`` subclass (we instantiate it with no args);
+    - a ``BaseTool`` subclass. We instantiate it, passing entries from
+      ``state_config`` that match the class's declared ``StateField``s
+      as keyword arguments. This lets a tool declare a required state
+      field (e.g. ``base_directory: str = StateField(...)``) without a
+      pydantic default; the value flows in from the toolkit's
+      ``~/.toolbase/config/<toolkit>.yaml`` via the orchestrator's
+      ``--state-config`` flag.
 
-    Anything else raises a ``TypeError`` with a clear pointer.
+    Per-entry failures (malformed entry, import error, missing attr,
+    non-BaseTool target, construction failure) emit a structured
+    ``tool_import_skipped`` JSON line on stderr (captured by the
+    per-toolkit log) and skip that tool; the loop continues so the
+    rest of the toolkit's tools still load. Returns the list of
+    successfully-loaded tool instances (which may be empty — the
+    caller decides whether that's a fatal condition for the toolkit).
     """
     from orchestral.tools.base.tool import BaseTool
     import inspect
 
+    state_config = state_config or {}
     tools: list = []
     for entry in tools_spec:
-        module_path = entry.get("module")
-        attr_name = entry.get("name")
-        if not module_path or not attr_name:
-            raise ValueError(
-                f"explicit tool entry missing 'module' or 'name': {entry!r}"
+        module_path = entry.get("module") if isinstance(entry, dict) else None
+        attr_name = entry.get("name") if isinstance(entry, dict) else None
+        try:
+            if not module_path or not attr_name:
+                raise ValueError(
+                    f"explicit tool entry missing 'module' or 'name': {entry!r}"
+                )
+            mod = _import_module_no_syspath(module_path, toolkit_dir)
+            if not hasattr(mod, attr_name):
+                raise AttributeError(
+                    f"module {module_path!r} has no attribute {attr_name!r} "
+                    "(named in toolkit.yaml's tools: list)"
+                )
+            obj = getattr(mod, attr_name)
+            if isinstance(obj, BaseTool):
+                tools.append(obj)
+            elif inspect.isclass(obj) and issubclass(obj, BaseTool):
+                state_kwargs = {
+                    fname: state_config[fname]
+                    for fname in obj._get_state_fields()
+                    if fname in state_config
+                }
+                tools.append(obj(**state_kwargs))
+            else:
+                raise TypeError(
+                    f"{module_path}.{attr_name} is not a BaseTool instance "
+                    f"or subclass; got {type(obj).__name__}. "
+                    "Tools must be either @define_tool-decorated functions "
+                    "or BaseTool subclasses."
+                )
+        except Exception as exc:
+            _emit_tool_skip(
+                tool=attr_name,
+                module=module_path,
+                reason=f"{type(exc).__name__}: {exc}",
             )
-        mod = _import_module_no_syspath(module_path, toolkit_dir)
-        if not hasattr(mod, attr_name):
-            raise AttributeError(
-                f"module {module_path!r} has no attribute {attr_name!r} "
-                "(named in toolkit.yaml's tools: list)"
-            )
-        obj = getattr(mod, attr_name)
-        if isinstance(obj, BaseTool):
-            tools.append(obj)
-        elif inspect.isclass(obj) and issubclass(obj, BaseTool):
-            tools.append(obj())
-        else:
-            raise TypeError(
-                f"{module_path}.{attr_name} is not a BaseTool instance "
-                f"or subclass; got {type(obj).__name__}. "
-                "Tools must be either @define_tool-decorated functions "
-                "or BaseTool subclasses."
-            )
+            continue
     return tools
+
+
+def _emit_tool_skip(
+    tool: Optional[str], module: Optional[str], reason: str
+) -> None:
+    """Write a structured ``tool_import_skipped`` JSON line on stderr.
+
+    Used by ``_import_explicit_tools`` when a single tool fails to load.
+    The line lands in ``~/.toolbase/logs/<toolkit>.log`` via the host's
+    stderr-to-log redirect and is greppable by users wondering why a
+    tool they expected isn't showing up. Other tools in the toolkit
+    keep loading; the toolkit itself still comes up on MCP.
+    """
+    payload = {
+        "event": "tool_import_skipped",
+        "tool": tool,
+        "module": module,
+        "reason": reason,
+    }
+    sys.stderr.write(json.dumps(payload) + "\n")
+    sys.stderr.flush()
 
 
 def _collect_tool_instances(tools_module: Any) -> list:
@@ -484,7 +533,11 @@ def main(argv: list[str] | None = None) -> int:
     if explicit_entries:
         try:
             tool_instances.extend(
-                _import_explicit_tools(explicit_entries, args.toolkit_dir)
+                _import_explicit_tools(
+                    explicit_entries,
+                    args.toolkit_dir,
+                    state_config=state_config,
+                )
             )
         except Exception as e:
             _emit_error(
