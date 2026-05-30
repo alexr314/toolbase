@@ -7,10 +7,6 @@ installing, and managing toolkits.
 
 import click
 from rich.console import Console
-from rich.panel import Panel
-from rich.syntax import Syntax
-from rich.table import Table
-from rich.progress import Progress, SpinnerColumn, TextColumn
 import os
 import sys
 import subprocess
@@ -21,7 +17,6 @@ from typing import Any, List, Optional, Tuple
 import yaml
 import tarfile
 import tempfile
-import requests
 import shutil
 
 from .config import _api_url
@@ -827,6 +822,7 @@ def init(name, path, with_docker, with_setup, yes, no_, no_input):
         toolbase init my-toolkit --with-setup     # for Tier-2 setup
     """
     from .toolkit import create_toolkit_from_template
+    from rich.panel import Panel
     import requests
 
     mode = _resolve_prompt_mode(yes, no_, no_input)
@@ -1203,6 +1199,8 @@ def validate(path):
         toolbase validate ./my-toolkit
     """
     from .validation import validate_toolkit
+    from rich.panel import Panel
+    from rich.table import Table
 
     toolkit_path = Path(path).resolve()
 
@@ -2454,6 +2452,9 @@ def publish(dry_run, allow_decrease, yes, no_, no_input):
         tb publish -y               # auto-accept the registration prompt
         tb publish --allow-version-decrease   # rare; emergency rollbacks
     """
+    import requests
+    from rich.progress import Progress, SpinnerColumn, TextColumn
+
     mode = _resolve_prompt_mode(yes, no_, no_input)
     console.print("\n[bold blue]Publishing toolkit to Toolbase registry...[/bold blue]\n")
 
@@ -3690,6 +3691,8 @@ def install(name, version, global_scope, local_scope, editable, no_skills, activ
         toolbase install -e .                     # editable: live link to cwd
         toolbase install aster --no-skills        # don't touch ~/.claude/skills/
     """
+    import requests
+
     mode = _resolve_prompt_mode(yes, no_, no_input)
 
     # Flag exclusivity. -e/-l/-g pick one scope/source; -g is the
