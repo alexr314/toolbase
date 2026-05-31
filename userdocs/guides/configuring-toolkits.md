@@ -31,6 +31,7 @@ tb config edit calculator                      # open the file in $EDITOR
 ```
 
 ```bash
+tb config init calculator       # scaffold a commented YAML from the schema
 tb config path calculator       # print the file location
 tb config validate calculator   # check required fields are filled
 tb config unset calculator precision
@@ -38,6 +39,22 @@ tb config unset calculator precision
 
 The file (`~/.toolbase/config/calculator.yaml`) is canonical. `config set`
 just writes it for you.
+
+## Scaffold a fresh config file
+
+`tb config init <toolkit>` writes a commented YAML stub from the toolkit's
+declared `config:` schema. Useful when you want to see the full set of
+available keys (including the optional ones you might not have known about):
+
+```bash
+tb config init calculator                # project layer (default)
+tb config init calculator --user         # user layer
+tb config init calculator --force        # overwrite an existing file
+```
+
+Required fields land as `<NEEDS VALUE>`. Optional fields with defaults get
+the default value. Optional fields without defaults are commented out so you
+can see what's available without committing to a value.
 
 ## Config-gated bundles
 

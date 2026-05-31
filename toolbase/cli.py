@@ -2225,6 +2225,135 @@ def config_unset(
         )
 
 
+def _render_config_scaffold(toolkit_name: str, schema, source_path: Path) -> str:
+    """Build a commented YAML scaffold for a toolkit's `config:` block.
+
+    Required-no-default fields land as ``<NEEDS VALUE>`` (the same
+    sentinel ``run_install_setup`` writes for skipped-required); fields
+    with defaults get the default; optional-no-default fields are
+    commented out so the user sees the schema without committing to a
+    value. Each field gets its declared description as a comment above.
+    """
+    NEEDS_VALUE = "<NEEDS VALUE>"
+
+    def _yaml_repr(v):
+        # Inline YAML scalar suitable for `key: <value>`. yaml.safe_dump
+        # of a single scalar produces ``true\n`` / ``42\n`` / ``foo\n``
+        # so strip the trailing newline. Booleans must come before ints
+        # in the isinstance chain (True is also an int).
+        if v is None:
+            return "null"
+        if isinstance(v, bool):
+            return "true" if v else "false"
+        import yaml as _y
+        return _y.safe_dump(v, default_flow_style=True).strip()
+
+    lines: List[str] = []
+    lines.append(f"# Toolkit config for `{toolkit_name}`.")
+    lines.append(f"# Schema source: {source_path}")
+    lines.append(
+        "# Edit this file directly, or use `tb config set <toolkit> "
+        "<field> <value>`."
+    )
+    lines.append("schema_version: 1")
+    lines.append("")
+
+    for field in schema.fields:
+        if field.description:
+            for ln in field.description.splitlines():
+                lines.append(f"# {ln}" if ln.strip() else "#")
+        if field.required and field.default is None:
+            lines.append("# REQUIRED — set before running `tb serve`.")
+            lines.append(f"{field.name}: {NEEDS_VALUE}")
+        elif field.required:
+            lines.append(f"# REQUIRED (default: {field.default!r}).")
+            lines.append(f"{field.name}: {_yaml_repr(field.default)}")
+        elif field.default is not None:
+            lines.append(f"# Optional (default: {field.default!r}).")
+            lines.append(f"{field.name}: {_yaml_repr(field.default)}")
+        else:
+            lines.append("# Optional. Uncomment and set a value to override.")
+            lines.append(f"# {field.name}:")
+        lines.append("")
+
+    return "\n".join(lines).rstrip() + "\n"
+
+
+@config.command(name="init")
+@click.argument("toolkit_name")
+@_layer_option
+@click.option(
+    "--force", "-f", is_flag=True, default=False,
+    help="Overwrite an existing config file.",
+)
+def config_init(
+    toolkit_name, layer_explicit, layer_user, layer_project, force,
+):
+    """Scaffold a commented YAML config file from the toolkit's ``config:`` schema.
+
+    Same default-layer rules as ``tb config set`` — writes to the project
+    layer when one exists, otherwise the user layer. Pass ``--user`` or
+    ``--project`` to target a specific layer. Refuses to overwrite an
+    existing file unless ``--force`` is set.
+
+    Generated fields:
+        - required + no default  →  ``<NEEDS VALUE>`` placeholder
+        - required + default     →  the default value
+        - optional + default     →  the default value
+        - optional + no default  →  commented-out key (uncomment to override)
+
+    Each field gets its declared description as a comment above.
+    """
+    from .setup import config_path as _cfg_path
+
+    yaml_path, schema = _resolve_toolkit_for_config(toolkit_name)
+    if schema is None or not schema.fields:
+        console.print(
+            f"[dim]{toolkit_name} has no config: schema. Nothing to "
+            "scaffold.[/dim]"
+        )
+        return
+
+    layer, project_root = _resolve_config_layer(
+        layer_explicit=layer_explicit,
+        layer_user=layer_user, layer_project=layer_project,
+    )
+    out_path = _cfg_path(
+        toolkit_name, layer=layer, project_root=project_root,
+    )
+    if out_path.exists() and not force:
+        console.print(
+            f"[red]✗ {out_path} already exists.[/red] Pass [cyan]--force[/cyan] "
+            "to overwrite, or edit it with [cyan]tb config edit "
+            f"{toolkit_name}[/cyan]."
+        )
+        sys.exit(1)
+
+    text = _render_config_scaffold(toolkit_name, schema, yaml_path)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out_path.with_suffix(out_path.suffix + ".tmp")
+    tmp.write_text(text, encoding="utf-8")
+    os.replace(tmp, out_path)
+    try:
+        os.chmod(out_path, 0o600)
+    except (OSError, NotImplementedError):
+        pass
+
+    console.print(
+        f"[green]✓[/green] Scaffolded {layer}-layer config for "
+        f"{toolkit_name} at [dim]{out_path}[/dim]"
+    )
+    if any(f.required and f.default is None for f in schema.fields):
+        required = [
+            f.name for f in schema.fields
+            if f.required and f.default is None
+        ]
+        console.print(
+            f"  [yellow]Fill in required fields before `tb serve`:[/yellow] "
+            + ", ".join(required)
+        )
+
+
 @config.command(name="validate")
 @click.argument("toolkit_name")
 def config_validate(toolkit_name):

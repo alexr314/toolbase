@@ -254,6 +254,87 @@ def test_config_validate_no_schema_says_so(isolated: Path):
     assert "no config" in r.output.lower() or "nothing to validate" in r.output.lower()
 
 
+# ── init ────────────────────────────────────────────────────────────
+
+
+def _schema_with_one_of_each_kind():
+    return [
+        {"name": "base_directory", "type": "string", "required": True,
+         "description": "Working directory."},
+        {"name": "verbose", "type": "boolean", "default": False,
+         "description": "Whether to log loudly."},
+        {"name": "mg5_path", "type": "string", "required": False,
+         "description": "Optional path to MG5."},
+    ]
+
+
+def test_config_init_scaffolds_project_layer_by_default(isolated: Path):
+    _install_synthetic(isolated, config_block=_schema_with_one_of_each_kind())
+    r = CliRunner().invoke(cli.main, ["config", "init", "demo"])
+    assert r.exit_code == 0, r.output
+    # Default layer is project (matches set/unset).
+    out_path = Path.cwd() / ".toolbase" / "config" / "demo.yaml"
+    assert out_path.exists()
+    body = out_path.read_text()
+    # Required + no default → <NEEDS VALUE>
+    assert "base_directory: <NEEDS VALUE>" in body
+    # Optional + default → default value, written uncommented
+    assert "verbose: false" in body
+    # Optional + no default → commented out
+    assert "# mg5_path:" in body
+    # Descriptions are preserved as YAML comments above each key
+    assert "# Working directory." in body
+    assert "# Optional path to MG5." in body
+
+
+def test_config_init_user_layer(isolated: Path):
+    _install_synthetic(isolated, config_block=_schema_with_one_of_each_kind())
+    r = CliRunner().invoke(cli.main, ["config", "init", "demo", "--user"])
+    assert r.exit_code == 0, r.output
+    out_path = isolated / "config" / "demo.yaml"
+    assert out_path.exists()
+    assert "base_directory: <NEEDS VALUE>" in out_path.read_text()
+
+
+def test_config_init_refuses_overwrite(isolated: Path):
+    _install_synthetic(isolated, config_block=_schema_with_one_of_each_kind())
+    out = isolated / "config" / "demo.yaml"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("schema_version: 1\nbase_directory: /already/set\n")
+    r = CliRunner().invoke(cli.main, ["config", "init", "demo", "--user"])
+    assert r.exit_code == 1
+    assert "already exists" in r.output.lower()
+    # File should be unchanged.
+    assert "/already/set" in out.read_text()
+
+
+def test_config_init_force_overwrites(isolated: Path):
+    _install_synthetic(isolated, config_block=_schema_with_one_of_each_kind())
+    out = isolated / "config" / "demo.yaml"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("schema_version: 1\nbase_directory: /already/set\n")
+    r = CliRunner().invoke(
+        cli.main, ["config", "init", "demo", "--user", "--force"],
+    )
+    assert r.exit_code == 0, r.output
+    # File overwritten with scaffold.
+    assert "<NEEDS VALUE>" in out.read_text()
+
+
+def test_config_init_no_schema_says_so(isolated: Path):
+    _install_synthetic(isolated)  # no config: block
+    r = CliRunner().invoke(cli.main, ["config", "init", "demo"])
+    assert r.exit_code == 0
+    assert "no config" in r.output.lower() or "nothing to scaffold" in r.output.lower()
+
+
+def test_config_init_warns_about_required_in_output(isolated: Path):
+    _install_synthetic(isolated, config_block=_schema_with_one_of_each_kind())
+    r = CliRunner().invoke(cli.main, ["config", "init", "demo", "--user"])
+    assert "base_directory" in r.output
+    assert "required" in r.output.lower() or "fill in" in r.output.lower()
+
+
 # ── edit ────────────────────────────────────────────────────────────
 
 
