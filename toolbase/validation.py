@@ -315,11 +315,16 @@ class ToolkitMetadata(BaseModel):
         description=(
             "Optional named bundle declarations. Each bundle may "
             "declare ``requires: [<config_key>, ...]`` referencing keys "
-            "in the toolkit's own ``config:`` block. At serve startup, "
-            "bundles whose required keys are not set in the resolved "
-            "two-layer toolkit config are silently dropped; tools whose "
-            "``bundle:`` field names a dropped bundle are removed from "
-            "the served set."
+            "in the toolkit's own ``config:`` block, and/or "
+            "``deps: [<pip-spec>, ...]`` listing pip packages installed "
+            "when the bundle is selected at install time. At serve "
+            "startup, bundles whose required keys are not set in the "
+            "resolved two-layer toolkit config are silently dropped; "
+            "tools whose ``bundle:`` field names a dropped bundle are "
+            "removed from the served set. ``deps:`` are consumed by "
+            "``tb install`` when the user picks a subset (e.g. "
+            "``tb install <toolkit>[bundle1,bundle2]``); they sit on "
+            "top of the always-installed base ``requirements.txt``."
         ),
     )
     tools: List[ToolDefinition] = Field(..., description="List of tools in this toolkit")
@@ -431,12 +436,12 @@ class ToolkitMetadata(BaseModel):
                     f"bundles['{bundle_name}']: must be a mapping "
                     f"(got {type(bundle_entry).__name__})"
                 )
-            unknown = set(bundle_entry.keys()) - {"requires"}
+            unknown = set(bundle_entry.keys()) - {"requires", "deps"}
             if unknown:
                 raise ValueError(
                     f"bundles['{bundle_name}']: unknown key(s) "
-                    f"{sorted(unknown)}. Only 'requires:' is recognized "
-                    "in this version."
+                    f"{sorted(unknown)}. Recognized keys: 'requires', "
+                    "'deps'."
                 )
             requires = bundle_entry.get("requires", [])
             if not isinstance(requires, list):
@@ -456,6 +461,25 @@ class ToolkitMetadata(BaseModel):
                         f"config key '{entry}' which is not declared in "
                         f"this toolkit's config: block. Declare the key "
                         "in config: or remove it from requires:."
+                    )
+
+            # ``deps:`` — list of pip-spec strings installed when this
+            # bundle is selected at install time. Loose validation only
+            # (each entry must be a non-empty string); pip itself is the
+            # real parser at install time. An absent or empty list means
+            # the bundle adds no deps beyond the toolkit's base
+            # ``requirements.txt``.
+            deps = bundle_entry.get("deps", [])
+            if not isinstance(deps, list):
+                raise ValueError(
+                    f"bundles['{bundle_name}'].deps: must be a list of "
+                    f"pip-spec strings, got {type(deps).__name__}"
+                )
+            for entry in deps:
+                if not isinstance(entry, str) or not entry.strip():
+                    raise ValueError(
+                        f"bundles['{bundle_name}'].deps: each entry must "
+                        f"be a non-empty string, got {entry!r}"
                     )
 
         # Each tool's ``bundle:`` entry (singular or list) must reference
