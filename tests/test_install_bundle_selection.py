@@ -582,6 +582,52 @@ def test_install_keyboardinterrupt_cleans_partial_slot(tmp_path: Path, monkeypat
     )
 
 
+def test_install_recovers_from_corrupted_slot(fake_env, tmp_path: Path):
+    """A pre-existing cache slot with no ``.install_meta.yaml`` is
+    recognised as half-built (interrupted prior install) and replaced
+    rather than silently no-op'd as "already installed with all bundles".
+
+    Without this guard, the user-facing symptom is `tb install foo[a,b]`
+    appearing to succeed but actually doing nothing — and serve-time
+    filtering still surfaces every tool because `installed_bundles()`
+    returns ``None`` for a missing meta, equivalent to "all bundles
+    installed".
+    """
+    src = _make_source_toolkit(
+        tmp_path / "src",
+        bundles_block={
+            "alpha": {"deps": ["dep-a"]},
+            "beta": {"deps": ["dep-b"]},
+        },
+        tool_bundles={"ta": "alpha", "tb": "beta"},
+    )
+
+    # Fabricate a half-built slot the way a Ctrl-C'd prior install would
+    # leave it: source files present, no .install_meta.yaml, no real venv.
+    slot = fake_env["home"] / "cache" / "demo" / "0.1.0"
+    slot.mkdir(parents=True)
+    (slot / "toolkit.yaml").write_text((src / "toolkit.yaml").read_text())
+    (slot / "marker.txt").write_text("leftover-from-broken-install")
+    assert not (slot / ".install_meta.yaml").exists()
+
+    r = CliRunner().invoke(
+        cli.main, ["install", f"{src}[alpha]", "--no-input"],
+        catch_exceptions=False,
+    )
+    assert r.exit_code == 0, r.output
+    # User sees a clear explanation of what happened.
+    assert "missing" in r.output.lower() and "install_meta" in r.output.lower()
+
+    # The leftover marker is gone — the slot was rebuilt from scratch.
+    assert not (slot / "marker.txt").exists()
+    # The new install has the expected scope.
+    from toolbase.envs.cache import installed_bundles
+    assert installed_bundles(slot) == ["alpha"]
+    # And bundle filtering at install-time worked — only alpha's deps
+    # were pip-installed.
+    assert fake_env["captured"]["extra_pip_specs_calls"] == [["dep-a"]]
+
+
 def test_install_exception_cleans_partial_slot(tmp_path: Path, monkeypatch):
     """An ordinary exception during env setup also leaves no slot behind."""
     from toolbase import config as cfg_mod

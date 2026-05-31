@@ -3565,6 +3565,7 @@ def _install_from_path(
 
     # Decide additive vs destructive vs fresh.
     from .envs.cache import (
+        INSTALL_META_FILE as _INSTALL_META_FILE,
         installed_bundles as _installed_bundles,
         update_install_meta_bundles as _update_meta_bundles,
     )
@@ -3574,6 +3575,19 @@ def _install_from_path(
         if editable:
             # For editable re-install, mirror the historical "rebuild"
             # behavior (it's the normal "I changed deps" path).
+            _remove_slot(slot)
+        elif not (slot / _INSTALL_META_FILE).exists():
+            # Corrupted / half-built slot from a prior interrupted install.
+            # Without this clean-up the next two branches see
+            # ``current_installed is None`` (the legacy "full install"
+            # sentinel) and silently no-op the user's subset request.
+            # Commit A prevents new partial slots from forming; this guards
+            # against any left over from before that fix.
+            console.print(
+                f"[yellow]Cache slot at {slot} is missing "
+                f"{_INSTALL_META_FILE} (likely an interrupted prior "
+                "install). Removing and reinstalling fresh.[/yellow]"
+            )
             _remove_slot(slot)
         else:
             current_installed = _installed_bundles(slot)
