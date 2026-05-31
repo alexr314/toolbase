@@ -102,7 +102,12 @@ def _resolve_config_dir() -> Path:
 
 
 def config_dir(*, base: Optional[Path] = None) -> Path:
-    """Return the per-toolkit user-level config directory (creates if missing).
+    """Return the per-toolkit user-level config directory.
+
+    Pure path resolution — does NOT create the directory on disk. Writers
+    (``save_config`` etc.) create parents lazily at write time. This keeps
+    ``config_path``-style queries from leaving empty directories behind
+    when no config has been written yet.
 
     Always resolves the *user* layer. Use ``project_config_dir`` (or
     ``config_path(..., layer='project', project_root=...)``) for the
@@ -110,22 +115,22 @@ def config_dir(*, base: Optional[Path] = None) -> Path:
     """
     if base is None:
         base = _resolve_config_dir()
-    base.mkdir(parents=True, exist_ok=True)
     return base
 
 
 def project_config_dir(project_root: Path) -> Path:
-    """Return ``<project_root>/.toolbase/config/`` (creates if missing).
+    """Return ``<project_root>/.toolbase/config/``.
+
+    Pure path resolution — does NOT create the directory. Same rationale
+    as ``config_dir``: callers that resolve paths shouldn't leave empty
+    dirs behind; writers create parents themselves.
 
     Handles the default-project special-case via ``envs.paths``.
     """
     from ..envs.paths import _is_default_project
     if _is_default_project(project_root):
-        d = project_root / "config"
-    else:
-        d = project_root / ".toolbase" / "config"
-    d.mkdir(parents=True, exist_ok=True)
-    return d
+        return project_root / "config"
+    return project_root / ".toolbase" / "config"
 
 
 def config_path(

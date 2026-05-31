@@ -33,10 +33,29 @@ def test_config_dir_is_under_config_dir(isolated_config: Path):
     assert storage.config_dir() == isolated_config / "config"
 
 
-def test_config_dir_creates_missing(isolated_config: Path):
+def test_config_dir_is_pure_path_resolution(isolated_config: Path):
+    # Pure path resolver: must NOT create the directory on disk. Writers
+    # (save_config etc.) create parents lazily at write time so calling
+    # config_path/config_dir during a read-only lookup doesn't leave an
+    # empty `~/.toolbase/config/` (or `<project>/.toolbase/config/`)
+    # behind for the user to wonder about.
     assert not (isolated_config / "config").exists()
     d = storage.config_dir()
+    assert d == isolated_config / "config"
+    assert not d.exists()
+    # save_config creates the parent on demand.
+    storage.save_config("demo", {"k": "v"})
     assert d.exists()
+
+
+def test_project_config_dir_is_pure_path_resolution(tmp_path: Path):
+    project_root = tmp_path / "proj"
+    project_root.mkdir()
+    d = storage.project_config_dir(project_root)
+    assert d == project_root / ".toolbase" / "config"
+    # Resolution must not have created anything.
+    assert not d.exists()
+    assert not (project_root / ".toolbase").exists()
 
 
 def test_config_path_is_per_toolkit(isolated_config: Path):
