@@ -66,6 +66,25 @@ bundles:
 Use this for optional, heavyweight capability that needs a prerequisite.
 Users without it just don't see those tools.
 
+## Tools in multiple bundles
+
+A tool's `bundle:` field accepts either a single name (`bundle: basic`)
+or a list (`bundle: [basic, symbolic]`):
+
+```yaml
+tools:
+  - name: simplify
+    function: tools.symbolic.simplify
+    bundle: [basic, symbolic]    # belongs to both bundles
+```
+
+A multi-bundle tool is served if **any** of its bundles is available
+(config-gating satisfied for at least one), and it counts as in-profile
+if any of its bundles is in the profile's allowlist. Use this for tools
+that genuinely belong in more than one logical grouping — e.g. the
+calculator's `simplify` tool above is useful both as a basic operation
+and as part of the symbolic workflow.
+
 ## Per-bundle dependencies
 
 A bundle can declare pip packages that should be installed when the user

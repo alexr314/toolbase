@@ -4614,8 +4614,8 @@ def _list_print_tools_verbose(name, resolved_profile) -> None:
     )
     if disc is None:
         return
-    availability, name_to_bundle = _resolve_bundle_availability(disc)
-    if not name_to_bundle:
+    availability, name_to_bundles = _resolve_bundle_availability(disc)
+    if not name_to_bundles:
         console.print(
             "    [dim](tools not enumerated in toolkit.yaml; served list "
             "is available at serve time)[/dim]"
@@ -4637,17 +4637,25 @@ def _list_print_tools_verbose(name, resolved_profile) -> None:
     else:
         toolkit_active = False
 
-    for tool in sorted(name_to_bundle):
-        bundle = name_to_bundle[tool]
+    for tool in sorted(name_to_bundles):
+        bundles = name_to_bundles[tool]
         served = toolkit_active and tool_is_served(
-            tool, bundle, sel, availability, global_disabled,
+            tool, bundles, sel, availability, global_disabled,
         )
         mk = "[green]✓[/green]" if served else "[red]✗[/red]"
-        btag = f" [dim][bundle: {bundle}][/dim]" if bundle else ""
+        btag = ""
+        if bundles:
+            label = "bundle" if len(bundles) == 1 else "bundles"
+            btag = f" [dim][{label}: {', '.join(bundles)}][/dim]"
+        # Surface the first dropped bundle's missing-config keys, if any.
+        # (Tools in multiple bundles are still served via the others; the
+        # gate annotation here only kicks in when ALL bundles are dropped.)
         gate = ""
-        if bundle and bundle in availability.dropped_bundles:
-            miss = ", ".join(availability.dropped_bundles[bundle])
-            gate = f" [yellow](needs config: {miss})[/yellow]"
+        if bundles and all(b in availability.dropped_bundles for b in bundles):
+            missing_per_bundle = [
+                ", ".join(availability.dropped_bundles[b]) for b in bundles
+            ]
+            gate = f" [yellow](needs config: {'; '.join(missing_per_bundle)})[/yellow]"
         console.print(f"    {mk} {tool}{btag}{gate}")
 
 
@@ -5772,16 +5780,19 @@ def profile_tools(toolkit):
         return
 
     for disc in discoveries:
-        availability, name_to_bundle = _resolve_bundle_availability(disc)
-        # Invert: bundle -> [tools]; collect ungrouped separately.
+        availability, name_to_bundles = _resolve_bundle_availability(disc)
+        # Invert: bundle -> [tools]; tools belonging to multiple bundles
+        # appear under each of their bundles. Tools with no bundle land
+        # in the ungrouped list.
         by_bundle: dict = {}
         ungrouped: list = []
-        for tname, b in name_to_bundle.items():
-            if b is None:
+        for tname, bs in name_to_bundles.items():
+            if not bs:
                 ungrouped.append(tname)
             else:
-                by_bundle.setdefault(b, []).append(tname)
-        n_tools = len(name_to_bundle)
+                for b in bs:
+                    by_bundle.setdefault(b, []).append(tname)
+        n_tools = len(name_to_bundles)
         console.print(
             f"\n[bold cyan]{disc.name}[/bold cyan] "
             f"[dim]({n_tools} tool{'s' if n_tools != 1 else ''} declared "

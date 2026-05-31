@@ -8,7 +8,7 @@ to ensure toolkits meet the required structure and format.
 import os
 import sys
 from pathlib import Path
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Union
 from pydantic import BaseModel, Field, field_validator, model_validator, EmailStr
 import yaml
 
@@ -175,16 +175,17 @@ class ToolDefinition(BaseModel):
             "docstring at serve time)."
         ),
     )
-    bundle: Optional[str] = Field(
+    bundle: Optional[List[str]] = Field(
         default=None,
         description=(
-            "Optional bundle name. When the toolkit declares a "
-            "``bundles:`` block (0.5.1+), this tool participates in "
-            "the named bundle's conditional-availability evaluation. A "
-            "tool whose bundle's ``requires:`` config keys are not all "
-            "set is silently dropped from serve's tool list at startup. "
-            "Tools without a ``bundle:`` field are always served, "
-            "regardless of any ``bundles:`` declarations."
+            "Bundle membership. Accepts a single bundle name "
+            "(``bundle: foo``) or a list (``bundle: [foo, bar]``). "
+            "Internally normalised to a list. A tool is served if "
+            "ANY of its declared bundles is available (config-gating "
+            "satisfied AND, post-0.5.x, the bundle is in the installed "
+            "set when subset installs are in use). Tools without a "
+            "``bundle:`` field are always served when their toolkit is "
+            "active."
         ),
     )
 
@@ -196,17 +197,37 @@ class ToolDefinition(BaseModel):
             raise ValueError('Tool name must be alphanumeric (underscores and hyphens allowed)')
         return v
 
-    @field_validator('bundle')
+    @field_validator('bundle', mode='before')
     @classmethod
-    def validate_bundle(cls, v):
-        """Validate bundle identifier format (same shape as tool names)."""
+    def _normalise_bundle(cls, v):
+        """Accept ``bundle: foo`` or ``bundle: [foo, bar]``; store as list.
+
+        Empty list and None both collapse to None ("no bundle declared").
+        Each member must match the bundle-name shape (alphanumeric +
+        ``_`` / ``-``). Non-string entries are rejected explicitly to
+        catch authoring mistakes early.
+        """
         if v is None:
-            return v
-        if not v.replace('_', '').replace('-', '').isalnum():
+            return None
+        if isinstance(v, str):
+            v = [v]
+        if not isinstance(v, list):
             raise ValueError(
-                "Bundle name must be alphanumeric (underscores and "
-                "hyphens allowed)"
+                f"bundle: must be a string or list of strings, "
+                f"got {type(v).__name__}"
             )
+        if not v:
+            return None
+        for item in v:
+            if not isinstance(item, str) or not item:
+                raise ValueError(
+                    f"bundle: entries must be non-empty strings, got {item!r}"
+                )
+            if not item.replace('_', '').replace('-', '').isalnum():
+                raise ValueError(
+                    f"bundle name {item!r} must be alphanumeric "
+                    "(underscores and hyphens allowed)"
+                )
         return v
 
     @model_validator(mode="after")
@@ -461,15 +482,20 @@ class ToolkitMetadata(BaseModel):
                         f"be a non-empty string, got {entry!r}"
                     )
 
-        # Each tool's ``bundle:`` must reference a declared bundle.
+        # Each tool's ``bundle:`` entry (singular or list) must reference
+        # a declared bundle. ``tool.bundle`` is normalised to
+        # ``Optional[List[str]]`` by the field validator above.
         declared = set(self.bundles.keys())
         for tool in self.tools:
-            if tool.bundle is not None and tool.bundle not in declared:
-                raise ValueError(
-                    f"tool '{tool.name}' has bundle: '{tool.bundle}' but "
-                    f"that bundle is not declared in bundles. "
-                    f"Declared bundles: {sorted(declared) or '(none)'}."
-                )
+            if not tool.bundle:
+                continue
+            for b in tool.bundle:
+                if b not in declared:
+                    raise ValueError(
+                        f"tool '{tool.name}' has bundle: '{b}' but "
+                        f"that bundle is not declared in bundles. "
+                        f"Declared bundles: {sorted(declared) or '(none)'}."
+                    )
 
         return self
 
