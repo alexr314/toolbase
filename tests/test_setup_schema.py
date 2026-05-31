@@ -298,3 +298,70 @@ def test_coerce_rejects_needs_value_sentinel():
     f = _field(type="string")
     with pytest.raises(ConfigError, match="placeholder"):
         coerce_value(f, NEEDS_VALUE_SENTINEL)
+
+
+# ── template variables in default values ─────────────────────────────
+
+
+def test_template_default_cwd_accepted_for_path():
+    # Schema parse must NOT try to coerce ${CWD} as a literal path.
+    schema = parse_config_block([
+        {"name": "workspace_dir", "type": "path", "default": "${CWD}"},
+    ])
+    assert schema.fields[0].default == "${CWD}"
+
+
+def test_template_default_project_root_accepted_for_path():
+    schema = parse_config_block([
+        {"name": "outputs", "type": "path", "default": "${PROJECT_ROOT}/outputs"},
+    ])
+    assert schema.fields[0].default == "${PROJECT_ROOT}/outputs"
+
+
+def test_template_default_composed_with_suffix_accepted():
+    schema = parse_config_block([
+        {"name": "scratch", "type": "path", "default": "${CWD}/scratch/runs"},
+    ])
+    assert schema.fields[0].default == "${CWD}/scratch/runs"
+
+
+def test_template_default_accepted_for_string_too():
+    # Strings get template support too — useful for prompt-style fields
+    # that want a workspace-relative reference.
+    schema = parse_config_block([
+        {"name": "label", "type": "string", "default": "${CWD}-run"},
+    ])
+    assert schema.fields[0].default == "${CWD}-run"
+
+
+def test_template_default_rejected_for_bool():
+    # A boolean field with default ${CWD} would never make sense.
+    with pytest.raises(Exception, match="template defaults"):
+        parse_config_block([
+            {"name": "x", "type": "boolean", "default": "${CWD}"},
+        ])
+
+
+def test_template_default_rejected_for_integer():
+    with pytest.raises(Exception, match="template defaults"):
+        parse_config_block([
+            {"name": "x", "type": "integer", "default": "${CWD}"},
+        ])
+
+
+def test_unknown_template_variable_rejected_at_parse_time():
+    with pytest.raises(Exception, match=r"unknown template variable"):
+        parse_config_block([
+            {"name": "x", "type": "path", "default": "${BANANA}"},
+        ])
+
+
+def test_template_path_with_must_exist_does_not_validate_at_parse_time():
+    # ${CWD} obviously can't be validated as a path at schema-parse time;
+    # the must_exist check happens at serve time after expansion.
+    schema = parse_config_block([
+        {"name": "ws", "type": "path", "default": "${CWD}",
+         "must_exist": True},
+    ])
+    assert schema.fields[0].must_exist is True
+    assert schema.fields[0].default == "${CWD}"

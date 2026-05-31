@@ -27,6 +27,39 @@ to skip the toolkit with a clear pointer.
 Values land in `~/.toolbase/config/<toolkit>.yaml` (user) and the project
 layer. From the consumer side: [Configuring toolkits](../guides/configuring-toolkits.md).
 
+### Template defaults: `${CWD}` and `${PROJECT_ROOT}`
+
+For path/string fields, `default:` can reference two template variables that
+the orchestrator expands at serve time:
+
+| Template       | Expands to                                                  |
+|----------------|-------------------------------------------------------------|
+| `${CWD}`       | `os.getcwd()` in the orchestrator process — i.e. wherever the harness launched `tb serve`. For Claude Code / Codex / Orchestral, that's the directory the user invoked the agent in. |
+| `${PROJECT_ROOT}` | The discovered `.toolbase/` parent (`find_project_root`), or `${CWD}` if there is none. |
+
+The most common use is "the agent's workspace" — where tools read inputs from
+and write outputs to. Declare it once in your `config:` block; users get the
+right value without ever editing a config file:
+
+```yaml
+config:
+  - name: workspace_dir          # name it whatever you like
+    type: path
+    required: true
+    default: ${CWD}              # ← THIS is the marker, not the name
+    description: Working directory for tool I/O. Defaults to the agent's
+                 launch directory; override per-project with
+                 `tb config set <toolkit> workspace_dir <path> --project`.
+```
+
+Composition with a suffix works (`${CWD}/scratch`, `${PROJECT_ROOT}/outputs`).
+Unknown templates (`${BANANA}`) are rejected at schema parse time so a typo in
+`toolkit.yaml` fails `tb validate` cleanly rather than silently storing the
+literal string.
+
+User-stored values override template defaults — pass an absolute path through
+`tb config set` or hand-edit the file to pin a specific directory.
+
 ## Gate a bundle on config
 
 A bundle can require config keys. Its tools stay hidden until they're set:

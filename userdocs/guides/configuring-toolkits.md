@@ -56,6 +56,41 @@ tb config set calculator cas_path /usr/local/bin/sympy-cli
 They appear on the next serve. `tb config validate` and `tb list -v` both name
 the key a hidden bundle is waiting on.
 
+## Template defaults (`${CWD}`, `${PROJECT_ROOT}`)
+
+A toolkit author can declare a field's default as a template like
+`${CWD}` or `${PROJECT_ROOT}` — toolbase resolves it at serve time
+inside the orchestrator process. Practically this means:
+
+- `${CWD}` → wherever you launched the harness (Claude Code, Codex, …)
+  from. *The agent's working directory.* If you `cd ~/papers/zprime/`
+  then run `claude`, every field with `default: ${CWD}` resolves to
+  `~/papers/zprime/` for that session.
+- `${PROJECT_ROOT}` → the discovered `.toolbase/` parent, falling back
+  to `${CWD}` if none.
+
+You don't need a config file for these fields — they "just work" out of
+the box. `tb config show` displays both the template and its current
+expansion so you can see what serve will see:
+
+```console
+$ tb config show heptapod
+heptapod
+  user layer:    ~/.toolbase/config/heptapod.yaml
+  project layer: <project>/.toolbase/config/heptapod.yaml
+
+  base_directory: ${CWD}  → /Users/you/papers/zprime  # from schema default
+  cache_enabled: false                                # from user
+```
+
+Override by setting an absolute path in either layer:
+
+```bash
+tb config set heptapod base_directory ~/heptapod-sandbox --user
+# Now every serve uses ~/heptapod-sandbox regardless of where the
+# harness launches you, unless the project layer also pins something.
+```
+
 ## User vs project layers
 
 Config has two layers, and **project overrides user** key by key. `config`
