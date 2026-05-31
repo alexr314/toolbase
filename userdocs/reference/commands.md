@@ -25,6 +25,7 @@
 | `tb config show TOOLKIT` | Show effective config (merged user+project) | `--user`, `--project`, `--layer` |
 | `tb config set TOOLKIT KEY VALUE` | Set one field | `--user`, `--project`, `--layer` |
 | `tb config unset TOOLKIT KEY` | Remove one field | layer flags |
+| `tb config init TOOLKIT` | Scaffold a commented YAML config file from the toolkit's `config:` schema | layer flags, `-f/--force` |
 | `tb config edit TOOLKIT` | Open the config file in `$EDITOR` | layer flags |
 | `tb config path TOOLKIT` | Print the config file path | layer flags |
 | `tb config validate TOOLKIT` | Check required fields/types | none |

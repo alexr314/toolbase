@@ -49,7 +49,8 @@ config:                      # optional — values users fill in
     type: path               # string | secret | path | integer | float | boolean | choice
     description: Path to a computer-algebra backend.
     required: true
-    # default: ...           # optional
+    # default: ...           # optional; path/string types support
+                             # ${CWD} and ${PROJECT_ROOT} (expanded at serve time)
     # options: [...]         # choice only (>= 2)
 
 bundles:                     # optional — named groups; requires gates a bundle
