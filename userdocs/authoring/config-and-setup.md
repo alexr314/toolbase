@@ -27,38 +27,31 @@ to skip the toolkit with a clear pointer.
 Values land in `~/.toolbase/config/<toolkit>.yaml` (user) and the project
 layer. From the consumer side: [Configuring toolkits](../guides/configuring-toolkits.md).
 
-### Template defaults: `${CWD}` and `${PROJECT_ROOT}`
+### Workspace-aware defaults
 
-For path/string fields, `default:` can reference two template variables that
-the orchestrator expands at serve time:
+For `path` and `string` fields, `default:` can reference two template
+variables that the orchestrator expands at serve time:
 
-| Template       | Expands to                                                  |
-|----------------|-------------------------------------------------------------|
-| `${CWD}`       | `os.getcwd()` in the orchestrator process — i.e. wherever the harness launched `tb serve`. For Claude Code / Codex / Orchestral, that's the directory the user invoked the agent in. |
+| Template          | Expands to                                                  |
+|-------------------|-------------------------------------------------------------|
+| `${CWD}`          | `os.getcwd()` in the orchestrator — the directory the harness launched `tb serve` from. |
 | `${PROJECT_ROOT}` | The discovered `.toolbase/` parent (`find_project_root`), or `${CWD}` if there is none. |
-
-The most common use is "the agent's workspace" — where tools read inputs from
-and write outputs to. Declare it once in your `config:` block; users get the
-right value without ever editing a config file:
 
 ```yaml
 config:
-  - name: workspace_dir          # name it whatever you like
+  - name: workspace_dir          # field name is your choice
     type: path
     required: true
-    default: ${CWD}              # ← THIS is the marker, not the name
-    description: Working directory for tool I/O. Defaults to the agent's
-                 launch directory; override per-project with
-                 `tb config set <toolkit> workspace_dir <path> --project`.
+    default: ${CWD}
+    description: Working directory for tool I/O.
 ```
 
-Composition with a suffix works (`${CWD}/scratch`, `${PROJECT_ROOT}/outputs`).
-Unknown templates (`${BANANA}`) are rejected at schema parse time so a typo in
-`toolkit.yaml` fails `tb validate` cleanly rather than silently storing the
-literal string.
+Composition with a suffix works: `${CWD}/scratch`,
+`${PROJECT_ROOT}/outputs`. Unknown templates (`${BANANA}`) are rejected
+at schema parse time and fail `tb validate`. Allowed types are `path`
+and `string` only.
 
-User-stored values override template defaults — pass an absolute path through
-`tb config set` or hand-edit the file to pin a specific directory.
+User-stored values override the template; project layer beats user layer.
 
 ## Gate a bundle on config
 

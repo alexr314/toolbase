@@ -56,22 +56,17 @@ tb config set calculator cas_path /usr/local/bin/sympy-cli
 They appear on the next serve. `tb config validate` and `tb list -v` both name
 the key a hidden bundle is waiting on.
 
-## Template defaults (`${CWD}`, `${PROJECT_ROOT}`)
+## Pointing tools at the agent's workspace
 
-A toolkit author can declare a field's default as a template like
-`${CWD}` or `${PROJECT_ROOT}` — toolbase resolves it at serve time
-inside the orchestrator process. Practically this means:
+Toolkits can declare a field that resolves at serve time to a directory
+in the harness's environment:
 
-- `${CWD}` → wherever you launched the harness (Claude Code, Codex, …)
-  from. *The agent's working directory.* If you `cd ~/papers/zprime/`
-  then run `claude`, every field with `default: ${CWD}` resolves to
-  `~/papers/zprime/` for that session.
-- `${PROJECT_ROOT}` → the discovered `.toolbase/` parent, falling back
-  to `${CWD}` if none.
+- `${CWD}` — the directory the harness (Claude Code, Codex, Orchestral, …)
+  launched `tb serve` from. Use for "where the agent is working right now."
+- `${PROJECT_ROOT}` — the discovered `.toolbase/` parent, or `${CWD}` if
+  there is none. Use for "the project this work is committed to."
 
-You don't need a config file for these fields — they "just work" out of
-the box. `tb config show` displays both the template and its current
-expansion so you can see what serve will see:
+`tb config show` renders the template alongside its current expansion:
 
 ```console
 $ tb config show heptapod
@@ -83,13 +78,13 @@ heptapod
   cache_enabled: false                                # from user
 ```
 
-Override by setting an absolute path in either layer:
+Pin a specific path in either layer to override:
 
 ```bash
 tb config set heptapod base_directory ~/heptapod-sandbox --user
-# Now every serve uses ~/heptapod-sandbox regardless of where the
-# harness launches you, unless the project layer also pins something.
 ```
+
+User values beat the template; project layer beats user layer.
 
 ## User vs project layers
 
