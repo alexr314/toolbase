@@ -37,6 +37,7 @@ from .schema import (
     ConfigField,
     ConfigSchema,
     NEEDS_VALUE_SENTINEL,
+    _TEMPLATE_PATTERN,
     coerce_value,
 )
 from .storage import config_path, load_config, save_config
@@ -243,6 +244,41 @@ class StateConfigResolution:
         return "; ".join(bits)
 
 
+def _expand_default_template(
+    raw: str, *, project_root: Optional[Path]
+) -> str:
+    """Expand ``${CWD}`` and ``${PROJECT_ROOT}`` in a schema default value.
+
+    Called at serve time (from ``load_state_config``) so the resolved
+    value reflects the orchestrator's process state, NOT the install /
+    config-write moment. ``${CWD}`` becomes ``os.getcwd()`` — which when
+    ``tb serve`` is launched by a harness (Claude Code, Codex, …) is
+    the harness's launch directory, i.e. where the agent thinks it's
+    working. ``${PROJECT_ROOT}`` becomes the discovered ``.toolbase/``
+    parent if there is one; otherwise it falls back to ``${CWD}``.
+
+    Unknown templates are unreachable here — they're rejected at schema
+    parse time — but we still raise loudly if one slips through so the
+    failure mode is "skip this toolkit with a clear reason" rather than
+    "inject the literal string ``${BANANA}`` as a path."
+    """
+    import os
+
+    def _sub(match):
+        var = match.group(1)
+        if var == "CWD":
+            return os.getcwd()
+        if var == "PROJECT_ROOT":
+            if project_root is not None:
+                return str(project_root)
+            return os.getcwd()
+        raise ConfigError(
+            f"unknown template variable ${{{var}}} in default value"
+        )
+
+    return _TEMPLATE_PATTERN.sub(_sub, raw)
+
+
 def load_state_config(
     toolkit_name: str,
     schema: ConfigSchema,
@@ -271,8 +307,15 @@ def load_state_config(
     Required fields:
         - With a valid stored value → included.
         - Missing or NEEDS_VALUE_SENTINEL → flagged in
-          ``missing_required``, not included.
+          ``missing_required`` UNLESS the schema declares a default
+          (literal or template), in which case the default is
+          injected and the field counts as satisfied.
         - Stored but invalid → flagged in ``invalid``, not included.
+
+    Template defaults (``${CWD}``, ``${PROJECT_ROOT}``) are expanded
+    here, in the orchestrator's process — so ``${CWD}`` resolves to
+    the harness's launch directory (the agent's workspace), not to
+    wherever the user ran ``tb install``.
     """
     resolution = StateConfigResolution()
     try:
@@ -312,16 +355,28 @@ def load_state_config(
         raw = stored.get(field.name) if field.name in stored else None
 
         if raw is None or raw == NEEDS_VALUE_SENTINEL:
-            if field.required:
-                resolution.missing_required.append(field.name)
-                continue
-            # Optional field, no stored value. If the schema declares a
-            # default, fall through to inject it; otherwise omit (tools
-            # handle their own absent-optional defaults via Python
-            # function signatures).
+            # No user-supplied value. If the schema has a default
+            # (literal or template), use it — this satisfies required
+            # fields whose default fully determines a sensible value
+            # (e.g. ``base_directory: ${CWD}``). Otherwise:
+            #   - required → flagged missing
+            #   - optional → omitted (tool handles its own absent default)
             if field.default is None:
+                if field.required:
+                    resolution.missing_required.append(field.name)
                 continue
             raw = field.default
+
+        # Templates only meaningful as schema defaults; expand here so
+        # value coercion sees the resolved path. We also expand if a
+        # user pasted a template into their config file — same semantics
+        # in either spot.
+        if isinstance(raw, str) and _TEMPLATE_PATTERN.search(raw):
+            try:
+                raw = _expand_default_template(raw, project_root=project_root)
+            except ConfigError as e:
+                resolution.invalid.append((field.name, str(e)))
+                continue
 
         try:
             value = coerce_value(field, raw)

@@ -289,3 +289,139 @@ def test_load_state_config_no_schema_returns_empty(isolated_config: Path):
     res = load_state_config("demo", schema)
     assert res.ok
     assert res.state_config == {}
+
+
+# ── template-default expansion at serve time ─────────────────────────
+
+
+def test_template_cwd_expands_to_os_getcwd(
+    isolated_config: Path, tmp_path: Path, monkeypatch,
+):
+    """A field with default=${CWD} resolves to os.getcwd() at the moment
+    of load_state_config — i.e. wherever the orchestrator process is, =
+    where the harness launched `tb serve`."""
+    harness_cwd = tmp_path / "fake-harness-cwd"
+    harness_cwd.mkdir()
+    monkeypatch.chdir(harness_cwd)
+
+    schema = parse_config_block([
+        {"name": "workspace", "type": "path", "default": "${CWD}"},
+    ])
+    res = load_state_config("demo", schema)
+    assert res.ok
+    # On macOS /tmp resolves to /private/tmp via symlinks. Compare via
+    # path resolution to keep the assert portable.
+    assert Path(res.state_config["workspace"]).resolve() == harness_cwd.resolve()
+
+
+def test_template_cwd_with_suffix_composes(
+    isolated_config: Path, tmp_path: Path, monkeypatch,
+):
+    harness_cwd = tmp_path / "ws"
+    harness_cwd.mkdir()
+    monkeypatch.chdir(harness_cwd)
+    schema = parse_config_block([
+        {"name": "scratch", "type": "path", "default": "${CWD}/scratch"},
+    ])
+    res = load_state_config("demo", schema)
+    expected = (harness_cwd / "scratch").resolve()
+    assert Path(res.state_config["scratch"]).resolve() == expected
+
+
+def test_template_project_root_expands_when_supplied(
+    isolated_config: Path, tmp_path: Path,
+):
+    project_root = tmp_path / "myproj"
+    project_root.mkdir()
+    schema = parse_config_block([
+        {"name": "outputs", "type": "path",
+         "default": "${PROJECT_ROOT}/outputs"},
+    ])
+    res = load_state_config("demo", schema, project_root=project_root)
+    assert Path(res.state_config["outputs"]).resolve() == (
+        project_root / "outputs"
+    ).resolve()
+
+
+def test_template_project_root_falls_back_to_cwd_when_none(
+    isolated_config: Path, tmp_path: Path, monkeypatch,
+):
+    harness_cwd = tmp_path / "no-project"
+    harness_cwd.mkdir()
+    monkeypatch.chdir(harness_cwd)
+    schema = parse_config_block([
+        {"name": "outputs", "type": "path", "default": "${PROJECT_ROOT}"},
+    ])
+    res = load_state_config("demo", schema, project_root=None)
+    assert Path(res.state_config["outputs"]).resolve() == harness_cwd.resolve()
+
+
+def test_required_field_with_template_default_is_not_missing(
+    isolated_config: Path, tmp_path: Path, monkeypatch,
+):
+    """The heptapod ``base_directory`` pattern: required field, no stored
+    value, but a ${CWD} default — must be satisfied, not flagged."""
+    monkeypatch.chdir(tmp_path)
+    schema = parse_config_block([
+        {"name": "base_directory", "type": "path",
+         "required": True, "default": "${CWD}"},
+    ])
+    res = load_state_config("demo", schema)
+    assert res.ok, res.missing_required
+    assert res.missing_required == []
+    assert "base_directory" in res.state_config
+
+
+def test_user_value_overrides_template_default(
+    isolated_config: Path, tmp_path: Path, monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    fixed = tmp_path / "user-pinned"
+    fixed.mkdir()
+    save_config("demo", {"workspace": str(fixed)})
+    schema = parse_config_block([
+        {"name": "workspace", "type": "path", "default": "${CWD}"},
+    ])
+    res = load_state_config("demo", schema)
+    # User layer wins; template is not consulted.
+    assert Path(res.state_config["workspace"]).resolve() == fixed.resolve()
+
+
+def test_user_supplied_template_string_also_expands(
+    isolated_config: Path, tmp_path: Path, monkeypatch,
+):
+    """A user who writes ``workspace: ${CWD}/runs`` in their config file
+    should see the same expansion as if it were the schema default."""
+    harness_cwd = tmp_path / "ws"
+    harness_cwd.mkdir()
+    monkeypatch.chdir(harness_cwd)
+    save_config("demo", {"workspace": "${CWD}/runs"})
+    schema = parse_config_block([
+        {"name": "workspace", "type": "path"},
+    ])
+    res = load_state_config("demo", schema)
+    assert Path(res.state_config["workspace"]).resolve() == (
+        harness_cwd / "runs"
+    ).resolve()
+
+
+def test_project_layer_pins_an_absolute_path_over_user_template(
+    isolated_config: Path, tmp_path: Path, monkeypatch,
+):
+    project_root = tmp_path / "proj"
+    project_root.mkdir()
+    monkeypatch.chdir(project_root)
+    # User layer says workspace=${CWD} (the template).
+    save_config("demo", {"workspace": "${CWD}"})
+    # Project layer pins an absolute path.
+    pinned = project_root / "fixed-outputs"
+    pinned.mkdir()
+    save_config(
+        "demo", {"workspace": str(pinned)},
+        layer="project", project_root=project_root,
+    )
+    schema = parse_config_block([
+        {"name": "workspace", "type": "path"},
+    ])
+    res = load_state_config("demo", schema, project_root=project_root)
+    assert Path(res.state_config["workspace"]).resolve() == pinned.resolve()

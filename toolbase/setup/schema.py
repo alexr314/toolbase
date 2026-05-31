@@ -38,6 +38,7 @@ explain to a tool author reading a validation error.
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any, ClassVar, Dict, List, Optional, Union
 
@@ -55,6 +56,35 @@ NEEDS_VALUE_SENTINEL = "<NEEDS VALUE>"
 _VALID_TYPES = {
     "string", "secret", "path", "integer", "float", "boolean", "choice",
 }
+
+
+# ── Template variables for serve-time default expansion ───────────────
+#
+# A toolkit author can write ``default: ${CWD}`` (or ``${PROJECT_ROOT}``)
+# in their ``config:`` block. The literal template string is stored;
+# expansion happens lazily in ``load_state_config`` so the value
+# reflects the orchestrator's process state at the moment of serve
+# (= the harness's launch directory, = where the agent thinks it's
+# working). See ``_expand_default_template`` in
+# ``setup/declarative.py`` for the resolution logic.
+#
+# Composition is supported: ``${CWD}/scratch`` is fine. Mixing two
+# templates in one value is syntactically allowed but rarely useful.
+# Unknown template names (``${BANANA}``) are rejected at schema parse
+# time so toolkit authors get a clear error in ``tb validate`` rather
+# than a silent serve-time fallback.
+_TEMPLATE_VARS = frozenset({"CWD", "PROJECT_ROOT"})
+_TEMPLATE_PATTERN = re.compile(r"\$\{([A-Z_]+)\}")
+
+
+def value_has_template(value: Any) -> bool:
+    """True if ``value`` is a string containing at least one ``${VAR}`` token."""
+    return isinstance(value, str) and bool(_TEMPLATE_PATTERN.search(value))
+
+
+def template_vars_in(value: str) -> List[str]:
+    """Return the list of ``${VAR}`` names present in ``value``."""
+    return _TEMPLATE_PATTERN.findall(value)
 
 
 # Pydantic-reserved attribute names — using these as field names would
@@ -220,13 +250,39 @@ class ConfigField(BaseModel):
             )
 
         # Validate default (if any) against the declared type.
+        # Templated defaults (e.g. ``${CWD}``, ``${PROJECT_ROOT}``) are
+        # not coerced here — they're literal placeholders the orchestrator
+        # expands at serve time. We DO validate that any templates used
+        # reference known variables so authors get a clear error from
+        # ``tb validate`` rather than a silent miss at serve time.
+        # Restricted to path / string types: expanding a template into a
+        # bool/integer/choice/secret field would never make sense.
         if self.default is not None:
-            try:
-                _coerce_value(self, self.default)
-            except ConfigError as e:
-                raise ValueError(
-                    f"config field {self.name!r}: default value rejected: {e}"
-                )
+            if value_has_template(self.default):
+                if t not in ("path", "string"):
+                    raise ValueError(
+                        f"config field {self.name!r}: template defaults "
+                        f"are only supported for type=path or type=string "
+                        f"(got type={t!r})"
+                    )
+                unknown = [
+                    v for v in template_vars_in(self.default)
+                    if v not in _TEMPLATE_VARS
+                ]
+                if unknown:
+                    valid = ", ".join(sorted(_TEMPLATE_VARS))
+                    raise ValueError(
+                        f"config field {self.name!r}: default uses unknown "
+                        f"template variable(s) {unknown!r}. Valid "
+                        f"variables: {valid}."
+                    )
+            else:
+                try:
+                    _coerce_value(self, self.default)
+                except ConfigError as e:
+                    raise ValueError(
+                        f"config field {self.name!r}: default value rejected: {e}"
+                    )
 
         return self
 

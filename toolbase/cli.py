@@ -2013,10 +2013,18 @@ def config_show(toolkit_name, layer_explicit, layer_user, layer_project):
         return
 
     # Merge for display order: union of keys, project values winning.
-    # Order: user keys first (in file order), then project-only keys.
+    # Order: user keys first (in file order), then project-only keys,
+    # then any schema-declared fields that aren't stored anywhere
+    # (they fall through to the schema default at serve time).
     all_keys: List[str] = list(user_body.keys())
     for k in project_body:
         if k not in all_keys:
+            all_keys.append(k)
+    schema_fields_by_name = (
+        {f.name: f for f in schema.fields} if schema else {}
+    )
+    for k in schema_fields_by_name:
+        if k not in all_keys and schema_fields_by_name[k].default is not None:
             all_keys.append(k)
 
     project_label = "default-project" if source == "fallback" else "project"
@@ -2027,15 +2035,36 @@ def config_show(toolkit_name, layer_explicit, layer_user, layer_project):
     )
     console.print()
 
+    from .setup.schema import value_has_template
+    from .setup.declarative import _expand_default_template
+
     for key in all_keys:
         if key in project_body:
             value = project_body[key]
             layer_tag = "project"
-        else:
+        elif key in user_body:
             value = user_body[key]
             layer_tag = "user"
+        else:
+            # Falls through to schema default. Show the default itself
+            # plus the resolved value if it's a template — so the user
+            # can see what serve will inject.
+            value = schema_fields_by_name[key].default
+            layer_tag = "schema default"
+        # If the value is a template, append its current expansion so
+        # users see what serve will see. (Stored templates in user /
+        # project layers also get this treatment.)
+        rendered = _fmt_value(key, value)
+        if isinstance(value, str) and value_has_template(value):
+            try:
+                expanded = _expand_default_template(
+                    value, project_root=project_root,
+                )
+                rendered = f"{value}  [dim]→ {expanded}[/dim]"
+            except Exception:
+                pass  # keep the raw template if expansion errors
         console.print(
-            f"  [cyan]{key}[/cyan]: {_fmt_value(key, value)}  "
+            f"  [cyan]{key}[/cyan]: {rendered}  "
             f"[dim]# from {layer_tag}[/dim]"
         )
 

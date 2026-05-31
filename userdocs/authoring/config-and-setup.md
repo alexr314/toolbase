@@ -27,6 +27,32 @@ to skip the toolkit with a clear pointer.
 Values land in `~/.toolbase/config/<toolkit>.yaml` (user) and the project
 layer. From the consumer side: [Configuring toolkits](../guides/configuring-toolkits.md).
 
+### Workspace-aware defaults
+
+For `path` and `string` fields, `default:` can reference two template
+variables that the orchestrator expands at serve time:
+
+| Template          | Expands to                                                  |
+|-------------------|-------------------------------------------------------------|
+| `${CWD}`          | `os.getcwd()` in the orchestrator — the directory the harness launched `tb serve` from. |
+| `${PROJECT_ROOT}` | The discovered `.toolbase/` parent (`find_project_root`), or `${CWD}` if there is none. |
+
+```yaml
+config:
+  - name: workspace_dir          # field name is your choice
+    type: path
+    required: true
+    default: ${CWD}
+    description: Working directory for tool I/O.
+```
+
+Composition with a suffix works: `${CWD}/scratch`,
+`${PROJECT_ROOT}/outputs`. Unknown templates (`${BANANA}`) are rejected
+at schema parse time and fail `tb validate`. Allowed types are `path`
+and `string` only.
+
+User-stored values override the template; project layer beats user layer.
+
 ## Gate a bundle on config
 
 A bundle can require config keys. Its tools stay hidden until they're set:
