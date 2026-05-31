@@ -534,3 +534,76 @@ def test_install_records_bundles_in_manifest(fake_env, tmp_path: Path):
     entry = m.find("demo")
     assert entry is not None
     assert entry.bundles == ["alpha"]
+
+
+# ────────────────────────────────────────────────────────────────────
+# Interrupt safety: half-built slots get cleaned up
+# ────────────────────────────────────────────────────────────────────
+
+
+def test_install_keyboardinterrupt_cleans_partial_slot(tmp_path: Path, monkeypatch):
+    """A Ctrl-C during pip install (simulated via KeyboardInterrupt from
+    ``setup_venv_environment``) must remove the partially-built cache slot.
+
+    Otherwise the next ``tb install`` finds a slot with no
+    ``.install_meta.yaml``, mis-detects it as "already installed with all
+    bundles", and silently no-ops on the user's subset request.
+    """
+    from toolbase import config as cfg_mod
+    from toolbase import skills as skills_mod
+    fake_home = tmp_path / "_home" / ".toolbase"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_home)
+    monkeypatch.setattr(skills_mod, "CLAUDE_SKILLS_DIR", tmp_path / "claude-skills")
+
+    def fake_setup_venv_interrupted(*args, **kwargs):
+        raise KeyboardInterrupt()
+    monkeypatch.setattr(cli, "setup_venv_environment", fake_setup_venv_interrupted)
+
+    src = _make_source_toolkit(
+        tmp_path / "src",
+        bundles_block={"alpha": {"deps": ["dep-a"]}},
+        tool_bundles={"ta": "alpha"},
+    )
+    slot = fake_home / "cache" / "demo" / "0.1.0"
+
+    # Click converts KeyboardInterrupt to exit-code-1 + "Aborted!" output;
+    # the contract we care about is that the finally block ran and the slot
+    # is gone before the abort.
+    r = CliRunner().invoke(
+        cli.main, ["install", f"{src}[alpha]", "--no-input"],
+        catch_exceptions=False,
+    )
+    assert r.exit_code != 0
+    assert "Aborted" in r.output
+    assert not slot.exists(), (
+        "partial cache slot survived a KeyboardInterrupt — future installs "
+        "would mis-detect it as a complete install"
+    )
+
+
+def test_install_exception_cleans_partial_slot(tmp_path: Path, monkeypatch):
+    """An ordinary exception during env setup also leaves no slot behind."""
+    from toolbase import config as cfg_mod
+    from toolbase import skills as skills_mod
+    fake_home = tmp_path / "_home" / ".toolbase"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_home)
+    monkeypatch.setattr(skills_mod, "CLAUDE_SKILLS_DIR", tmp_path / "claude-skills")
+
+    def fake_setup_venv_failing(*args, **kwargs):
+        raise RuntimeError("simulated pip failure")
+    monkeypatch.setattr(cli, "setup_venv_environment", fake_setup_venv_failing)
+
+    src = _make_source_toolkit(
+        tmp_path / "src",
+        bundles_block={"alpha": {"deps": ["dep-a"]}},
+        tool_bundles={"ta": "alpha"},
+    )
+    slot = fake_home / "cache" / "demo" / "0.1.0"
+    r = CliRunner().invoke(
+        cli.main, ["install", f"{src}[alpha]", "--no-input"],
+        catch_exceptions=False,
+    )
+    assert r.exit_code != 0
+    assert not slot.exists()
