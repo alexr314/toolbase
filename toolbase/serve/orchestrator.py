@@ -430,17 +430,21 @@ def _read_tools_spec(toolkit_path: Path) -> List[Dict[str, Any]]:
 
 def _read_bundles_and_membership(
     toolkit_path: Path,
-) -> Tuple[Optional[Dict[str, Dict[str, Any]]], Dict[str, Optional[str]]]:
+) -> Tuple[Optional[Dict[str, Dict[str, Any]]], Dict[str, List[str]]]:
     """Extract the ``bundles:`` block and per-tool bundle membership.
 
-    Returns ``(bundles_block, name_to_bundle)``:
+    Returns ``(bundles_block, name_to_bundles)``:
 
     - ``bundles_block``: the parsed ``bundles:`` mapping, or
       ``None`` if the toolkit doesn't declare one (backward compat —
       no gating in that case).
-    - ``name_to_bundle``: tool name → bundle name (or ``None`` for tools
-      that don't declare a bundle). Empty if the yaml is missing or
-      malformed (gate-evaluation falls back to "all served").
+    - ``name_to_bundles``: tool name → list of bundle names the tool
+      belongs to (empty list = no bundle declared = always-available).
+      Empty mapping if the yaml is missing or malformed (gate-evaluation
+      falls back to "all served").
+
+    Accepts both the historical singular form (``bundle: foo``) and the
+    list form (``bundle: [foo, bar]``); both are normalised to a list.
 
     Defensive reading: any malformed shape returns the safe fallback
     (no block, empty membership), matching how ``_read_tools_spec``
@@ -476,7 +480,7 @@ def _read_bundles_and_membership(
         if cleaned_block:
             bundles_block = cleaned_block
 
-    name_to_bundle: Dict[str, Optional[str]] = {}
+    name_to_bundles: Dict[str, List[str]] = {}
     tools = data.get("tools") if isinstance(data, dict) else None
     if isinstance(tools, list):
         for entry in tools:
@@ -487,21 +491,26 @@ def _read_bundles_and_membership(
                 continue
             bundle = entry.get("bundle")
             if isinstance(bundle, str) and bundle:
-                name_to_bundle[tool_name] = bundle
+                name_to_bundles[tool_name] = [bundle]
+            elif isinstance(bundle, list):
+                name_to_bundles[tool_name] = [
+                    b for b in bundle if isinstance(b, str) and b
+                ]
             else:
-                name_to_bundle[tool_name] = None
+                name_to_bundles[tool_name] = []
 
-    return bundles_block, name_to_bundle
+    return bundles_block, name_to_bundles
 
 
 def _resolve_bundle_availability(
     disc: "ToolkitDiscovery",
-) -> Tuple[Any, Dict[str, Optional[str]]]:
+) -> Tuple[Any, Dict[str, List[str]]]:
     """Evaluate this toolkit's ``bundles:`` against its resolved config.
 
-    Returns ``(BundleAvailability, name_to_bundle)``. The orchestrator
-    uses ``BundleAvailability.is_bundle_available(bundle)`` per tool at
-    spawn time to decide whether to expose it.
+    Returns ``(BundleAvailability, name_to_bundles)``. The orchestrator
+    uses ``BundleAvailability.is_bundle_available(bundle)`` per bundle
+    of each tool at spawn time to decide whether to expose it; a tool
+    with multiple declared bundles is served if any are available.
 
     Resolution sourcing: same two-layer user→project merge that the
     Phase 3C-1 declarative path uses, via
@@ -519,7 +528,7 @@ def _resolve_bundle_availability(
         evaluate_bundles,
     )
 
-    bundles_block, name_to_bundle = _read_bundles_and_membership(
+    bundles_block, name_to_bundles = _read_bundles_and_membership(
         disc.path
     )
 
@@ -544,7 +553,7 @@ def _resolve_bundle_availability(
         resolved_config = {}
 
     availability = evaluate_bundles(bundles_block, resolved_config)
-    return availability, name_to_bundle
+    return availability, name_to_bundles
 
 
 def _build_host_command(
@@ -1000,7 +1009,7 @@ class Orchestrator:
         # config. Tools whose ``bundle:`` field names an unavailable
         # bundle are dropped from the served set. One stderr line per
         # dropped bundle, fired once at startup (NOT per call).
-        availability, name_to_bundle = _resolve_bundle_availability(disc)
+        availability, name_to_bundles = _resolve_bundle_availability(disc)
         if availability.dropped_bundles:
             for bname, missing in availability.dropped_bundles.items():
                 line = format_skip_log_line(disc.name, bname, missing)
@@ -1024,9 +1033,9 @@ class Orchestrator:
         forward = self._make_forwarder(disc.name)
         for defn in spawn.client.get_tool_definitions():
             upstream_name = defn["name"]
-            tool_bundle = name_to_bundle.get(upstream_name)
+            tool_bundles = name_to_bundles.get(upstream_name, [])
             if not tool_is_served(
-                upstream_name, tool_bundle, sel, availability, global_disabled
+                upstream_name, tool_bundles, sel, availability, global_disabled
             ):
                 continue
             namespaced = f"{disc.name}__{upstream_name}"

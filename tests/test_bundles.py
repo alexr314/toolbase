@@ -348,7 +348,10 @@ class TestValidation:
             },
         ]
         m = ToolkitMetadata(**y)
-        assert m.tools[0].bundle == "pdg"
+        # Singular ``bundle: x`` in YAML normalises to a single-element
+        # list internally (the field accepts ``str | list[str]`` since
+        # multi-bundle membership landed).
+        assert m.tools[0].bundle == ["pdg"]
 
     def test_bundle_without_bundles_block_accepted(self):
         """Per the backward-compat rule: tools may declare ``bundle:``
@@ -358,7 +361,7 @@ class TestValidation:
         y = self._base_yaml()
         y["tools"][0]["bundle"] = "foo"
         m = ToolkitMetadata(**y)
-        assert m.tools[0].bundle == "foo"
+        assert m.tools[0].bundle == ["foo"]
         assert m.bundles is None
 
     def test_bundle_name_format_alphanumeric(self):
@@ -380,6 +383,57 @@ class TestValidation:
                 name="t", function="tools.t.t", description="x",
                 bundle="bad name!",
             )
+
+    def test_bundle_field_accepts_list_form(self):
+        """``bundle: [a, b]`` puts the tool in multiple bundles."""
+        from toolbase.validation import ToolkitMetadata
+        y = self._base_yaml()
+        y["bundles"] = {"pdg": {}, "kinematics": {}}
+        y["tools"] = [
+            {
+                "name": "shared",
+                "function": "tools.s.s",
+                "description": "shared tool",
+                "bundle": ["pdg", "kinematics"],
+            },
+        ]
+        m = ToolkitMetadata(**y)
+        assert m.tools[0].bundle == ["pdg", "kinematics"]
+
+    def test_bundle_field_empty_list_treated_as_none(self):
+        """``bundle: []`` collapses to None (= no bundle declared)."""
+        from toolbase.validation import ToolDefinition
+        t = ToolDefinition(
+            name="t", function="tools.t.t", description="x",
+            bundle=[],
+        )
+        assert t.bundle is None
+
+    def test_bundle_field_rejects_invalid_member_format(self):
+        """Each member of a list ``bundle:`` must match the name shape."""
+        from toolbase.validation import ToolDefinition
+        with pytest.raises(Exception):
+            ToolDefinition(
+                name="t", function="tools.t.t", description="x",
+                bundle=["ok", "bad name!"],
+            )
+
+    def test_bundle_list_member_must_reference_declared(self):
+        """When the toolkit has a ``bundles:`` block, every member of a
+        tool's bundle list must be declared in it (cross-validated)."""
+        from toolbase.validation import ToolkitMetadata
+        y = self._base_yaml()
+        y["bundles"] = {"pdg": {}}
+        y["tools"] = [
+            {
+                "name": "t1",
+                "function": "tools.t1.t1",
+                "description": "tool one",
+                "bundle": ["pdg", "undeclared"],
+            },
+        ]
+        with pytest.raises(Exception, match="undeclared"):
+            ToolkitMetadata(**y)
 
     def test_validate_toolkit_surfaces_bundles_error_at_publish(self, tmp_path):
         """Full ``validate_toolkit()`` exercises the cross-reference

@@ -82,8 +82,8 @@ class TestReadToolBundlesAndMembership:
         disc = _make_toolkit(tmp_path)
         block, mapping = _read_bundles_and_membership(disc.path)
         assert block is None
-        # Tools without ``bundle:`` field map to None.
-        assert mapping == {"t1": None}
+        # Tools without ``bundle:`` field map to an empty list.
+        assert mapping == {"t1": []}
 
     def test_bundles_block_with_membership(self, tmp_path):
         disc = _make_toolkit(
@@ -108,10 +108,11 @@ class TestReadToolBundlesAndMembership:
         )
         block, mapping = _read_bundles_and_membership(disc.path)
         assert block == {"pdg": {}, "mg5": {"requires": ["mg5_path"]}}
+        # Each tool's membership is a list of bundle names; absent = [].
         assert mapping == {
-            "pdg_lookup": "pdg",
-            "mg5_run": "mg5",
-            "loose_tool": None,
+            "pdg_lookup": ["pdg"],
+            "mg5_run": ["mg5"],
+            "loose_tool": [],
         }
 
     def test_missing_yaml_returns_safe_default(self, tmp_path):
