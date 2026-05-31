@@ -5017,6 +5017,7 @@ def _list_print_tools_verbose(name, resolved_profile) -> None:
     """
     from .serve.orchestrator import discover_toolkits, _resolve_bundle_availability
     from .serve.profiles import tool_is_served
+    from .envs.cache import installed_bundles as _installed_bundles
 
     disc = next(
         (d for d in discover_toolkits()
@@ -5032,6 +5033,16 @@ def _list_print_tools_verbose(name, resolved_profile) -> None:
             "is available at serve time)[/dim]"
         )
         return
+
+    # Subset-install scope. ``None`` (legacy / full install) means
+    # nothing is gated by install scope here; a set means tools whose
+    # bundles don't intersect it can't be served because their pip
+    # deps aren't in the cache venv. Matches the orchestrator path
+    # (orchestrator.py:1032) so the two views never disagree.
+    installed_list = _installed_bundles(disc.path)
+    installed_set = (
+        set(installed_list) if installed_list is not None else None
+    )
 
     sel = None
     global_disabled: set = set()
@@ -5052,21 +5063,38 @@ def _list_print_tools_verbose(name, resolved_profile) -> None:
         bundles = name_to_bundles[tool]
         served = toolkit_active and tool_is_served(
             tool, bundles, sel, availability, global_disabled,
+            installed_bundles=installed_set,
         )
         mk = "[green]✓[/green]" if served else "[red]✗[/red]"
         btag = ""
         if bundles:
             label = "bundle" if len(bundles) == 1 else "bundles"
             btag = f" [dim][{label}: {', '.join(bundles)}][/dim]"
-        # Surface the first dropped bundle's missing-config keys, if any.
-        # (Tools in multiple bundles are still served via the others; the
-        # gate annotation here only kicks in when ALL bundles are dropped.)
+        # Surface why a non-served tool was hidden. Priority order
+        # mirrors ``tool_is_served`` itself: install-scope wins over
+        # config-gating, because install-scope strips the tool's pip
+        # deps from the venv, so config-gating wouldn't matter anyway.
         gate = ""
-        if bundles and all(b in availability.dropped_bundles for b in bundles):
-            missing_per_bundle = [
-                ", ".join(availability.dropped_bundles[b]) for b in bundles
-            ]
-            gate = f" [yellow](needs config: {'; '.join(missing_per_bundle)})[/yellow]"
+        if bundles:
+            install_scope_excludes = (
+                installed_set is not None
+                and not any(b in installed_set for b in bundles)
+            )
+            if install_scope_excludes:
+                absent = [b for b in bundles if b not in installed_set]
+                label = "bundle" if len(absent) == 1 else "bundles"
+                gate = (
+                    f" [yellow](skipped: {label} "
+                    f"{', '.join(absent)} not installed)[/yellow]"
+                )
+            elif all(b in availability.dropped_bundles for b in bundles):
+                missing_per_bundle = [
+                    ", ".join(availability.dropped_bundles[b]) for b in bundles
+                ]
+                gate = (
+                    f" [yellow](needs config: "
+                    f"{'; '.join(missing_per_bundle)})[/yellow]"
+                )
         console.print(f"    {mk} {tool}{btag}{gate}")
 
 
