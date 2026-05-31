@@ -18,6 +18,35 @@ Installing builds the toolkit an isolated environment in the shared global
 cache (`~/.toolbase/cache/`), available to every project on your machine. It
 does **not** serve it. That's `activate`.
 
+### Install only some bundles
+
+For toolkits that declare bundles with their own dependencies, you can
+install a subset to skip the heavy deps you don't need (pip-extras style):
+
+```bash
+tb install calculator[basic]                 # just the 'basic' bundle
+tb install calculator[basic,symbolic]        # two bundles
+tb install calculator --bundle basic         # same as above, flag form
+```
+
+Subsequent installs are **additive** (pip-like) — adding `[symbolic]` later
+pip-installs the new bundle's deps on top of the existing venv without
+rebuilding:
+
+```bash
+tb install calculator[basic]      # fresh install, just basic
+tb install calculator[symbolic]   # adds symbolic; venv untouched
+```
+
+To scope back down or wipe the slot, use `--rebuild`:
+
+```bash
+tb install calculator[basic] --rebuild   # destructive: only 'basic' remains
+```
+
+Tools in non-installed bundles are silently skipped at serve time with one
+log line per toolkit (`tb logs` to see them).
+
 ## Activate
 
 ```bash

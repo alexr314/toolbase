@@ -76,8 +76,10 @@ def fake_env(tmp_path, monkeypatch):
 
     # Stub the actual venv build so tests are fast + offline. The stub
     # creates a fake interpreter path inside the slot's .venv so the
-    # python_path metadata is realistic.
-    def fake_setup_venv(toolkit_path: Path, console):
+    # python_path metadata is realistic. ``extra_pip_specs`` accepted
+    # but ignored — bundle-deps pip-install behavior is tested in
+    # separate suites.
+    def fake_setup_venv(toolkit_path: Path, console, *, extra_pip_specs=None):
         venv = Path(toolkit_path) / ".venv"
         (venv / "bin").mkdir(parents=True, exist_ok=True)
         py = venv / "bin" / "python"

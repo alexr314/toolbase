@@ -87,27 +87,41 @@ def tool_is_served(
     selection: Optional["ToolkitSelection"],
     availability,
     global_disabled: set,
+    installed_bundles: Optional[set] = None,
 ) -> bool:
     """The single source of truth for "is this tool exposed?".
 
     Used by both the orchestrator (at spawn time) and ``tb list`` (for the
     active/served view) so the two never drift. Order matches the spec:
 
-    1. config-gating: a tool is served if any of its declared bundles is
+    1. **install-time gating** (``installed_bundles``): when set (subset
+       install), a tool's bundles must intersect the installed set, or
+       the tool is excluded — the pip packages it needs aren't in the
+       cache venv. Tools with no declared bundles are always installed
+       (no extras gating them) and pass this check.
+    2. config-gating: a tool is served if any of its declared bundles is
        available; a tool with no declared bundles (empty list) is always
        past this check.
-    2. profile selection: in allowlist mode (bundles and/or enabled set),
+    3. profile selection: in allowlist mode (bundles and/or enabled set),
        keep only tools where ANY of their bundles is in the profile's
        allow-list OR the tool is explicitly enabled (union); then
        subtract the per-toolkit ``disabled``.
-    3. the absolute serve.yaml blocklist (``global_disabled``, unqualified
+    4. the absolute serve.yaml blocklist (``global_disabled``, unqualified
        names for this toolkit).
 
     Multi-bundle semantics: a tool may belong to several bundles
     (``bundle: [a, b]``). It's available if *any* bundle is available,
     and in-profile if *any* of its bundles is in ``selection.bundles``.
     Backward compat: a single-bundle tool is just a 1-element list here.
+
+    ``installed_bundles=None`` means "the whole toolkit was installed"
+    (legacy installs, or installs that brought in every declared
+    bundle). All bundle-aware tools pass step 1 in that case.
     """
+    if installed_bundles is not None and tool_bundles:
+        if not any(b in installed_bundles for b in tool_bundles):
+            return False
+
     if tool_bundles:
         if not any(availability.is_bundle_available(b) for b in tool_bundles):
             return False

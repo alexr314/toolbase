@@ -39,18 +39,31 @@ _FILE_TYPE = "project_manifest"
 
 @dataclass
 class ManifestEntry:
-    """One pinned toolkit in a project's manifest."""
+    """One pinned toolkit in a project's manifest.
+
+    ``bundles`` records which subset of the toolkit's declared bundles
+    was selected at install time (``tb install foo[a,b]``). ``None``
+    (the default and historical state) means "the whole toolkit" —
+    every declared bundle was installed, so no filtering needs to be
+    written down. An empty list means "base only, no optional bundles."
+    """
 
     name: str
     version: str
     pinned_at: str = ""  # ISO-8601; "" sentinel for "not yet stamped"
+    bundles: Optional[List[str]] = None
 
     def to_dict(self) -> dict:
-        return {
+        out: dict = {
             "name": self.name,
             "version": self.version,
             "pinned_at": self.pinned_at,
         }
+        # Only emit ``bundles:`` when it's set, so existing
+        # manifests don't grow noise. Sorted for stable diffs.
+        if self.bundles is not None:
+            out["bundles"] = sorted(self.bundles)
+        return out
 
     @classmethod
     def from_dict(cls, data: dict) -> "ManifestEntry":
@@ -67,7 +80,21 @@ class ManifestEntry:
             pinned_at = ""
         if not isinstance(pinned_at, str):
             pinned_at = str(pinned_at)
-        return cls(name=name, version=version, pinned_at=pinned_at)
+        bundles_raw = data.get("bundles")
+        bundles: Optional[List[str]]
+        if bundles_raw is None:
+            bundles = None
+        elif isinstance(bundles_raw, list):
+            bundles = [b for b in bundles_raw if isinstance(b, str)]
+        else:
+            raise ValueError(
+                f"manifest entry {name!r}: 'bundles' must be a list of "
+                f"strings, got {type(bundles_raw).__name__}"
+            )
+        return cls(
+            name=name, version=version, pinned_at=pinned_at,
+            bundles=bundles,
+        )
 
 
 @dataclass
@@ -159,6 +186,7 @@ def add_pin(
     version: str,
     *,
     pinned_at: Optional[str] = None,
+    bundles: Optional[List[str]] = None,
 ) -> Manifest:
     """Add or update a pin in the manifest at ``path``.
 
@@ -167,6 +195,9 @@ def add_pin(
     manifest object so callers can inspect it.
 
     ``pinned_at`` defaults to the current local ISO-8601 timestamp.
+    ``bundles`` (when not None) is the subset of the toolkit's declared
+    bundles that was installed. ``None`` = "the whole toolkit"
+    (omitted from the rendered manifest entry).
     """
     manifest = load_manifest(path)
     stamp = pinned_at if pinned_at is not None else datetime.now().isoformat(
@@ -176,9 +207,13 @@ def add_pin(
     if existing is not None:
         existing.version = version
         existing.pinned_at = stamp
+        existing.bundles = bundles
     else:
         manifest.toolkits.append(
-            ManifestEntry(name=name, version=version, pinned_at=stamp)
+            ManifestEntry(
+                name=name, version=version, pinned_at=stamp,
+                bundles=bundles,
+            )
         )
     save_manifest(path, manifest)
     return manifest
