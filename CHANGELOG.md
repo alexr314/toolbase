@@ -17,12 +17,18 @@ Serve/curation revamp. **Breaking** (v0, clean cutover — no compatibility alia
 - **Profiles** — named curated tool sets, one file per profile under `<scope>/.toolbase/profiles/<name>.yaml`. `toolbase profile <list|show|create|edit|delete|set-default|path|tools>` manages them (replaces `toolbase groups`).
 - `toolbase install -a/--activate` — install and activate in one step.
 - `toolbase list -v` — per-tool served/hidden view with bundle + config-gating annotations; `tb list` now marks each toolkit active/inactive, and `--json` gains an `active` field.
+- `toolbase config init <toolkit> [--user | --project] [--force]` — scaffold a commented YAML config file from a toolkit's `config:` schema. Defaults to the project layer (matches `config set` / `unset`); pass `--user` for the user layer. Required fields land as `<NEEDS VALUE>`; optional fields with defaults get their default; optional fields without defaults are commented out so the full schema is visible.
+- **Workspace-aware schema defaults.** `path` and `string` fields in a toolkit's `config:` block may use `${CWD}` (the orchestrator's `os.getcwd()` at serve time — i.e. the harness's launch directory, where the agent is working) or `${PROJECT_ROOT}` (the discovered `.toolbase/` parent, or `${CWD}` if there is none). Composition works (`${CWD}/scratch`). Unknown templates are rejected at schema parse time. `tb config show` renders templates alongside their current expansion.
 
 ### Changed
 
 - **Nothing-active by default.** Installing a toolkit places it in the cache but serves nothing until you `activate` it (conda-style: install ≠ activate). `tb serve` resolves an active profile — there is no "serve everything" fallback.
 - `serve.yaml` is now defaults-only: `default.profile` (the active profile) and `default.disabled` (absolute blocklists), with a two-layer user→project merge.
 - **Vocabulary:** the author-side intra-toolkit grouping is now a **bundle** (was `tool_groups:` / per-tool `group:`); the user-side curated subset is now a **profile** (was the `groups:` block in `serve.yaml`). The developer unit stays a **toolkit**. `tb serve --enable-bundle` replaces `--enable-group`.
+- **Resolved state-config is injected at tool construction time.** Tools declared with required `StateField`s (e.g. a `base_directory` the toolkit author marks `required: true`) no longer fail with a pydantic `ValidationError` on serve startup; values flow from `~/.toolbase/config/<toolkit>.yaml` (and project-layer overrides) into the tool constructor via `_import_explicit_tools`. Required fields with a schema default — literal or template — are now satisfied by the default; previously the default was ignored and the field was flagged missing.
+- **Per-tool failures during import / construction now skip just that tool**, emitting a structured `tool_import_skipped` log line to the per-toolkit log. A single misconfigured tool no longer takes down its sibling tools or the whole toolkit host.
+- **CLI startup is faster.** `tb --help` / `tb list` and similar no-network commands dropped from ~290 ms to ~50 ms warm by lazy-importing `requests`, `rich.syntax`/`pygments`, `rich.panel` / `table` / `progress`, and dropping a dead `Syntax` import. Heavy modules load only when commands that need them run.
+- `config_dir()` and `project_config_dir()` are pure path resolvers; they no longer `mkdir(parents=True, exist_ok=True)` as a side effect. Writers (`save_config` etc.) create parents lazily at write time, so a layered path lookup no longer leaves an empty `<project>/.toolbase/config/` dir behind that looks like a half-done install.
 
 ### Removed
 
