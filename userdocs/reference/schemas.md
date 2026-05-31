@@ -53,11 +53,13 @@ config:                      # optional — values users fill in
                              # ${CWD} and ${PROJECT_ROOT} (expanded at serve time)
     # options: [...]         # choice only (>= 2)
 
-bundles:                     # optional — named groups; requires gates a bundle
+bundles:                     # optional — named groups
   basic: {}
-  scientific: {}
+  scientific:
+    deps: [numpy>=2.0]       # pip-installed when this bundle is selected
   symbolic:
     requires: [cas_path]     # hidden until this config key is set
+    deps: [sympy>=1.14]      # `requires:` and `deps:` can combine
 
 tools:
   - name: add
