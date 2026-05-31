@@ -3117,13 +3117,21 @@ def _run_pip_with_progress(
         raise subprocess.CalledProcessError(rc, cmd, output="".join(captured))
 
 
-def setup_venv_environment(toolkit_path: Path, console: Console) -> Path:
+def setup_venv_environment(
+    toolkit_path: Path,
+    console: Console,
+    *,
+    extra_pip_specs: Optional[List[str]] = None,
+) -> Path:
     """
     Create virtual environment and install dependencies.
 
     Args:
         toolkit_path: Path to toolkit directory
         console: Rich console for output
+        extra_pip_specs: Optional pip-spec strings installed AFTER
+            ``requirements.txt``. Used for per-bundle deps when the
+            user installs a subset like ``tb install foo[a,b]``.
 
     Returns:
         Path: Path to Python executable in venv
@@ -3169,6 +3177,15 @@ def setup_venv_environment(toolkit_path: Path, console: Console) -> Path:
         console.print("[green]✓ Dependencies installed[/green]")
     else:
         console.print("[dim]No requirements.txt — toolkit has no dependencies[/dim]")
+
+    # Per-bundle deps (sit on top of the always-installed base).
+    if extra_pip_specs:
+        _run_pip_with_progress(
+            [str(pip_path), 'install', *extra_pip_specs],
+            console,
+            f"Installing bundle dependencies ({len(extra_pip_specs)})",
+        )
+        console.print("[green]✓ Bundle dependencies installed[/green]")
 
     # Install orchestral-ai + mcp SDK. Both are required: orchestral provides
     # the @define_tool decorator and tool plumbing; mcp is what the per-toolkit
@@ -3222,7 +3239,9 @@ def setup_conda_environment(
     toolkit_path: Path,
     toolkit_name: str,
     python_version: str,
-    console: Console
+    console: Console,
+    *,
+    extra_pip_specs: Optional[List[str]] = None,
 ) -> str:
     """
     Create conda environment and install dependencies.
@@ -3232,6 +3251,9 @@ def setup_conda_environment(
         toolkit_name: Name of toolkit
         python_version: Required Python version (e.g., '3.9')
         console: Rich console for output
+        extra_pip_specs: Optional pip-spec strings installed AFTER
+            ``requirements.txt``. Used for per-bundle deps when the
+            user installs a subset like ``tb install foo[a,b]``.
 
     Returns:
         str: Conda environment name
@@ -3278,6 +3300,19 @@ def setup_conda_environment(
     else:
         console.print("[dim]No requirements.txt found[/dim]")
 
+    # Per-bundle deps (sit on top of the always-installed base).
+    if extra_pip_specs:
+        try:
+            _run_pip_with_progress(
+                [conda_cmd, 'run', '-n', env_name, 'pip', 'install',
+                 *extra_pip_specs],
+                console,
+                f"Installing bundle dependencies in '{env_name}' ({len(extra_pip_specs)})",
+            )
+            console.print("[green]✓ Bundle dependencies installed[/green]")
+        except subprocess.CalledProcessError:
+            console.print(f"[yellow]Some bundle dependencies failed to install[/yellow]")
+
     # Install orchestral-ai + mcp SDK (see venv setup for rationale).
     try:
         _run_pip_with_progress(
@@ -3316,6 +3351,40 @@ _EDITABLE_SYMLINK_ENTRIES = (
 EDITABLE_VERSION = "editable"
 
 
+def _parse_bundle_extras(arg: str) -> Tuple[str, Optional[List[str]]]:
+    """Strip a pip-style ``[bundle1,bundle2]`` suffix from an install arg.
+
+    Returns ``(bare_arg, bundles)`` where ``bundles`` is:
+      - ``None`` if the arg has no ``[...]`` suffix (= "install everything")
+      - a list of bundle names (possibly empty for ``foo[]``, treated as
+        "base only, no optional bundles")
+
+    Raises ``click.UsageError`` for malformed brackets so authoring
+    typos fail loudly. The bracket suffix must appear once at the end
+    and contain a comma-separated list of names matching the bundle
+    name shape (alphanumeric + ``_``/``-``).
+    """
+    import re
+    m = re.match(r"^(.*?)\[([^\[\]]*)\]\s*$", arg)
+    if m is None:
+        return arg, None
+    base, raw = m.group(1), m.group(2)
+    if not base:
+        raise click.UsageError(
+            f"Empty toolkit name before extras: {arg!r}. "
+            "Use the form NAME[bundle1,bundle2]."
+        )
+    parts = [p.strip() for p in raw.split(",")] if raw.strip() else []
+    parts = [p for p in parts if p]  # drop empty entries (trailing comma)
+    for p in parts:
+        if not p.replace("_", "").replace("-", "").isalnum():
+            raise click.UsageError(
+                f"Bundle name {p!r} in extras must be alphanumeric "
+                "(underscores and hyphens allowed)."
+            )
+    return base, parts
+
+
 def _resolve_install_source_path(arg: str) -> Optional[Path]:
     """Return a resolved Path if ``arg`` is a local path, else None.
 
@@ -3335,7 +3404,11 @@ def _resolve_install_source_path(arg: str) -> Optional[Path]:
     return None
 
 
-def _pin_after_install(name: str, version: str, *, local_scope: bool) -> None:
+def _pin_after_install(
+    name: str, version: str, *,
+    local_scope: bool,
+    bundles: Optional[List[str]] = None,
+) -> None:
     """Pin (name, version) into the global or active-project manifest.
 
     ``local_scope=False`` (the -g default) pins into the global
@@ -3344,6 +3417,10 @@ def _pin_after_install(name: str, version: str, *, local_scope: bool) -> None:
     project is found above it. Best-effort: a pin failure warns but
     doesn't fail the install (the cache slot is already usable; serve
     falls back to walking the cache).
+
+    ``bundles`` (when not None) records the subset of declared bundles
+    that was installed. ``None`` means "all bundles" — the manifest
+    entry omits the field.
     """
     try:
         from .envs import (
@@ -3362,7 +3439,7 @@ def _pin_after_install(name: str, version: str, *, local_scope: bool) -> None:
             else:
                 project_root = found
             manifest_path = _project_manifest_path(project_root)
-            _add_pin(manifest_path, name, version)
+            _add_pin(manifest_path, name, version, bundles=bundles)
             try:
                 rel = manifest_path.relative_to(Path.cwd())
                 display = f"./{rel}"
@@ -3373,7 +3450,7 @@ def _pin_after_install(name: str, version: str, *, local_scope: bool) -> None:
             # -g (default): pin into the global default-project.
             project_root = _default_project_root()
             manifest_path = _project_manifest_path(project_root)
-            _add_pin(manifest_path, name, version)
+            _add_pin(manifest_path, name, version, bundles=bundles)
     except Exception as e:
         console.print(
             f"[dim]Note: could not pin {name} to the manifest: {e}[/dim]"
@@ -3387,6 +3464,8 @@ def _install_from_path(
     local_scope: bool,
     no_skills: bool,
     mode: str,
+    requested_bundles: Optional[List[str]] = None,
+    rebuild: bool = False,
 ) -> Optional[str]:
     """Install a toolkit from a local source directory.
 
@@ -3399,6 +3478,14 @@ def _install_from_path(
       - ``-g``/``-l`` from a path (non-editable): copy the source into a
         normal versioned cache slot (version read from toolkit.yaml) and
         pin per scope, same as a registry install.
+
+    ``requested_bundles`` (when not None) restricts dep installation to
+    the toolkit's base ``requirements.txt`` plus the selected bundles'
+    ``deps:`` lists. ``None`` means "install every declared bundle"
+    (the historical behaviour). ``rebuild`` forces a destructive
+    reinstall when the cache slot already exists; without it, a
+    re-install with new bundles is additive (just pip-installs the new
+    bundles' deps on top of the existing venv).
     """
     yaml_path = source_path / "toolkit.yaml"
     if not yaml_path.exists():
@@ -3444,6 +3531,25 @@ def _install_from_path(
 
     slot = _envs_cache_dir(name, version)
 
+    # Bundle selection: validate against the toolkit's declared bundles,
+    # compute the union of pip-specs to install on top of requirements.txt.
+    from .envs.bundle_deps import deps_for_bundles, declared_bundle_names
+    declared = declared_bundle_names(config)
+    if requested_bundles is not None:
+        if not declared:
+            console.print(
+                f"[red]✗ Toolkit {name!r} declares no bundles, but "
+                "you requested {0}.[/red]".format(", ".join(requested_bundles))
+            )
+            sys.exit(1)
+        unknown = sorted(set(requested_bundles) - set(declared))
+        if unknown:
+            console.print(
+                f"[red]✗ Unknown bundle(s): {', '.join(unknown)}. "
+                f"Declared: {', '.join(sorted(declared))}.[/red]"
+            )
+            sys.exit(1)
+
     # Detect env type up front (refuse docker before doing work).
     try:
         env_type, python_version = detect_environment_type(source_path, config)
@@ -3457,18 +3563,139 @@ def _install_from_path(
         )
         sys.exit(1)
 
-    # Reinstall handling: a pre-existing slot is replaced. For editable
-    # this is the normal "I changed deps, rebuild" path.
-    if slot.exists() or slot.is_symlink():
-        if not editable:
-            console.print(
-                f"[yellow]{name} v{version} is already installed.[/yellow]"
-            )
-            if not _confirm("Reinstall?", default=True, mode=mode):
-                sys.exit(0)
+    # Decide additive vs destructive vs fresh.
+    from .envs.cache import (
+        installed_bundles as _installed_bundles,
+        update_install_meta_bundles as _update_meta_bundles,
+    )
+    additive_only = False  # set true when we want to extend an existing slot
+    new_bundles_to_install: List[str] = []
+    if (slot.exists() or slot.is_symlink()) and not rebuild:
+        if editable:
+            # For editable re-install, mirror the historical "rebuild"
+            # behavior (it's the normal "I changed deps" path).
+            _remove_slot(slot)
+        else:
+            current_installed = _installed_bundles(slot)
+            if requested_bundles is None:
+                # "Install everything." If we already have a complete
+                # install (current_installed is None), this is a noop.
+                # If we have a subset, add the missing bundles additively.
+                if current_installed is None:
+                    console.print(
+                        f"[yellow]{name} v{version} is already installed.[/yellow]"
+                    )
+                    if not _confirm("Reinstall?", default=True, mode=mode):
+                        sys.exit(0)
+                    _remove_slot(slot)
+                else:
+                    missing = sorted(set(declared) - set(current_installed))
+                    if not missing:
+                        console.print(
+                            f"[yellow]{name} v{version} is already fully "
+                            "installed.[/yellow]"
+                        )
+                        if not _confirm("Reinstall?", default=True, mode=mode):
+                            sys.exit(0)
+                        _remove_slot(slot)
+                    else:
+                        additive_only = True
+                        new_bundles_to_install = missing
+                        console.print(
+                            f"[dim]Adding bundle(s) {', '.join(missing)} "
+                            f"to existing install.[/dim]"
+                        )
+            else:
+                # User asked for specific bundles. Additive if those
+                # aren't already all in.
+                if current_installed is None:
+                    # Slot has the full set already; subset request is
+                    # a noop.
+                    console.print(
+                        f"[yellow]{name} v{version} is already installed "
+                        "with all bundles. Use --rebuild to scope back "
+                        "down to the requested subset.[/yellow]"
+                    )
+                    sys.exit(0)
+                missing = sorted(
+                    set(requested_bundles) - set(current_installed)
+                )
+                if not missing:
+                    console.print(
+                        f"[yellow]{name} v{version} already has bundle"
+                        f"{'s' if len(requested_bundles) != 1 else ''} "
+                        f"{', '.join(sorted(requested_bundles))} "
+                        "installed.[/yellow]"
+                    )
+                    sys.exit(0)
+                additive_only = True
+                new_bundles_to_install = missing
+                console.print(
+                    f"[dim]Adding bundle(s) {', '.join(missing)} "
+                    f"to existing install.[/dim]"
+                )
+    elif slot.exists() or slot.is_symlink():
+        # --rebuild path: blow away unconditionally.
         _remove_slot(slot)
 
-    slot.mkdir(parents=True, exist_ok=True)
+    if not additive_only:
+        slot.mkdir(parents=True, exist_ok=True)
+    else:
+        # Additive path: existing venv stays put; just pip-install the
+        # new bundles' deps and update the metadata's `bundles` field.
+        new_specs = deps_for_bundles(config, new_bundles_to_install)
+        if new_specs:
+            from .envs.cache import read_install_meta as _read_meta
+            meta = _read_meta(slot) or {}
+            existing_python = meta.get("python_path")
+            existing_env_name = meta.get("env_name")
+            if existing_python and Path(existing_python).exists():
+                pip_cmd = [
+                    str(Path(existing_python).parent / "pip"),
+                    "install", *new_specs,
+                ]
+            elif existing_env_name:
+                conda_bin = "mamba" if shutil.which("mamba") else "conda"
+                pip_cmd = [
+                    conda_bin, "run", "-n", existing_env_name,
+                    "pip", "install", *new_specs,
+                ]
+            else:
+                console.print(
+                    "[red]✗ Cannot locate the existing environment's "
+                    "pip (corrupted .install_meta.yaml?). Use "
+                    "--rebuild to reinstall from scratch.[/red]"
+                )
+                sys.exit(1)
+            console.print()
+            _run_pip_with_progress(
+                pip_cmd,
+                console,
+                f"Installing bundle dependencies ({len(new_specs)})",
+            )
+            console.print("[green]✓ Bundle dependencies installed[/green]")
+        # Compute the new union and update metadata.
+        prior = _installed_bundles(slot) or []
+        union = sorted(set(prior) | set(new_bundles_to_install))
+        _update_meta_bundles(slot, union)
+        # Update manifest entry too so the recorded bundle set stays
+        # consistent with what's actually installed.
+        if not editable:
+            _pin_after_install(
+                name, version,
+                local_scope=local_scope, bundles=union,
+            )
+        console.print(
+            f"\n[bold green]✓ Added bundle(s) "
+            f"{', '.join(new_bundles_to_install)} to {name} "
+            f"{'(editable)' if editable else 'v' + version}[/bold green]\n"
+        )
+        console.print(f"Installed bundles: {', '.join(union)}")
+        console.print(f"\n[bold]Ready to use! Try:[/bold]")
+        console.print(f"  [cyan]tb activate {name}[/cyan]   # expose it to the agent")
+        console.print(f"  [cyan]tb list[/cyan]")
+        console.print()
+        return name
 
     # Materialize the source into the slot.
     if editable:
@@ -3489,6 +3716,15 @@ def _install_from_path(
                 shutil.copy2(item, dest)
         env_source_dir = slot
 
+    # Compute the bundles + extra pip-specs for this fresh install.
+    # ``requested_bundles is None`` → install every declared bundle
+    # (the historical "install everything" behavior). ``[]`` → base only.
+    bundles_to_install = (
+        requested_bundles if requested_bundles is not None
+        else list(declared)
+    )
+    extra_pip_specs = deps_for_bundles(config, bundles_to_install)
+
     # Build the environment in the slot (venv lands at <slot>/.venv).
     console.print()
     python_path = None
@@ -3496,12 +3732,16 @@ def _install_from_path(
     try:
         if env_type == "venv":
             console.print("[bold blue]Setting up environment...[/bold blue]\n")
-            python_path = setup_venv_environment(env_source_dir, console)
+            python_path = setup_venv_environment(
+                env_source_dir, console,
+                extra_pip_specs=extra_pip_specs or None,
+            )
         elif env_type == "conda":
             verify_conda_available()
             console.print("[bold blue]Setting up environment...[/bold blue]\n")
             env_name = setup_conda_environment(
                 env_source_dir, name, python_version, console,
+                extra_pip_specs=extra_pip_specs or None,
             )
     except Exception as e:
         console.print(f"\n[red]✗ Environment setup failed: {e}[/red]")
@@ -3510,7 +3750,10 @@ def _install_from_path(
 
     # Write metadata. For editable, record editable: true + source_path
     # so tb list can render the live-link indicator and serve can read
-    # the venv interpreter.
+    # the venv interpreter. Record the installed bundle set only when
+    # the user picked a subset (``requested_bundles is not None``);
+    # for a full install we leave ``bundles`` absent so the legacy
+    # "all bundles" semantic flows through.
     _write_path_install_meta(
         slot,
         name=name,
@@ -3522,6 +3765,10 @@ def _install_from_path(
         config=config,
         editable=editable,
         source_path=source_path if editable else None,
+        bundles=(
+            sorted(set(bundles_to_install))
+            if requested_bundles is not None else None
+        ),
     )
 
     console.print(
@@ -3551,7 +3798,14 @@ def _install_from_path(
     # clone. The editable: true + source_path in .install_meta.yaml is the
     # only place an editable install is tracked.
     if not editable:
-        _pin_after_install(name, version, local_scope=local_scope)
+        _pin_after_install(
+            name, version,
+            local_scope=local_scope,
+            bundles=(
+                sorted(set(bundles_to_install))
+                if requested_bundles is not None else None
+            ),
+        )
     else:
         console.print(
             "[dim]Editable installs are not pinned into the project "
@@ -3614,8 +3868,16 @@ def _write_path_install_meta(
     config: dict,
     editable: bool,
     source_path: Optional[Path],
+    bundles: Optional[List[str]] = None,
 ) -> None:
-    """Write .tb_meta.json + .install_meta.yaml for a path/editable install."""
+    """Write .tb_meta.json + .install_meta.yaml for a path/editable install.
+
+    ``bundles`` (when not None) records the installed subset of the
+    toolkit's declared bundles; ``None`` means "the whole toolkit was
+    installed" (the historical default) and is omitted from metadata.
+    Serve uses this to skip tools whose bundles are entirely outside
+    the installed set.
+    """
     from .envs import (
         write_legacy_meta as _write_legacy_meta,
         write_install_meta as _write_install_meta,
@@ -3665,6 +3927,8 @@ def _write_path_install_meta(
     if editable:
         extras["editable"] = True
         extras["source_path"] = str(source_path)
+    if bundles is not None:
+        extras["bundles"] = sorted(set(bundles))
     _write_install_meta(
         slot,
         name=name,
@@ -3808,8 +4072,27 @@ def _post_install_activate(
         "activate it."
     ),
 )
+@click.option(
+    '--bundle', 'bundle_flags', multiple=True,
+    help=(
+        "Install only the specified bundle(s) instead of the whole "
+        "toolkit. Repeatable; alternative to the pip-extras syntax "
+        "(`tb install foo[a,b]`). Mutually exclusive with the extras "
+        "form. Adds the bundle's `deps:` on top of `requirements.txt`."
+    ),
+)
+@click.option(
+    '--rebuild', is_flag=True, default=False,
+    help=(
+        "Destructive reinstall: blow away the cache slot and rebuild "
+        "from scratch with the requested bundle set. Without this, "
+        "re-installing an existing slot with new bundles is additive "
+        "(pip-installs only the new bundles' deps on top of the "
+        "existing venv)."
+    ),
+)
 @_interactive_options
-def install(name, version, global_scope, local_scope, editable, no_skills, activate_after, yes, no_, no_input):
+def install(name, version, global_scope, local_scope, editable, no_skills, activate_after, bundle_flags, rebuild, yes, no_, no_input):
     """
     Install a toolkit — from the registry or a local source directory.
 
@@ -3848,6 +4131,10 @@ def install(name, version, global_scope, local_scope, editable, no_skills, activ
         toolbase install .                        # global install from cwd
         toolbase install -e .                     # editable: live link to cwd
         toolbase install aster --no-skills        # don't touch ~/.claude/skills/
+        toolbase install calculator[basic,symbolic]  # only those bundles
+        toolbase install calculator --bundle basic   # flag form, same effect
+        toolbase install calculator[symbolic]        # re-install adds bundles
+                                                     # additively (pip-like)
     """
     import requests
 
@@ -3859,6 +4146,20 @@ def install(name, version, global_scope, local_scope, editable, no_skills, activ
         raise click.UsageError(
             "-e, -l, and -g are mutually exclusive. Pick one."
         )
+
+    # Strip any pip-extras suffix from the name (e.g. ``foo[a,b]``)
+    # before path/registry resolution. Combine with the --bundle flag
+    # form; both are valid but mutually exclusive.
+    name, extras_bundles = _parse_bundle_extras(name)
+    bundle_flags_list = list(bundle_flags) if bundle_flags else None
+    if extras_bundles is not None and bundle_flags_list:
+        raise click.UsageError(
+            "Use either the extras-form (NAME[a,b]) or --bundle flags, "
+            "not both."
+        )
+    requested_bundles: Optional[List[str]] = (
+        extras_bundles if extras_bundles is not None else bundle_flags_list
+    )
 
     # Resolve the argument to either a registry name or a local path,
     # following pip-style disambiguation. ``-e`` forces path semantics
@@ -3884,6 +4185,8 @@ def install(name, version, global_scope, local_scope, editable, no_skills, activ
             local_scope=local_scope,
             no_skills=no_skills,
             mode=mode,
+            requested_bundles=requested_bundles,
+            rebuild=rebuild,
         )
         if activate_after and installed_name:
             _post_install_activate(
@@ -3985,9 +4288,17 @@ def install(name, version, global_scope, local_scope, editable, no_skills, activ
 
     if toolkit_dir.exists():
         # Reinstall of an existing slot is benign — same version, re-fetched.
-        console.print(f"[yellow]{name} v{version} is already installed.[/yellow]")
-        if not _confirm("Reinstall?", default=True, mode=mode):
-            sys.exit(0)
+        # ``--rebuild`` auto-confirms (the user explicitly opted into
+        # destructive reinstall).
+        if rebuild:
+            console.print(
+                f"[dim]{name} v{version} is installed; --rebuild "
+                "requested.[/dim]"
+            )
+        else:
+            console.print(f"[yellow]{name} v{version} is already installed.[/yellow]")
+            if not _confirm("Reinstall?", default=True, mode=mode):
+                sys.exit(0)
         # Remove the existing slot so the extract path is clean.
         shutil.rmtree(toolkit_dir)
 
@@ -4079,6 +4390,40 @@ def install(name, version, global_scope, local_scope, editable, no_skills, activ
 
         console.print(f"[green]✓ Environment: {env_type} (Python {python_version})[/green]")
 
+        # Validate requested bundles + compute extra pip-specs for them.
+        # ``requested_bundles is None`` means "install everything" — keep
+        # the legacy behavior (install every bundle's deps, record no
+        # ``bundles`` field in metadata).
+        from .envs.bundle_deps import (
+            deps_for_bundles as _deps_for_bundles,
+            declared_bundle_names as _declared_bundle_names,
+        )
+        _declared = _declared_bundle_names(toolkit_config)
+        if requested_bundles is not None:
+            if not _declared:
+                console.print(
+                    f"[red]✗ Toolkit {name!r} declares no bundles, but "
+                    f"you requested {', '.join(requested_bundles)}.[/red]"
+                )
+                shutil.rmtree(toolkit_dir)
+                sys.exit(1)
+            _unknown = sorted(set(requested_bundles) - set(_declared))
+            if _unknown:
+                console.print(
+                    f"[red]✗ Unknown bundle(s): {', '.join(_unknown)}. "
+                    f"Declared: {', '.join(sorted(_declared))}.[/red]"
+                )
+                shutil.rmtree(toolkit_dir)
+                sys.exit(1)
+        _bundles_to_install: Optional[List[str]] = (
+            sorted(set(requested_bundles))
+            if requested_bundles is not None else None
+        )
+        _bundle_extra_specs = _deps_for_bundles(
+            toolkit_config,
+            _bundles_to_install if _bundles_to_install is not None else _declared,
+        )
+
         # Special messages for conda/docker
         if env_type == 'conda' and not has_conda():
             console.print("[yellow]Warning: conda not detected. Install conda/mamba or use Docker mode.[/yellow]\n")
@@ -4125,12 +4470,18 @@ def install(name, version, global_scope, local_scope, editable, no_skills, activ
     try:
         if env_type == 'venv':
             console.print("[bold blue]Setting up environment...[/bold blue]\n")
-            python_path = setup_venv_environment(toolkit_dir, console)
+            python_path = setup_venv_environment(
+                toolkit_dir, console,
+                extra_pip_specs=_bundle_extra_specs or None,
+            )
 
         elif env_type == 'conda':
             verify_conda_available()
             console.print("[bold blue]Setting up environment...[/bold blue]\n")
-            env_name = setup_conda_environment(toolkit_dir, name, python_version, console)
+            env_name = setup_conda_environment(
+                toolkit_dir, name, python_version, console,
+                extra_pip_specs=_bundle_extra_specs or None,
+            )
 
     except Exception as e:
         console.print(f"\n[red]✗ Environment setup failed: {e}[/red]")
@@ -4202,6 +4553,8 @@ def install(name, version, global_scope, local_scope, editable, no_skills, activ
     install_extras["has_skills"] = len(skill_files) > 0
     install_extras["skills_count"] = len(skill_files)
     install_extras["has_setup_script"] = has_setup_script
+    if _bundles_to_install is not None:
+        install_extras["bundles"] = _bundles_to_install
     _write_install_meta(
         toolkit_dir,
         name=name,
@@ -4226,7 +4579,10 @@ def install(name, version, global_scope, local_scope, editable, no_skills, activ
     # global cache and project-agnostic — only the pin is scoped. There
     # is deliberately no "where do you want this?" prompt: the flag (or
     # its -g default) carries that intent now.
-    _pin_after_install(name, version, local_scope=local_scope)
+    _pin_after_install(
+        name, version, local_scope=local_scope,
+        bundles=_bundles_to_install,
+    )
 
     # Step 9: Success message
     console.print(f"\n[bold green]✓ Successfully installed {name} v{version}[/bold green]\n")

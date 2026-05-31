@@ -127,6 +127,49 @@ def read_install_meta(slot_dir: Path) -> Optional[Dict[str, Any]]:
     return {k: v for k, v in raw.items() if k != "schema_version"}
 
 
+def installed_bundles(slot_dir: Path) -> Optional[List[str]]:
+    """Return the list of installed bundles for a slot, or None for "all".
+
+    Reads ``bundles`` from ``.install_meta.yaml``. Returns:
+    - ``None`` if no bundles field is recorded (legacy installs, or
+      installs that brought in every declared bundle — both treated
+      identically as "the whole toolkit").
+    - a list (possibly empty — "base only, no optional bundles") when
+      the install was scoped to a specific subset.
+
+    The orchestrator uses this to gate at serve time: a tool whose
+    bundles are all outside the installed set is skipped with a clear
+    log line. Empty list means "every tool with a declared bundle is
+    skipped" — only bundle-less tools are served.
+    """
+    meta = read_install_meta(slot_dir)
+    if not meta:
+        return None
+    raw = meta.get("bundles")
+    if raw is None:
+        return None
+    if isinstance(raw, list):
+        return [b for b in raw if isinstance(b, str)]
+    return None
+
+
+def update_install_meta_bundles(slot_dir: Path, bundles: List[str]) -> None:
+    """Rewrite ``.install_meta.yaml`` with an updated ``bundles`` list.
+
+    Preserves every other field; used by additive installs that add new
+    bundles to an existing slot without touching python_path / install
+    method / etc. Idempotent; safe to call when no meta exists (no-op).
+    """
+    path = slot_dir / INSTALL_META_FILE
+    if not path.exists():
+        return
+    raw = read_versioned_yaml(path, "install_meta")
+    # Strip the schema_version envelope so we re-stamp it on write.
+    payload = {k: v for k, v in raw.items() if k != "schema_version"}
+    payload["bundles"] = sorted(set(bundles))
+    write_versioned_yaml(path, "install_meta", payload, mode=0o644)
+
+
 def write_legacy_meta(slot_dir: Path, meta: Dict[str, Any]) -> Path:
     """Write the ``.tb_meta.json`` carry-along file.
 

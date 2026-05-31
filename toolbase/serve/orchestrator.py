@@ -1024,6 +1024,15 @@ class Orchestrator:
                     level="warn",
                 )
 
+        # Subset-install gating: read which bundles were installed in
+        # the cache slot. None means "the whole toolkit" (legacy and
+        # full installs both); a set means "this subset only — tools
+        # outside it can't be served because their pip deps aren't in
+        # the venv."
+        from ..envs.cache import installed_bundles as _installed_bundles
+        installed_list = _installed_bundles(disc.path)
+        installed_set = set(installed_list) if installed_list is not None else None
+
         # Forwarder is bound to the toolkit *name*, not the client. The
         # forwarder looks up the live MCPClient on every call so a restart
         # that swaps the client is picked up transparently.
@@ -1031,12 +1040,22 @@ class Orchestrator:
 
         exposed_tools: List[str] = []
         forward = self._make_forwarder(disc.name)
+        skipped_install = 0
         for defn in spawn.client.get_tool_definitions():
             upstream_name = defn["name"]
             tool_bundles = name_to_bundles.get(upstream_name, [])
             if not tool_is_served(
-                upstream_name, tool_bundles, sel, availability, global_disabled
+                upstream_name, tool_bundles, sel, availability,
+                global_disabled, installed_bundles=installed_set,
             ):
+                # Count tools dropped specifically because of
+                # subset-install gating, for a single startup log line.
+                if (
+                    installed_set is not None
+                    and tool_bundles
+                    and not any(b in installed_set for b in tool_bundles)
+                ):
+                    skipped_install += 1
                 continue
             namespaced = f"{disc.name}__{upstream_name}"
             self._proxy_tools.append(make_proxy_tool(
@@ -1049,6 +1068,23 @@ class Orchestrator:
                 forward=forward,
             ))
             exposed_tools.append(upstream_name)
+
+        # One info-level line per toolkit if subset-install skipped any
+        # tools. Helps the user understand "where did my tools go?" when
+        # they installed a narrow bundle subset.
+        if skipped_install > 0:
+            installed_repr = ",".join(sorted(installed_set or set())) or "(base only)"
+            self.console.print(
+                f"  [dim]{disc.name}: {skipped_install} tool"
+                f"{'s' if skipped_install != 1 else ''} skipped — "
+                f"installed bundles: {installed_repr}[/dim]"
+            )
+            self.logger.log_event(
+                "tools_skipped_subset_install",
+                toolkit=disc.name,
+                skipped_count=skipped_install,
+                installed_bundles=installed_repr,
+            )
 
         self._runtimes[disc.name] = ToolkitRuntime(
             name=disc.name,
