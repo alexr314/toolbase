@@ -435,6 +435,72 @@ class TestValidation:
         with pytest.raises(Exception, match="undeclared"):
             ToolkitMetadata(**y)
 
+    # ── per-bundle deps ──────────────────────────────────────────────
+
+    def test_bundle_with_deps_accepted(self):
+        """``deps: [pip-spec, ...]`` is a recognized bundle-entry key."""
+        from toolbase.validation import ToolkitMetadata
+        y = self._base_yaml()
+        y["bundles"] = {
+            "scientific": {"deps": ["numpy>=2.0", "pandas"]},
+        }
+        m = ToolkitMetadata(**y)
+        assert m.bundles["scientific"]["deps"] == ["numpy>=2.0", "pandas"]
+
+    def test_bundle_with_requires_and_deps_together(self):
+        """``requires:`` and ``deps:`` coexist on the same bundle."""
+        from toolbase.validation import ToolkitMetadata
+        y = self._base_yaml()
+        y["config"] = [
+            {"name": "cas_path", "type": "string", "required": False},
+        ]
+        y["bundles"] = {
+            "symbolic": {
+                "requires": ["cas_path"],
+                "deps": ["sympy>=1.14"],
+            },
+        }
+        m = ToolkitMetadata(**y)
+        b = m.bundles["symbolic"]
+        assert b["requires"] == ["cas_path"]
+        assert b["deps"] == ["sympy>=1.14"]
+
+    def test_bundle_deps_must_be_list(self):
+        """``deps:`` rejects scalar values (typed as list of pip-specs)."""
+        from toolbase.validation import ToolkitMetadata
+        y = self._base_yaml()
+        y["bundles"] = {"scientific": {"deps": "numpy"}}
+        with pytest.raises(Exception, match="must be a list"):
+            ToolkitMetadata(**y)
+
+    def test_bundle_deps_entries_must_be_non_empty_strings(self):
+        from toolbase.validation import ToolkitMetadata
+        y = self._base_yaml()
+        y["bundles"] = {"scientific": {"deps": ["numpy", 42]}}
+        with pytest.raises(Exception, match="non-empty string"):
+            ToolkitMetadata(**y)
+
+        y["bundles"] = {"scientific": {"deps": ["numpy", "   "]}}
+        with pytest.raises(Exception, match="non-empty string"):
+            ToolkitMetadata(**y)
+
+    def test_bundle_unknown_key_still_rejected(self):
+        """Sanity: keys other than 'requires'/'deps' still rejected."""
+        from toolbase.validation import ToolkitMetadata
+        y = self._base_yaml()
+        y["bundles"] = {"x": {"depz": ["numpy"]}}
+        with pytest.raises(Exception, match="unknown key"):
+            ToolkitMetadata(**y)
+
+    def test_bundle_with_empty_deps_list_accepted(self):
+        """Empty ``deps: []`` is valid (bundle adds nothing beyond base)."""
+        from toolbase.validation import ToolkitMetadata
+        y = self._base_yaml()
+        y["bundles"] = {"basic": {"deps": []}}
+        m = ToolkitMetadata(**y)
+        assert m.bundles["basic"]["deps"] == []
+
+
     def test_validate_toolkit_surfaces_bundles_error_at_publish(self, tmp_path):
         """Full ``validate_toolkit()`` exercises the cross-reference
         check, mirroring what ``toolbase validate`` and

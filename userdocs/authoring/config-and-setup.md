@@ -85,6 +85,28 @@ that genuinely belong in more than one logical grouping — e.g. the
 calculator's `simplify` tool above is useful both as a basic operation
 and as part of the symbolic workflow.
 
+## Per-bundle dependencies
+
+A bundle can declare pip packages that should be installed when the user
+selects this bundle (rather than the whole toolkit). Use this when a
+bundle relies on heavy or specialised dependencies the rest of the
+toolkit doesn't need:
+
+```yaml
+bundles:
+  basic: {}                       # base only — no extra deps
+  scientific:
+    deps: [numpy>=2.0, pandas]    # pip-installed if 'scientific' is selected
+  symbolic:
+    requires: [cas_path]
+    deps: [sympy>=1.14]           # `requires:` and `deps:` can combine
+```
+
+The toolkit's `requirements.txt` is always installed (the base). Bundle
+`deps:` add on top when the user picks that bundle at install time. A
+user installing only `basic` skips numpy and sympy entirely. Use this
+to keep small-subset installs lean.
+
 ## Heavier setup (`setup.py`)
 
 When config values aren't enough (downloads, derived files, environment
