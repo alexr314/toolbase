@@ -384,6 +384,8 @@ class TestValidation:
                 bundle="bad name!",
             )
 
+    # ── multi-bundle membership (PR #21) ─────────────────────────────
+
     def test_bundle_field_accepts_list_form(self):
         """``bundle: [a, b]`` puts the tool in multiple bundles."""
         from toolbase.validation import ToolkitMetadata
@@ -499,7 +501,6 @@ class TestValidation:
         y["bundles"] = {"basic": {"deps": []}}
         m = ToolkitMetadata(**y)
         assert m.bundles["basic"]["deps"] == []
-
 
     def test_validate_toolkit_surfaces_bundles_error_at_publish(self, tmp_path):
         """Full ``validate_toolkit()`` exercises the cross-reference
