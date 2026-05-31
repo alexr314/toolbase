@@ -53,16 +53,26 @@ def _make_slot(
     python_version: str = "3.12",
     last_used: datetime | None = None,
     size_bytes: int | None = None,
+    bundles: list[str] | None = None,
 ) -> Path:
-    """Create a synthetic cache slot with optional .last_used and .disk_size."""
+    """Create a synthetic cache slot with optional .last_used and .disk_size.
+
+    ``bundles=None`` (default) writes no ``bundles`` field — the legacy
+    "full install" semantic. ``bundles=[]`` writes an explicit empty list
+    (base-only install). ``bundles=[...]`` writes a subset install.
+    """
     slot = cache_dir(name, version)
     slot.mkdir(parents=True, exist_ok=True)
+    extras: dict = {}
+    if bundles is not None:
+        extras["bundles"] = list(bundles)
     write_install_meta(
         slot,
         name=name,
         version=version,
         install_method=install_method,
         python_version=python_version,
+        extras=extras or None,
     )
     # Some legacy_meta so the slot is recognised even if install_meta
     # doesn't carry every field the rendering uses.
@@ -239,6 +249,50 @@ class TestListTreeRendering:
         result = runner.invoke(cli.main, ["list"])
         assert "—" in result.output
 
+    def test_subset_install_annotated(self, fake_home):
+        """A version row for a subset install ends with `[subset: a, b]`
+        so the user can tell from `tb list` that not all bundles' deps
+        are installed."""
+        _make_slot(
+            "toolkit-a", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+            bundles=["alpha", "beta"],
+        )
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["list"])
+        assert result.exit_code == 0, result.output
+        assert "[subset: alpha, beta]" in result.output
+
+    def test_full_install_no_subset_annotation(self, fake_home):
+        """No ``bundles`` in meta → no subset annotation (legacy fully-
+        installed semantic stays visually unchanged)."""
+        _make_slot(
+            "toolkit-a", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+            # bundles=None — explicit "full install"
+        )
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["list"])
+        assert result.exit_code == 0
+        assert "subset" not in result.output
+
+    def test_base_only_install_annotated(self, fake_home):
+        """``bundles: []`` is a deliberate base-only install — annotated
+        as ``[subset: (base only)]`` so it's distinguishable from a full
+        install."""
+        _make_slot(
+            "toolkit-a", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+            bundles=[],
+        )
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["list"])
+        assert result.exit_code == 0
+        assert "[subset: (base only)]" in result.output
+
 
 # ── pinned-version indicator ────────────────────────────────────────
 
@@ -365,6 +419,40 @@ class TestJsonOutput:
         payload = json.loads(result.output)
         assert payload[0]["last_used_iso"] is None
         assert payload[0]["size_bytes"] is None
+
+    def test_json_full_install_omits_or_nulls_installed_bundles(self, fake_home):
+        """A slot installed without ``bundles`` in its meta (the legacy
+        "all bundles" semantic) renders ``installed_bundles: null``."""
+        _make_slot("toolkit-a", "0.1.0", last_used=datetime.now())
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["list", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload[0]["installed_bundles"] is None
+
+    def test_json_subset_install_includes_bundle_list(self, fake_home):
+        _make_slot(
+            "toolkit-a", "0.1.0", last_used=datetime.now(),
+            bundles=["alpha", "beta"],
+        )
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["list", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload[0]["installed_bundles"] == ["alpha", "beta"]
+
+    def test_json_base_only_install_renders_empty_list(self, fake_home):
+        """``bundles: []`` (deliberate base-only install) is distinct from
+        ``bundles`` absent — ``installed_bundles`` is ``[]``, not ``null``."""
+        _make_slot(
+            "toolkit-a", "0.1.0", last_used=datetime.now(),
+            bundles=[],
+        )
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["list", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload[0]["installed_bundles"] == []
 
     def test_json_sorted_deterministically(self, fake_home):
         _make_slot("zzz", "0.1.0", last_used=datetime.now())

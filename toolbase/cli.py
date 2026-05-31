@@ -4884,6 +4884,11 @@ def list_cmd(as_json, verbose):
                 "size_bytes": e.disk_size_bytes,
                 "pinned_in_project": pin_map.get(e.name) == e.version,
                 "active": e.name in active_set,
+                # ``installed_bundles``: ``null`` for a full install
+                # (every declared bundle), or a list (possibly empty) for
+                # a subset install. Matches the raw ``bundles`` field in
+                # ``.install_meta.yaml``.
+                "installed_bundles": (e.install_meta or {}).get("bundles"),
             }
             for e in _list_sorted_entries(entries)
         ]
@@ -4933,6 +4938,23 @@ def list_cmd(as_json, verbose):
             # obvious the slot is a live link, not a frozen install.
             meta = entry.install_meta or {}
             editable_src = meta.get("source_path") if meta.get("editable") else None
+            # Subset install indicator. ``bundles`` is absent on a full
+            # install (legacy/everything-installed semantic) and a list —
+            # possibly empty — on a subset install. Without this hint the
+            # user has no way to tell from `tb list` that their slot only
+            # has some bundles' deps; the rest are silently skipped at
+            # serve time.
+            installed_bundles = meta.get("bundles")
+            if installed_bundles is not None:
+                if installed_bundles:
+                    subset_tag = (
+                        f"  [dim]\\[subset: "
+                        f"{', '.join(installed_bundles)}][/dim]"
+                    )
+                else:
+                    subset_tag = "  [dim]\\[subset: (base only)][/dim]"
+            else:
+                subset_tag = ""
             # Version column padded a little so the parenthetical
             # aligns across rows that have / don't have the pin marker.
             ver_cell = f"{entry.version}{marker}"
@@ -4940,11 +4962,13 @@ def list_cmd(as_json, verbose):
                 console.print(
                     f"  - {ver_cell}   "
                     f"[dim](-> {editable_src}, used {last_used}, {size})[/dim]"
+                    f"{subset_tag}"
                 )
             else:
                 console.print(
                     f"  - {ver_cell}   "
                     f"[dim](used {last_used}, {size})[/dim]"
+                    f"{subset_tag}"
                 )
         if verbose:
             _list_print_tools_verbose(name, resolved_profile)
