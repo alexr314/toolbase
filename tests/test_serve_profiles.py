@@ -218,35 +218,63 @@ def _avail(available=(), dropped=None, has_block=True):
 
 def test_served_whole_toolkit_no_selection():
     # No profile selection -> serve-all; tool with no bundle is served.
-    assert tool_is_served("t", None, None, _avail(has_block=False), set())
+    assert tool_is_served("t", [], None, _avail(has_block=False), set())
 
 
 def test_served_dropped_bundle_gated_off():
     av = _avail(dropped={"mg5": ["mg5_path"]})
-    assert not tool_is_served("gen", "mg5", None, av, set())
+    assert not tool_is_served("gen", ["mg5"], None, av, set())
 
 
 def test_served_allowlist_by_bundle():
     sel = ToolkitSelection(bundles=["pythia"])
     av = _avail(available=["pythia", "inspire"])
-    assert tool_is_served("run", "pythia", sel, av, set())
-    assert not tool_is_served("search", "inspire", sel, av, set())
+    assert tool_is_served("run", ["pythia"], sel, av, set())
+    assert not tool_is_served("search", ["inspire"], sel, av, set())
 
 
 def test_served_allowlist_union_enabled():
     sel = ToolkitSelection(bundles=["pythia"], enabled_tools=["extra"])
     av = _avail(available=["pythia", "inspire"])
-    assert tool_is_served("extra", "inspire", sel, av, set())  # via enabled
-    assert tool_is_served("run", "pythia", sel, av, set())     # via bundle
+    assert tool_is_served("extra", ["inspire"], sel, av, set())  # via enabled
+    assert tool_is_served("run", ["pythia"], sel, av, set())     # via bundle
 
 
 def test_served_per_toolkit_disabled_wins():
     sel = ToolkitSelection(bundles=["pythia"], disabled_tools=["debug"])
     av = _avail(available=["pythia"])
-    assert not tool_is_served("debug", "pythia", sel, av, set())
+    assert not tool_is_served("debug", ["pythia"], sel, av, set())
 
 
 def test_served_global_blocklist():
     sel = ToolkitSelection()  # whole toolkit
     av = _avail(has_block=False)
-    assert not tool_is_served("noisy", None, sel, av, {"noisy"})
+    assert not tool_is_served("noisy", [], sel, av, {"noisy"})
+
+
+# ── multi-bundle membership (post-0.5.x) ──────────────────────────────
+
+
+def test_served_multi_bundle_any_available():
+    """A tool in multiple bundles is served if ANY of them is available."""
+    av = _avail(available=["alpha"], dropped={"beta": ["beta_key"]})
+    # Tool is in both alpha (available) and beta (dropped) → served.
+    assert tool_is_served("hybrid", ["alpha", "beta"], None, av, set())
+
+
+def test_served_multi_bundle_all_dropped_excluded():
+    """A tool whose every bundle is dropped is excluded."""
+    av = _avail(dropped={"beta": ["beta_key"], "gamma": ["gamma_key"]})
+    assert not tool_is_served(
+        "hybrid", ["beta", "gamma"], None, av, set()
+    )
+
+
+def test_served_multi_bundle_intersects_profile_allowlist():
+    """Profile allowlist matches if ANY of the tool's bundles is in it."""
+    sel = ToolkitSelection(bundles=["alpha"])
+    av = _avail(available=["alpha", "beta", "gamma"])
+    # Tool in [gamma, alpha]: alpha is in allowlist → served.
+    assert tool_is_served("hybrid", ["gamma", "alpha"], sel, av, set())
+    # Tool in [gamma, beta]: neither in allowlist → excluded.
+    assert not tool_is_served("other", ["gamma", "beta"], sel, av, set())

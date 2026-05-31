@@ -67,10 +67,15 @@ tools:
   - name: solve
     function: tools.symbolic.solve
     bundle: symbolic
+  - name: simplify
+    function: tools.symbolic.simplify
+    bundle: [basic, symbolic]        # list form: tool belongs to both bundles
 
 setup_script: true           # optional — set when shipping a setup.py
 ```
 
-A tool's `bundle` must name a declared bundle; a bundle's `requires` keys must
-exist in `config`. `tb ingest` generates this `tools:` list from your code.
-See [Authoring](../authoring/overview.md).
+A tool's `bundle` accepts either a single name (`bundle: basic`) or a list
+(`bundle: [basic, symbolic]`); each member must name a declared bundle. A
+multi-bundle tool is served if any of its bundles is available. A bundle's
+`requires` keys must exist in `config`. `tb ingest` generates this `tools:`
+list from your code. See [Authoring](../authoring/overview.md).
