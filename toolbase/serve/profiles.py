@@ -83,7 +83,7 @@ class ToolkitSelection:
 
 def tool_is_served(
     tool_name: str,
-    tool_bundle: Optional[str],
+    tool_bundles: List[str],
     selection: Optional["ToolkitSelection"],
     availability,
     global_disabled: set,
@@ -93,22 +93,32 @@ def tool_is_served(
     Used by both the orchestrator (at spawn time) and ``tb list`` (for the
     active/served view) so the two never drift. Order matches the spec:
 
-    1. config-gating: a tool whose bundle's ``requires:`` aren't satisfied
-       is never served (``availability``).
+    1. config-gating: a tool is served if any of its declared bundles is
+       available; a tool with no declared bundles (empty list) is always
+       past this check.
     2. profile selection: in allowlist mode (bundles and/or enabled set),
-       keep only tools in a named bundle OR explicitly enabled (union);
-       then subtract the per-toolkit ``disabled``.
+       keep only tools where ANY of their bundles is in the profile's
+       allow-list OR the tool is explicitly enabled (union); then
+       subtract the per-toolkit ``disabled``.
     3. the absolute serve.yaml blocklist (``global_disabled``, unqualified
        names for this toolkit).
+
+    Multi-bundle semantics: a tool may belong to several bundles
+    (``bundle: [a, b]``). It's available if *any* bundle is available,
+    and in-profile if *any* of its bundles is in ``selection.bundles``.
+    Backward compat: a single-bundle tool is just a 1-element list here.
     """
-    if not availability.is_bundle_available(tool_bundle):
-        return False
+    if tool_bundles:
+        if not any(availability.is_bundle_available(b) for b in tool_bundles):
+            return False
+    # else: no declared bundle — pass the config-gating check by default,
+    # matching ``BundleAvailability.is_bundle_available(None) is True``.
+
     if selection is not None:
         if selection.is_allowlist:
             in_bundle = (
                 selection.bundles is not None
-                and tool_bundle is not None
-                and tool_bundle in selection.bundles
+                and any(b in selection.bundles for b in tool_bundles)
             )
             in_enabled = (
                 selection.enabled_tools is not None
