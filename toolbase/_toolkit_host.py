@@ -334,14 +334,14 @@ def _import_explicit_tools(
                 )
             obj = getattr(mod, attr_name)
             if isinstance(obj, BaseTool):
-                tools.append(obj)
+                instance = obj
             elif inspect.isclass(obj) and issubclass(obj, BaseTool):
                 state_kwargs = {
                     fname: state_config[fname]
                     for fname in obj._get_state_fields()
                     if fname in state_config
                 }
-                tools.append(obj(**state_kwargs))
+                instance = obj(**state_kwargs)
             else:
                 raise TypeError(
                     f"{module_path}.{attr_name} is not a BaseTool instance "
@@ -349,6 +349,21 @@ def _import_explicit_tools(
                     "Tools must be either @define_tool-decorated functions "
                     "or BaseTool subclasses."
                 )
+            # Set the MCP-wire name. Precedence (highest → lowest):
+            #   1. ``@define_tool(display_name="...")`` already set
+            #      ``_mcp_display_name`` on the instance at definition
+            #      time — never clobber an author's explicit choice.
+            #   2. Fall back to the class name with the ``Tool`` suffix
+            #      stripped (kept PascalCase, no lowercasing): so
+            #      ``InspireSearchTool`` registers as ``InspireSearch``.
+            # The previous behavior (use_display_names=False ->
+            # ``cls.__name__.removesuffix("Tool").lower()`` ->
+            # ``inspiresearch``) was a single-blob lowercase that lost
+            # word boundaries — hard for the agent to parse and not
+            # something the author could override per-tool.
+            if not getattr(instance, "_mcp_display_name", None):
+                instance._mcp_display_name = attr_name.removesuffix("Tool")
+            tools.append(instance)
         except Exception as exc:
             _emit_tool_skip(
                 tool=attr_name,
@@ -610,10 +625,13 @@ def main(argv: list[str] | None = None) -> int:
     server = MCPServer(
         tools=tool_instances,
         name=f"toolbase-{args.name}",
-        # Snake_case names — the orchestrator does its own namespacing
-        # with double-underscore prefixes; a separate PascalCase rename
-        # layered on top would make the agent-visible names confusing.
-        use_display_names=False,
+        # Use the display-name path so MCP picks up each instance's
+        # ``_mcp_display_name`` (set in ``_import_explicit_tools`` to
+        # ``<ClassName-minus-Tool-suffix>``, or whatever ``@define_tool
+        # (display_name=...)`` declared). The orchestrator namespaces
+        # with double-underscore prefixes on top, so the agent sees
+        # e.g. ``heptapod__InspireSearch``.
+        use_display_names=True,
     )
 
     # Block on the stdio loop. The MCPClient on the orchestrator side

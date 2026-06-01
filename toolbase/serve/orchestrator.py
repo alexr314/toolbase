@@ -519,23 +519,22 @@ def _read_bundles_and_membership(
 
 def _tool_yaml_name_to_mcp_name(class_name: str) -> str:
     """Convert a toolkit.yaml ``tools[].name`` value to the name the
-    host-side ``MCPServer(use_display_names=False)`` registers it under.
+    host-side ``MCPServer`` advertises on the wire.
 
-    Mirrors orchestral's ``BaseTool.get_name()`` classmethod —
-    ``cls.__name__.removesuffix("Tool").lower()``. The lookups in
-    ``ToolkitOrchestrator._connect_one`` iterate the MCP-advertised
-    names, so ``name_to_bundles`` has to be keyed the same way for the
-    install-scope and config-gating filters to fire at all.
+    Mirrors the toolbase host's default in
+    ``_toolkit_host._import_explicit_tools`` — strip a trailing
+    ``Tool`` suffix from the class name and keep PascalCase. The
+    lookups in ``ToolkitOrchestrator._connect_one`` iterate the
+    MCP-advertised names, so ``name_to_bundles`` has to be keyed the
+    same way for the install-scope and config-gating filters to fire.
 
-    Authors who override ``get_name()`` on a per-tool basis won't match
-    this transformation — that's a known limitation. The 0.1.0 toolkits
-    on the registry all use the default ``get_name`` so this is the
-    correct mapping for them; bespoke overrides would need separate
-    plumbing (toolkit.yaml could grow an explicit ``registered_name:``
-    field) but no toolkit on the registry needs that today.
+    Authors can override per-tool by setting ``display_name:`` on the
+    ``toolkit.yaml`` entry or by passing ``display_name=`` to
+    ``@define_tool`` — both override the derived default at the host.
+    For those, ``_read_bundles_and_membership`` keys ``name_to_bundles``
+    by the explicit ``display_name`` rather than calling this helper.
     """
-    bare = class_name.removesuffix("Tool")
-    return bare.lower()
+    return class_name.removesuffix("Tool")
 
 
 def _resolve_bundle_availability(
