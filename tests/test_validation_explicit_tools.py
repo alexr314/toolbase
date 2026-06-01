@@ -107,6 +107,22 @@ class TestToolDefinitionSchema:
         td = ToolDefinition(name="explicit", module="pkg.x")
         assert td.description is None
 
+    def test_display_name_optional_and_round_trips(self):
+        """``display_name:`` is an optional MCP-wire name override.
+        When present, it's what the agent sees (after the toolkit's
+        ``<name>__`` prefix); when absent, the host derives a default
+        from the class name."""
+        td = ToolDefinition(
+            name="InspireSearchTool",
+            module="pkg.x",
+            display_name="search_papers",
+        )
+        assert td.display_name == "search_papers"
+
+    def test_display_name_defaults_to_none(self):
+        td = ToolDefinition(name="my_tool", module="pkg.x")
+        assert td.display_name is None
+
 
 class TestToolkitMetadataIntegration:
     def test_loads_explicit_only_yaml(self):

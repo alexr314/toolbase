@@ -164,6 +164,119 @@ class TestImportExplicitTools:
         assert len(tools) == 1
         assert isinstance(tools[0], BaseTool)
 
+    def test_sets_mcp_display_name_from_class_name(self, tmp_path):
+        """The default ``_mcp_display_name`` is the class name with the
+        ``Tool`` suffix stripped (PascalCase preserved). This is what
+        the agent sees on the MCP wire (after the orchestrator's
+        ``<toolkit>__`` prefix). Replaces the prior
+        ``cls.__name__.removesuffix("Tool").lower()`` blob form which
+        lost word boundaries."""
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            (
+                "pkg/inspire.py",
+                "from orchestral.tools import BaseTool\n"
+                "class InspireSearchTool(BaseTool):\n"
+                "    name: str = 'inspiresearch_internal'\n"
+                "    description: str = 'x'\n"
+                "    def _run(self, **kw):\n"
+                "        return 'ok'\n",
+            ),
+        )
+        spec = [{"name": "InspireSearchTool", "module": "pkg.inspire"}]
+        tools = _import_explicit_tools(spec, tmp_path)
+        assert len(tools) == 1
+        assert tools[0]._mcp_display_name == "InspireSearch"
+
+    def test_class_without_tool_suffix_uses_class_name(self, tmp_path):
+        """``MetricPrefixConverter`` (no ``Tool`` suffix) registers
+        under ``MetricPrefixConverter`` — the suffix-strip is a no-op."""
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            (
+                "pkg/converter.py",
+                "from orchestral.tools import BaseTool\n"
+                "class MetricPrefixConverter(BaseTool):\n"
+                "    name: str = 'm'\n"
+                "    description: str = 'x'\n"
+                "    def _run(self, **kw):\n"
+                "        return 'ok'\n",
+            ),
+        )
+        spec = [{"name": "MetricPrefixConverter", "module": "pkg.converter"}]
+        tools = _import_explicit_tools(spec, tmp_path)
+        assert tools[0]._mcp_display_name == "MetricPrefixConverter"
+
+    def test_define_tool_display_name_override_is_respected(self, tmp_path):
+        """When the author sets ``@define_tool(display_name="…")`` (or
+        otherwise sets ``_mcp_display_name`` at definition time), the
+        host's default class-name derivation MUST NOT clobber it."""
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            (
+                "pkg/custom.py",
+                "from orchestral import define_tool\n"
+                "@define_tool(display_name='SearchPapers')\n"
+                "def inspire_search():\n"
+                "    \"\"\"x.\"\"\"\n"
+                "    return 'ok'\n",
+            ),
+        )
+        spec = [{"name": "inspire_search", "module": "pkg.custom"}]
+        tools = _import_explicit_tools(spec, tmp_path)
+        assert tools[0]._mcp_display_name == "SearchPapers"
+
+    def test_toolkit_yaml_display_name_overrides_class_derived_default(self, tmp_path):
+        """``display_name:`` on the toolkit.yaml entry pins the
+        agent-visible name regardless of the class name."""
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            (
+                "pkg/inspire.py",
+                "from orchestral.tools import BaseTool\n"
+                "class InspireSearchTool(BaseTool):\n"
+                "    name: str = 'x'\n"
+                "    description: str = 'x'\n"
+                "    def _run(self, **kw):\n"
+                "        return 'ok'\n",
+            ),
+        )
+        spec = [{
+            "name": "InspireSearchTool",
+            "module": "pkg.inspire",
+            "display_name": "search_papers",
+        }]
+        tools = _import_explicit_tools(spec, tmp_path)
+        assert tools[0]._mcp_display_name == "search_papers"
+
+    def test_yaml_display_name_outranks_define_tool_override(self, tmp_path):
+        """When both layers set a display_name, the toolkit.yaml entry
+        wins — the YAML is what the registry will see, so authors
+        editing it expect their change to take effect."""
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            (
+                "pkg/custom.py",
+                "from orchestral import define_tool\n"
+                "@define_tool(display_name='FromPython')\n"
+                "def search():\n"
+                "    \"\"\"x.\"\"\"\n"
+                "    return 'ok'\n",
+            ),
+        )
+        spec = [{
+            "name": "search",
+            "module": "pkg.custom",
+            "display_name": "FromYAML",
+        }]
+        tools = _import_explicit_tools(spec, tmp_path)
+        assert tools[0]._mcp_display_name == "FromYAML"
+
     def test_skips_non_basetool_attribute(self, tmp_path, capsys):
         # Bad entries no longer raise — they skip and emit a structured
         # tool_import_skipped JSON line on stderr (captured by the

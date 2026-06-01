@@ -188,6 +188,22 @@ class ToolDefinition(BaseModel):
             "active."
         ),
     )
+    display_name: Optional[str] = Field(
+        default=None,
+        description=(
+            "Optional override for the name the agent sees on the MCP "
+            "wire (after the orchestrator's ``<toolkit>__`` prefix). "
+            "When unset, defaults to the class name with the ``Tool`` "
+            "suffix stripped (PascalCase preserved) — so "
+            "``InspireSearchTool`` becomes ``InspireSearch``. Set this "
+            "when the class name isn't what you'd want the agent to "
+            "see (e.g. ``display_name: search_papers`` for a tool "
+            "whose class is ``InspireSearchTool``). Must be alphanumeric "
+            "with underscores and hyphens; the orchestrator namespaces "
+            "with ``__`` so do not include that. Overrides any "
+            "``@define_tool(display_name=...)`` set in code."
+        ),
+    )
 
     @field_validator('name')
     @classmethod

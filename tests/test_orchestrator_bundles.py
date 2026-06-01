@@ -136,20 +136,41 @@ class TestReadToolBundlesAndMembership:
         assert block["pdg"] == {}
         assert "requires" in block["mg5"]
 
+    def test_explicit_display_name_overrides_class_derived_default(self, tmp_path):
+        """A toolkit author can pin the agent-visible name via
+        ``display_name:`` on the tool entry; the orchestrator must key
+        ``name_to_bundles`` by the override so its filter loop's
+        ``name_to_bundles.get(<MCP name>, [])`` actually hits."""
+        disc = _make_toolkit(
+            tmp_path,
+            bundles={"alpha": {}},
+            tools=[
+                {"name": "InspireSearchTool", "module": "x.a",
+                 "display_name": "search_papers",
+                 "bundle": "alpha"},
+                {"name": "PDGDatabaseTool", "module": "x.b",
+                 # No display_name — default kicks in.
+                 "bundle": "alpha"},
+            ],
+        )
+        _, mapping = _read_bundles_and_membership(disc.path)
+        assert mapping == {
+            "search_papers": ["alpha"],          # explicit override
+            "PDGDatabase": ["alpha"],            # derived default
+        }
+
     def test_pascalcase_class_names_normalised_to_mcp_form(self, tmp_path):
         """``toolkit.yaml``'s ``tools[].name`` carries the BaseTool subclass
         name (PascalCase, often ending in ``Tool``). The toolkit host
-        registers them via ``MCPServer(use_display_names=False)`` ->
-        ``BaseTool.get_name() = cls.__name__.removesuffix("Tool").lower()``,
-        so MCP advertises ``inspiresearch`` for ``InspireSearchTool``.
+        registers each instance under ``<ClassName>``-with-``Tool``-
+        suffix-stripped (PascalCase preserved), so MCP advertises
+        ``InspireSearch`` for ``InspireSearchTool``.
 
         ``name_to_bundles`` MUST be keyed by the same MCP-advertised form
         — the orchestrator's per-tool filter loop iterates the MCP names
-        and looks each one up. Keying by the raw PascalCase name made
-        every lookup miss, ``tool_bundles`` came back ``[]``, and both
-        the install-scope gate and the config-gate were no-op'd —
-        producing the user-visible "30 tools surfaced after a 2-bundle
-        subset install" bug.
+        and looks each one up. Keying by the raw PascalCase ``Tool``-
+        suffixed name (or by the old lowercased blob form) would make
+        every lookup miss and both gates would no-op.
         """
         disc = _make_toolkit(
             tmp_path,
@@ -166,35 +187,36 @@ class TestReadToolBundlesAndMembership:
             ],
         )
         _, mapping = _read_bundles_and_membership(disc.path)
-        # Every key is the MCP-advertised form, not the PascalCase.
+        # Every key is the MCP-advertised form (PascalCase preserved,
+        # ``Tool`` suffix stripped when present).
         assert mapping == {
-            "inspiresearch": ["alpha"],
-            "pdgdatabase": ["alpha"],
-            "lhetojsonl": ["alpha", "beta"],
-            "metricprefixconverter": ["beta"],
+            "InspireSearch": ["alpha"],
+            "PDGDatabase": ["alpha"],
+            "LHEToJSONL": ["alpha", "beta"],
+            "MetricPrefixConverter": ["beta"],
         }
 
 
 class TestToolYamlNameToMcpName:
     """``_tool_yaml_name_to_mcp_name`` — the toolkit.yaml → MCP-wire-name
-    transformation. Mirrors orchestral's ``BaseTool.get_name()``."""
+    transformation. Strips a trailing ``Tool`` suffix; keeps PascalCase."""
 
-    def test_strips_tool_suffix_and_lowercases(self):
+    def test_strips_tool_suffix_keeps_pascalcase(self):
         from toolbase.serve.orchestrator import _tool_yaml_name_to_mcp_name
-        assert _tool_yaml_name_to_mcp_name("InspireSearchTool") == "inspiresearch"
-        assert _tool_yaml_name_to_mcp_name("PDGDatabaseTool") == "pdgdatabase"
+        assert _tool_yaml_name_to_mcp_name("InspireSearchTool") == "InspireSearch"
+        assert _tool_yaml_name_to_mcp_name("PDGDatabaseTool") == "PDGDatabase"
 
-    def test_classes_without_tool_suffix_pass_through_lowered(self):
+    def test_classes_without_tool_suffix_pass_through_unchanged(self):
         from toolbase.serve.orchestrator import _tool_yaml_name_to_mcp_name
-        assert _tool_yaml_name_to_mcp_name("MetricPrefixConverter") == "metricprefixconverter"
-        assert _tool_yaml_name_to_mcp_name("NaturalUnitsConverter") == "naturalunitsconverter"
+        assert _tool_yaml_name_to_mcp_name("MetricPrefixConverter") == "MetricPrefixConverter"
+        assert _tool_yaml_name_to_mcp_name("NaturalUnitsConverter") == "NaturalUnitsConverter"
 
-    def test_acronyms_stay_squished(self):
-        """No underscore insertion — ``LHEToJSONLTool`` becomes
-        ``lhetojsonl``, NOT ``lhe_to_json_l``. Matches orchestral's
-        ``get_name`` verbatim; do not improve."""
+    def test_acronyms_preserved(self):
+        """``LHEToJSONLTool`` becomes ``LHEToJSONL`` — case-preserving,
+        suffix-stripping. The host's ``_mcp_display_name`` default uses
+        the same transformation."""
         from toolbase.serve.orchestrator import _tool_yaml_name_to_mcp_name
-        assert _tool_yaml_name_to_mcp_name("LHEToJSONLTool") == "lhetojsonl"
+        assert _tool_yaml_name_to_mcp_name("LHEToJSONLTool") == "LHEToJSONL"
 
 
 # ────────────────────────────────────────────────────────────────────
