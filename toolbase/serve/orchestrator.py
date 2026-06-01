@@ -480,6 +480,20 @@ def _read_bundles_and_membership(
         if cleaned_block:
             bundles_block = cleaned_block
 
+    # Tool names in toolkit.yaml are the BaseTool subclass names
+    # (PascalCase, e.g. ``InspireSearchTool``). The toolkit host calls
+    # ``orchestral.mcp.MCPServer(..., use_display_names=False)``, which
+    # registers each tool under ``BaseTool.get_name()`` —
+    # ``cls.__name__.removesuffix("Tool").lower()``. The orchestrator's
+    # per-tool filter loop iterates ``spawn.client.get_tool_definitions()``
+    # and looks each name up in this dict; if we keyed by the raw
+    # PascalCase name, every lookup would miss, ``tool_bundles`` would
+    # come back ``[]``, and ``tool_is_served`` would silently skip both
+    # the install-scope gate (``tool_bundles`` empty short-circuits it)
+    # and the config-gate (same), so every host-loaded tool would
+    # surface regardless of installed-bundle subset or missing-config
+    # bundle drops. Normalise here so the keys match what MCP actually
+    # advertises.
     name_to_bundles: Dict[str, List[str]] = {}
     tools = data.get("tools") if isinstance(data, dict) else None
     if isinstance(tools, list):
@@ -489,17 +503,39 @@ def _read_bundles_and_membership(
             tool_name = entry.get("name")
             if not isinstance(tool_name, str):
                 continue
+            mcp_name = _tool_yaml_name_to_mcp_name(tool_name)
             bundle = entry.get("bundle")
             if isinstance(bundle, str) and bundle:
-                name_to_bundles[tool_name] = [bundle]
+                name_to_bundles[mcp_name] = [bundle]
             elif isinstance(bundle, list):
-                name_to_bundles[tool_name] = [
+                name_to_bundles[mcp_name] = [
                     b for b in bundle if isinstance(b, str) and b
                 ]
             else:
-                name_to_bundles[tool_name] = []
+                name_to_bundles[mcp_name] = []
 
     return bundles_block, name_to_bundles
+
+
+def _tool_yaml_name_to_mcp_name(class_name: str) -> str:
+    """Convert a toolkit.yaml ``tools[].name`` value to the name the
+    host-side ``MCPServer(use_display_names=False)`` registers it under.
+
+    Mirrors orchestral's ``BaseTool.get_name()`` classmethod —
+    ``cls.__name__.removesuffix("Tool").lower()``. The lookups in
+    ``ToolkitOrchestrator._connect_one`` iterate the MCP-advertised
+    names, so ``name_to_bundles`` has to be keyed the same way for the
+    install-scope and config-gating filters to fire at all.
+
+    Authors who override ``get_name()`` on a per-tool basis won't match
+    this transformation — that's a known limitation. The 0.1.0 toolkits
+    on the registry all use the default ``get_name`` so this is the
+    correct mapping for them; bespoke overrides would need separate
+    plumbing (toolkit.yaml could grow an explicit ``registered_name:``
+    field) but no toolkit on the registry needs that today.
+    """
+    bare = class_name.removesuffix("Tool")
+    return bare.lower()
 
 
 def _resolve_bundle_availability(
