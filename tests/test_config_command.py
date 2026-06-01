@@ -335,6 +335,48 @@ def test_config_init_warns_about_required_in_output(isolated: Path):
     assert "required" in r.output.lower() or "fill in" in r.output.lower()
 
 
+def test_config_init_scaffold_is_single_document(isolated: Path):
+    """``yaml.safe_dump(scalar)`` appends a ``\\n...`` document-end marker
+    that the older ``_yaml_repr`` only partially stripped. The corrupted
+    scaffold parsed as two YAML documents, so ``yaml.safe_load`` later
+    refused it with "expected a single document in the stream" — at
+    serve time the orchestrator dropped the toolkit with a "config
+    incomplete" message and Claude Code reported "Failed to reconnect:
+    -32000" with no obvious cause. Exercise every default-value branch
+    (string, path-template, integer, secret) and assert (1) no embedded
+    ``...`` survives in the scaffold and (2) it round-trips through
+    ``yaml.safe_load``."""
+    import yaml
+    _install_synthetic(isolated, config_block=[
+        {"name": "base_directory", "type": "path", "required": True,
+         "default": "${CWD}", "description": "workdir template default"},
+        {"name": "host", "type": "string", "default": "localhost"},
+        {"name": "port", "type": "integer", "default": 8080},
+        {"name": "api_key", "type": "secret", "default": "your-key-here"},
+        {"name": "verbose", "type": "boolean", "default": False},
+    ])
+    r = CliRunner().invoke(cli.main, ["config", "init", "demo", "--user"])
+    assert r.exit_code == 0, r.output
+
+    body = (isolated / "config" / "demo.yaml").read_text()
+    # No line consists solely of the YAML document-end marker. Even one
+    # such line splits the file into multiple documents and breaks
+    # safe_load.
+    for i, line in enumerate(body.splitlines(), start=1):
+        assert line.strip() != "...", (
+            f"line {i} is a YAML document-end marker — scaffolded file "
+            f"is a multi-document stream:\n{body}"
+        )
+    # The whole file must safe_load (not safe_load_all) — i.e. parse as
+    # a single document mapping with every default populated.
+    loaded = yaml.safe_load(body)
+    assert loaded["base_directory"] == "${CWD}"
+    assert loaded["host"] == "localhost"
+    assert loaded["port"] == 8080
+    assert loaded["api_key"] == "your-key-here"
+    assert loaded["verbose"] is False
+
+
 # ── edit ────────────────────────────────────────────────────────────
 
 
