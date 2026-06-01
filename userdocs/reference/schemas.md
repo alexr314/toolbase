@@ -72,6 +72,10 @@ tools:
   - name: simplify
     function: tools.symbolic.simplify
     bundle: [basic, symbolic]        # list form: tool belongs to both bundles
+  - name: SolveEquationTool
+    module: tools.symbolic.solver
+    display_name: solve_equation     # optional — what the agent sees
+    bundle: symbolic
 
 setup_script: true           # optional — set when shipping a setup.py
 ```
@@ -81,3 +85,11 @@ A tool's `bundle` accepts either a single name (`bundle: basic`) or a list
 multi-bundle tool is served if any of its bundles is available. A bundle's
 `requires` keys must exist in `config`. `tb ingest` generates this `tools:`
 list from your code. See [Authoring](../authoring/overview.md).
+
+A tool's `display_name` is optional. When set, it overrides what the agent
+sees on the MCP wire (after the orchestrator's `<toolkit>__` prefix). When
+absent, the default is the Python class name with a trailing `Tool` suffix
+stripped (PascalCase preserved) — so `SolveEquationTool` advertises as
+`<toolkit>__SolveEquation`. Use `display_name` when the class name isn't
+agent-friendly; the orchestrator uses the same resolution for bundle
+filtering so the two layers always agree.
