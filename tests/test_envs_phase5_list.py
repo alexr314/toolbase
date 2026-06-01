@@ -429,6 +429,221 @@ class TestListVerboseSubsetAnnotation:
         assert "skipped" not in bridge_line
 
 
+class TestListVerboseInstallGatedCollapse:
+    """Above-threshold install-gated tools collapse to a summary line."""
+
+    def _build_kit_with_gated_tools(
+        self,
+        n_gated: int,
+        n_served: int = 2,
+        gated_bundle: str = "beta",
+    ) -> Path:
+        """Make a slot with one installed bundle and ``n_gated`` tools in
+        a separate uninstalled bundle. ``n_served`` tools live in the
+        installed bundle so the toolkit isn't empty."""
+        slot = _make_slot(
+            "kit", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+            bundles=["alpha"],
+        )
+        tools = [
+            {"name": f"alpha_t{i}", "module": f"tools.a{i}",
+             "description": f"alpha tool {i}", "bundle": "alpha"}
+            for i in range(n_served)
+        ]
+        tools += [
+            {"name": f"{gated_bundle}_t{i}", "module": f"tools.b{i}",
+             "description": f"{gated_bundle} tool {i}",
+             "bundle": gated_bundle}
+            for i in range(n_gated)
+        ]
+        _write_toolkit_yaml(
+            slot,
+            bundles={"alpha": {}, gated_bundle: {}},
+            tools=tools,
+        )
+        return slot
+
+    def test_below_threshold_renders_each_tool(self, fake_home):
+        """5 install-gated tools (below threshold of 6) still render per-tool
+        — the per-row info is useful when the count is small."""
+        self._build_kit_with_gated_tools(n_gated=5)
+        r = CliRunner().invoke(cli.main, ["list", "-v"])
+        assert r.exit_code == 0
+        # Each gated tool gets its own row with the skip annotation.
+        assert r.output.count("skipped: bundle beta not installed") == 5
+        # No collapse summary.
+        assert "in uninstalled bundle" not in r.output
+
+    def test_at_threshold_collapses(self, fake_home):
+        """6 install-gated tools (== threshold) collapse to a summary line."""
+        self._build_kit_with_gated_tools(n_gated=6)
+        r = CliRunner().invoke(cli.main, ["list", "-v"])
+        assert r.exit_code == 0
+        # Per-tool skip annotation gone.
+        assert "skipped:" not in r.output
+        # Summary line present with the count + the bundle.
+        assert "(+6 tools in uninstalled bundle: beta" in r.output
+        # Suggestion includes the install command template.
+        assert "tb install kit[<bundle>]" in r.output
+
+    def test_above_threshold_collapses(self, fake_home):
+        """Sanity: 20 install-gated tools also collapses."""
+        self._build_kit_with_gated_tools(n_gated=20)
+        r = CliRunner().invoke(cli.main, ["list", "-v"])
+        assert r.exit_code == 0
+        assert "(+20 tools in uninstalled bundle: beta" in r.output
+
+    def test_served_tools_still_render_individually(self, fake_home):
+        """Above-threshold collapse only affects install-gated tools —
+        installed tools keep their per-row rendering."""
+        self._build_kit_with_gated_tools(n_gated=10, n_served=3)
+        r = CliRunner().invoke(cli.main, ["list", "-v"])
+        assert r.exit_code == 0
+        for i in range(3):
+            assert f"alpha_t{i}" in r.output
+        # The gated bundle's tools should NOT show by name when collapsed.
+        assert "beta_t0" not in r.output
+        assert "beta_t9" not in r.output
+
+    def test_collapse_summary_lists_bundles_alphabetically(self, fake_home):
+        """When gated tools span several uninstalled bundles, the summary
+        lists them sorted, regardless of declaration / tool order."""
+        slot = _make_slot(
+            "kit", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+            bundles=["alpha"],
+        )
+        # Mix declaration order: zulu, foxtrot, charlie — all uninstalled.
+        # 6 tools total, split across the three bundles.
+        _write_toolkit_yaml(
+            slot,
+            bundles={"alpha": {}, "zulu": {}, "foxtrot": {}, "charlie": {}},
+            tools=[
+                {"name": "z1", "module": "tools.z1", "description": "z",
+                 "bundle": "zulu"},
+                {"name": "z2", "module": "tools.z2", "description": "z",
+                 "bundle": "zulu"},
+                {"name": "f1", "module": "tools.f1", "description": "f",
+                 "bundle": "foxtrot"},
+                {"name": "f2", "module": "tools.f2", "description": "f",
+                 "bundle": "foxtrot"},
+                {"name": "c1", "module": "tools.c1", "description": "c",
+                 "bundle": "charlie"},
+                {"name": "c2", "module": "tools.c2", "description": "c",
+                 "bundle": "charlie"},
+            ],
+        )
+        r = CliRunner().invoke(cli.main, ["list", "-v"])
+        assert r.exit_code == 0
+        # Plural "bundles", alphabetically sorted.
+        assert "uninstalled bundles: charlie, foxtrot, zulu" in r.output
+
+    def test_multi_bundle_tool_contributes_each_absent_bundle_to_summary(
+        self, fake_home,
+    ):
+        """A multi-bundle tool whose bundles are ALL uninstalled contributes
+        every absent bundle to the summary list — so the user sees every
+        bundle they could install to bring it back."""
+        slot = _make_slot(
+            "kit", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+            bundles=["alpha"],
+        )
+        # 6 single-bundle gated tools + 1 multi-bundle gated tool spanning
+        # two other bundles. Total = 7 gated → collapse triggers.
+        tools = [
+            {"name": f"b_t{i}", "module": f"tools.b{i}",
+             "description": "b", "bundle": "beta"}
+            for i in range(6)
+        ]
+        tools.append({
+            "name": "bridge", "module": "tools.bridge",
+            "description": "spans gamma + delta",
+            "bundle": ["gamma", "delta"],
+        })
+        _write_toolkit_yaml(
+            slot,
+            bundles={"alpha": {}, "beta": {}, "gamma": {}, "delta": {}},
+            tools=tools,
+        )
+        r = CliRunner().invoke(cli.main, ["list", "-v"])
+        assert r.exit_code == 0
+        # Bridge contributes both gamma and delta to the absent-bundle set.
+        assert "uninstalled bundles: beta, delta, gamma" in r.output
+
+    def test_config_gated_tools_not_collapsed(self, fake_home):
+        """Tools whose bundles are CONFIG-gated (require a config key the
+        user hasn't set) stay inline — they're one ``tb config set`` away,
+        not a reinstall. Only install-gated tools are collapse candidates."""
+        slot = _make_slot(
+            "kit", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+            bundles=["alpha", "needsconfig"],
+        )
+        # ``needsconfig`` bundle requires a config key the user hasn't set
+        # — it's installed (deps are in venv) but not available at serve
+        # time. Tools in it should render with (needs config: ...), NOT
+        # collapsed.
+        import yaml as pyyaml
+        payload = {
+            "name": "kit", "version": "0.1.0", "description": "x",
+            "author": "x", "license": "MIT", "category": "general",
+            "python_version": "3.12", "keywords": [],
+            "config": [
+                {"name": "api_key", "type": "string", "required": False},
+            ],
+            "bundles": {
+                "alpha": {},
+                "needsconfig": {"requires": ["api_key"]},
+            },
+            "tools": [
+                {"name": "a_t", "module": "tools.a",
+                 "description": "alpha", "bundle": "alpha"},
+            ] + [
+                {"name": f"n_t{i}", "module": f"tools.n{i}",
+                 "description": "needs config", "bundle": "needsconfig"}
+                for i in range(8)
+            ],
+        }
+        (slot / "toolkit.yaml").write_text(pyyaml.safe_dump(payload))
+        r = CliRunner().invoke(cli.main, ["list", "-v"])
+        assert r.exit_code == 0
+        # 8 config-gated tools but no collapse — each gets a (needs config) row.
+        assert r.output.count("needs config: api_key") == 8
+        # And NO install-gated summary.
+        assert "in uninstalled bundle" not in r.output
+
+    def test_full_install_no_collapse_even_with_many_tools(self, fake_home):
+        """A full install (no ``bundles`` in meta) has no install-gating
+        at all, so collapse never triggers regardless of tool count."""
+        slot = _make_slot(
+            "kit", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+            # bundles=None — full install
+        )
+        _write_toolkit_yaml(
+            slot,
+            bundles={"alpha": {}, "beta": {}},
+            tools=[
+                {"name": f"b_t{i}", "module": f"tools.b{i}",
+                 "description": "b", "bundle": "beta"}
+                for i in range(20)
+            ],
+        )
+        r = CliRunner().invoke(cli.main, ["list", "-v"])
+        assert r.exit_code == 0
+        # Every tool gets a row; no summary line.
+        for i in range(20):
+            assert f"b_t{i}" in r.output
+        assert "in uninstalled bundle" not in r.output
+
+
 # ── pinned-version indicator ────────────────────────────────────────
 
 

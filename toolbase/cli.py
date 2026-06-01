@@ -3345,6 +3345,16 @@ _EDITABLE_SYMLINK_ENTRIES = (
     "README.md",
 )
 
+# Threshold at which ``tb list -v`` collapses install-gated tools into a
+# single summary line rather than rendering one row per skipped tool.
+# Hits when a many-bundle toolkit (e.g. heptapod with 50 tools across 8
+# bundles) is installed with a small subset: without collapse, ~45 of 50
+# rows are identical-shaped "skipped: bundle X not installed" entries
+# that drown the few tools actually served. Below this count the
+# per-tool view stays useful because each row carries different bundle
+# information; above it the noise dominates.
+_VERBOSE_INSTALL_GATED_COLLAPSE_THRESHOLD = 6
+
 # Cache-slot version sentinel for editable installs. Unparseable by
 # ``parse_version`` (so it sorts last in ``tb list``) and disjoint from
 # any real semver, so it can never collide with a registry version slot.
@@ -5059,8 +5069,28 @@ def _list_print_tools_verbose(name, resolved_profile) -> None:
     else:
         toolkit_active = False
 
+    # Install-gated tools (their bundle isn't in the install set) are
+    # collected and either rendered inline (small count) or collapsed
+    # into a single summary line (many). For a 50-tool toolkit installed
+    # with 2 bundles, the per-tool entries previously dominated the view
+    # and added no actionable information beyond "this bundle wasn't
+    # selected at install time." Config-gated tools stay inline because
+    # they're one ``tb config set`` away — meaningfully more actionable
+    # than reinstalling a bundle.
+    install_gated: List[Tuple[str, List[str]]] = []
     for tool in sorted(name_to_bundles):
         bundles = name_to_bundles[tool]
+        install_scope_excludes = (
+            bool(bundles)
+            and installed_set is not None
+            and not any(b in installed_set for b in bundles)
+        )
+        if install_scope_excludes:
+            install_gated.append((tool, bundles))
+            continue
+        # Inline render for tools that aren't install-gated. Config-
+        # gating annotation surfaces here for tools whose bundles are
+        # all dropped at config-evaluation time.
         served = toolkit_active and tool_is_served(
             tool, bundles, sel, availability, global_disabled,
             installed_bundles=installed_set,
@@ -5068,34 +5098,42 @@ def _list_print_tools_verbose(name, resolved_profile) -> None:
         mk = "[green]✓[/green]" if served else "[red]✗[/red]"
         btag = ""
         if bundles:
-            label = "bundle" if len(bundles) == 1 else "bundles"
-            btag = f" [dim][{label}: {', '.join(bundles)}][/dim]"
-        # Surface why a non-served tool was hidden. Priority order
-        # mirrors ``tool_is_served`` itself: install-scope wins over
-        # config-gating, because install-scope strips the tool's pip
-        # deps from the venv, so config-gating wouldn't matter anyway.
+            blabel = "bundle" if len(bundles) == 1 else "bundles"
+            btag = f" [dim][{blabel}: {', '.join(bundles)}][/dim]"
         gate = ""
-        if bundles:
-            install_scope_excludes = (
-                installed_set is not None
-                and not any(b in installed_set for b in bundles)
+        if bundles and all(b in availability.dropped_bundles for b in bundles):
+            missing_per_bundle = [
+                ", ".join(availability.dropped_bundles[b]) for b in bundles
+            ]
+            gate = (
+                f" [yellow](needs config: "
+                f"{'; '.join(missing_per_bundle)})[/yellow]"
             )
-            if install_scope_excludes:
+        console.print(f"    {mk} {tool}{btag}{gate}")
+
+    if install_gated:
+        if len(install_gated) >= _VERBOSE_INSTALL_GATED_COLLAPSE_THRESHOLD:
+            absent_bundles = sorted({
+                b for _, bundles in install_gated
+                for b in bundles if b not in installed_set
+            })
+            blabel = "bundles" if len(absent_bundles) != 1 else "bundle"
+            console.print(
+                f"    [dim](+{len(install_gated)} tools in uninstalled "
+                f"{blabel}: {', '.join(absent_bundles)} — add with "
+                f"`tb install {name}[<bundle>]`)[/dim]"
+            )
+        else:
+            for tool, bundles in install_gated:
                 absent = [b for b in bundles if b not in installed_set]
-                label = "bundle" if len(absent) == 1 else "bundles"
-                gate = (
-                    f" [yellow](skipped: {label} "
+                btag_label = "bundles" if len(bundles) > 1 else "bundle"
+                glabel = "bundle" if len(absent) == 1 else "bundles"
+                console.print(
+                    f"    [red]✗[/red] {tool}"
+                    f" [dim][{btag_label}: {', '.join(bundles)}][/dim]"
+                    f" [yellow](skipped: {glabel} "
                     f"{', '.join(absent)} not installed)[/yellow]"
                 )
-            elif all(b in availability.dropped_bundles for b in bundles):
-                missing_per_bundle = [
-                    ", ".join(availability.dropped_bundles[b]) for b in bundles
-                ]
-                gate = (
-                    f" [yellow](needs config: "
-                    f"{'; '.join(missing_per_bundle)})[/yellow]"
-                )
-        console.print(f"    {mk} {tool}{btag}{gate}")
 
 
 def _list_sorted_entries(entries):
