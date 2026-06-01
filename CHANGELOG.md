@@ -22,6 +22,7 @@ Serve/curation revamp. **Breaking** (v0, clean cutover — no compatibility alia
 - **Multi-bundle tool membership.** A tool's `bundle:` field now accepts either a single name or a list (`bundle: [a, b]`); a multi-bundle tool is served if **any** of its bundles is available and counts as in-profile if any of its bundles is in the profile's allowlist.
 - **Per-bundle dependencies.** A toolkit author can declare `deps: [pip-spec]` on each bundle alongside the existing `requires:` (config-key gate). The toolkit's `requirements.txt` stays the always-installed base; bundle `deps:` add on top when the user installs that bundle.
 - **Install-time bundle selection: `tb install <toolkit>[a,b]` (pip-extras style) and `--bundle a` (flag form).** Pip-installs only the selected bundles' `deps:` on top of `requirements.txt` rather than every bundle's deps. Re-installing with new bundles is **additive** (pip-like): pip-installs the new bundles' deps into the existing venv without rebuilding. `--rebuild` forces destructive reinstall. Cache metadata (`.install_meta.yaml`) and project manifest entries record the installed bundle set; serve filters tools whose bundles are entirely outside the installed set, with a one-line summary at startup per toolkit.
+- **Subset-install visibility in `tb list`.** Version rows now end with `[subset: a, b]` when only some bundles' deps are installed (`[subset: (base only)]` for an explicit empty subset). `--json` gains an `installed_bundles` field (`null` for a full install, list for a subset). `tb list -v` annotates per-tool why a tool is hidden when its bundle isn't in the install set: `(skipped: bundle X not installed)` — multi-bundle plural `(skipped: bundles a, b not installed)`. Install-scope wins over the existing config-gating annotation since install-scope strips the deps that config-gating would later check.
 
 ### Changed
 
@@ -32,6 +33,10 @@ Serve/curation revamp. **Breaking** (v0, clean cutover — no compatibility alia
 - **Per-tool failures during import / construction now skip just that tool**, emitting a structured `tool_import_skipped` log line to the per-toolkit log. A single misconfigured tool no longer takes down its sibling tools or the whole toolkit host.
 - **CLI startup is faster.** `tb --help` / `tb list` and similar no-network commands dropped from ~290 ms to ~50 ms warm by lazy-importing `requests`, `rich.syntax`/`pygments`, `rich.panel` / `table` / `progress`, and dropping a dead `Syntax` import. Heavy modules load only when commands that need them run.
 - `config_dir()` and `project_config_dir()` are pure path resolvers; they no longer `mkdir(parents=True, exist_ok=True)` as a side effect. Writers (`save_config` etc.) create parents lazily at write time, so a layered path lookup no longer leaves an empty `<project>/.toolbase/config/` dir behind that looks like a half-done install.
+
+### Fixed
+
+- **Partial-install cache slots no longer wedge subsequent `tb install` invocations.** A Ctrl-C during a long pip install (heavy bundle deps can take minutes) used to leave the cache slot with source files but no `.install_meta.yaml`. The next install with a bundle subset (`tb install foo[a,b]`) matched the "already installed with all bundles" branch, printed a misleading message about needing `--rebuild`, and exited 0 without doing anything. Two-part fix: (1) the fresh-install pipeline (source → env setup → meta write) is now wrapped in `try/finally` keyed on a success flag, so any interrupt or exception before meta-write removes the slot; (2) the collision check explicitly detects a missing `.install_meta.yaml` and treats it as a corrupted slot — auto-clean and proceed as fresh install rather than no-op.
 
 ### Removed
 

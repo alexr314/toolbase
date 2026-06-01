@@ -3565,6 +3565,7 @@ def _install_from_path(
 
     # Decide additive vs destructive vs fresh.
     from .envs.cache import (
+        INSTALL_META_FILE as _INSTALL_META_FILE,
         installed_bundles as _installed_bundles,
         update_install_meta_bundles as _update_meta_bundles,
     )
@@ -3574,6 +3575,19 @@ def _install_from_path(
         if editable:
             # For editable re-install, mirror the historical "rebuild"
             # behavior (it's the normal "I changed deps" path).
+            _remove_slot(slot)
+        elif not (slot / _INSTALL_META_FILE).exists():
+            # Corrupted / half-built slot from a prior interrupted install.
+            # Without this clean-up the next two branches see
+            # ``current_installed is None`` (the legacy "full install"
+            # sentinel) and silently no-op the user's subset request.
+            # Commit A prevents new partial slots from forming; this guards
+            # against any left over from before that fix.
+            console.print(
+                f"[yellow]Cache slot at {slot} is missing "
+                f"{_INSTALL_META_FILE} (likely an interrupted prior "
+                "install). Removing and reinstalling fresh.[/yellow]"
+            )
             _remove_slot(slot)
         else:
             current_installed = _installed_bundles(slot)
@@ -3697,79 +3711,96 @@ def _install_from_path(
         console.print()
         return name
 
-    # Materialize the source into the slot.
-    if editable:
-        _symlink_source_into_slot(source_path, slot)
-        env_source_dir = slot  # symlinks resolve to live source
-    else:
-        # Non-editable path install: copy the tree so the slot is a
-        # frozen snapshot, exactly like a registry tarball extract.
-        for item in source_path.iterdir():
-            if item.name in (".venv", ".git", "__pycache__"):
-                continue
-            dest = slot / item.name
-            if item.is_dir():
-                shutil.copytree(item, dest, ignore=shutil.ignore_patterns(
-                    "__pycache__", "*.pyc", ".git",
-                ))
-            else:
-                shutil.copy2(item, dest)
-        env_source_dir = slot
-
-    # Compute the bundles + extra pip-specs for this fresh install.
-    # ``requested_bundles is None`` → install every declared bundle
-    # (the historical "install everything" behavior). ``[]`` → base only.
-    bundles_to_install = (
-        requested_bundles if requested_bundles is not None
-        else list(declared)
-    )
-    extra_pip_specs = deps_for_bundles(config, bundles_to_install)
-
-    # Build the environment in the slot (venv lands at <slot>/.venv).
-    console.print()
-    python_path = None
-    env_name = None
+    # Fresh-install commit boundary. Any exception (including
+    # KeyboardInterrupt during a long pip install of heavy deps like
+    # pythia8mc) between this point and the meta-write below leaves a
+    # half-built slot whose missing .install_meta.yaml makes future
+    # `tb install` invocations mis-detect it as "already installed with
+    # all bundles" and silently no-op. Guard with try/finally so the
+    # slot is removed unless ``install_succeeded`` is flipped at the end.
+    install_succeeded = False
     try:
-        if env_type == "venv":
-            console.print("[bold blue]Setting up environment...[/bold blue]\n")
-            python_path = setup_venv_environment(
-                env_source_dir, console,
-                extra_pip_specs=extra_pip_specs or None,
-            )
-        elif env_type == "conda":
-            verify_conda_available()
-            console.print("[bold blue]Setting up environment...[/bold blue]\n")
-            env_name = setup_conda_environment(
-                env_source_dir, name, python_version, console,
-                extra_pip_specs=extra_pip_specs or None,
-            )
-    except Exception as e:
-        console.print(f"\n[red]✗ Environment setup failed: {e}[/red]")
-        _remove_slot(slot)
-        raise click.ClickException("Installation failed")
+        # Materialize the source into the slot.
+        if editable:
+            _symlink_source_into_slot(source_path, slot)
+            env_source_dir = slot  # symlinks resolve to live source
+        else:
+            # Non-editable path install: copy the tree so the slot is a
+            # frozen snapshot, exactly like a registry tarball extract.
+            for item in source_path.iterdir():
+                if item.name in (".venv", ".git", "__pycache__"):
+                    continue
+                dest = slot / item.name
+                if item.is_dir():
+                    shutil.copytree(item, dest, ignore=shutil.ignore_patterns(
+                        "__pycache__", "*.pyc", ".git",
+                    ))
+                else:
+                    shutil.copy2(item, dest)
+            env_source_dir = slot
 
-    # Write metadata. For editable, record editable: true + source_path
-    # so tb list can render the live-link indicator and serve can read
-    # the venv interpreter. Record the installed bundle set only when
-    # the user picked a subset (``requested_bundles is not None``);
-    # for a full install we leave ``bundles`` absent so the legacy
-    # "all bundles" semantic flows through.
-    _write_path_install_meta(
-        slot,
-        name=name,
-        version=version,
-        env_type=env_type,
-        python_version=python_version,
-        python_path=python_path,
-        env_name=env_name,
-        config=config,
-        editable=editable,
-        source_path=source_path if editable else None,
-        bundles=(
-            sorted(set(bundles_to_install))
-            if requested_bundles is not None else None
-        ),
-    )
+        # Compute the bundles + extra pip-specs for this fresh install.
+        # ``requested_bundles is None`` → install every declared bundle
+        # (the historical "install everything" behavior). ``[]`` → base only.
+        bundles_to_install = (
+            requested_bundles if requested_bundles is not None
+            else list(declared)
+        )
+        extra_pip_specs = deps_for_bundles(config, bundles_to_install)
+
+        # Build the environment in the slot (venv lands at <slot>/.venv).
+        console.print()
+        python_path = None
+        env_name = None
+        try:
+            if env_type == "venv":
+                console.print("[bold blue]Setting up environment...[/bold blue]\n")
+                python_path = setup_venv_environment(
+                    env_source_dir, console,
+                    extra_pip_specs=extra_pip_specs or None,
+                )
+            elif env_type == "conda":
+                verify_conda_available()
+                console.print("[bold blue]Setting up environment...[/bold blue]\n")
+                env_name = setup_conda_environment(
+                    env_source_dir, name, python_version, console,
+                    extra_pip_specs=extra_pip_specs or None,
+                )
+        except Exception as e:
+            console.print(f"\n[red]✗ Environment setup failed: {e}[/red]")
+            raise click.ClickException("Installation failed")
+
+        # Write metadata. For editable, record editable: true + source_path
+        # so tb list can render the live-link indicator and serve can read
+        # the venv interpreter. Record the installed bundle set only when
+        # the user picked a subset (``requested_bundles is not None``);
+        # for a full install we leave ``bundles`` absent so the legacy
+        # "all bundles" semantic flows through.
+        _write_path_install_meta(
+            slot,
+            name=name,
+            version=version,
+            env_type=env_type,
+            python_version=python_version,
+            python_path=python_path,
+            env_name=env_name,
+            config=config,
+            editable=editable,
+            source_path=source_path if editable else None,
+            bundles=(
+                sorted(set(bundles_to_install))
+                if requested_bundles is not None else None
+            ),
+        )
+        # Meta is committed; the slot is now a valid install.
+        install_succeeded = True
+    finally:
+        if not install_succeeded and (slot.exists() or slot.is_symlink()):
+            console.print(
+                "[yellow]Cleaning up partial install slot at "
+                f"{slot}[/yellow]"
+            )
+            _remove_slot(slot)
 
     console.print(
         f"\n[bold green]✓ Successfully installed {name} "
@@ -4853,6 +4884,11 @@ def list_cmd(as_json, verbose):
                 "size_bytes": e.disk_size_bytes,
                 "pinned_in_project": pin_map.get(e.name) == e.version,
                 "active": e.name in active_set,
+                # ``installed_bundles``: ``null`` for a full install
+                # (every declared bundle), or a list (possibly empty) for
+                # a subset install. Matches the raw ``bundles`` field in
+                # ``.install_meta.yaml``.
+                "installed_bundles": (e.install_meta or {}).get("bundles"),
             }
             for e in _list_sorted_entries(entries)
         ]
@@ -4902,6 +4938,23 @@ def list_cmd(as_json, verbose):
             # obvious the slot is a live link, not a frozen install.
             meta = entry.install_meta or {}
             editable_src = meta.get("source_path") if meta.get("editable") else None
+            # Subset install indicator. ``bundles`` is absent on a full
+            # install (legacy/everything-installed semantic) and a list —
+            # possibly empty — on a subset install. Without this hint the
+            # user has no way to tell from `tb list` that their slot only
+            # has some bundles' deps; the rest are silently skipped at
+            # serve time.
+            installed_bundles = meta.get("bundles")
+            if installed_bundles is not None:
+                if installed_bundles:
+                    subset_tag = (
+                        f"  [dim]\\[subset: "
+                        f"{', '.join(installed_bundles)}][/dim]"
+                    )
+                else:
+                    subset_tag = "  [dim]\\[subset: (base only)][/dim]"
+            else:
+                subset_tag = ""
             # Version column padded a little so the parenthetical
             # aligns across rows that have / don't have the pin marker.
             ver_cell = f"{entry.version}{marker}"
@@ -4909,11 +4962,13 @@ def list_cmd(as_json, verbose):
                 console.print(
                     f"  - {ver_cell}   "
                     f"[dim](-> {editable_src}, used {last_used}, {size})[/dim]"
+                    f"{subset_tag}"
                 )
             else:
                 console.print(
                     f"  - {ver_cell}   "
                     f"[dim](used {last_used}, {size})[/dim]"
+                    f"{subset_tag}"
                 )
         if verbose:
             _list_print_tools_verbose(name, resolved_profile)
@@ -4962,6 +5017,7 @@ def _list_print_tools_verbose(name, resolved_profile) -> None:
     """
     from .serve.orchestrator import discover_toolkits, _resolve_bundle_availability
     from .serve.profiles import tool_is_served
+    from .envs.cache import installed_bundles as _installed_bundles
 
     disc = next(
         (d for d in discover_toolkits()
@@ -4977,6 +5033,16 @@ def _list_print_tools_verbose(name, resolved_profile) -> None:
             "is available at serve time)[/dim]"
         )
         return
+
+    # Subset-install scope. ``None`` (legacy / full install) means
+    # nothing is gated by install scope here; a set means tools whose
+    # bundles don't intersect it can't be served because their pip
+    # deps aren't in the cache venv. Matches the orchestrator path
+    # (orchestrator.py:1032) so the two views never disagree.
+    installed_list = _installed_bundles(disc.path)
+    installed_set = (
+        set(installed_list) if installed_list is not None else None
+    )
 
     sel = None
     global_disabled: set = set()
@@ -4997,21 +5063,38 @@ def _list_print_tools_verbose(name, resolved_profile) -> None:
         bundles = name_to_bundles[tool]
         served = toolkit_active and tool_is_served(
             tool, bundles, sel, availability, global_disabled,
+            installed_bundles=installed_set,
         )
         mk = "[green]✓[/green]" if served else "[red]✗[/red]"
         btag = ""
         if bundles:
             label = "bundle" if len(bundles) == 1 else "bundles"
             btag = f" [dim][{label}: {', '.join(bundles)}][/dim]"
-        # Surface the first dropped bundle's missing-config keys, if any.
-        # (Tools in multiple bundles are still served via the others; the
-        # gate annotation here only kicks in when ALL bundles are dropped.)
+        # Surface why a non-served tool was hidden. Priority order
+        # mirrors ``tool_is_served`` itself: install-scope wins over
+        # config-gating, because install-scope strips the tool's pip
+        # deps from the venv, so config-gating wouldn't matter anyway.
         gate = ""
-        if bundles and all(b in availability.dropped_bundles for b in bundles):
-            missing_per_bundle = [
-                ", ".join(availability.dropped_bundles[b]) for b in bundles
-            ]
-            gate = f" [yellow](needs config: {'; '.join(missing_per_bundle)})[/yellow]"
+        if bundles:
+            install_scope_excludes = (
+                installed_set is not None
+                and not any(b in installed_set for b in bundles)
+            )
+            if install_scope_excludes:
+                absent = [b for b in bundles if b not in installed_set]
+                label = "bundle" if len(absent) == 1 else "bundles"
+                gate = (
+                    f" [yellow](skipped: {label} "
+                    f"{', '.join(absent)} not installed)[/yellow]"
+                )
+            elif all(b in availability.dropped_bundles for b in bundles):
+                missing_per_bundle = [
+                    ", ".join(availability.dropped_bundles[b]) for b in bundles
+                ]
+                gate = (
+                    f" [yellow](needs config: "
+                    f"{'; '.join(missing_per_bundle)})[/yellow]"
+                )
         console.print(f"    {mk} {tool}{btag}{gate}")
 
 

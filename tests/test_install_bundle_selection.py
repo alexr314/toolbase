@@ -534,3 +534,122 @@ def test_install_records_bundles_in_manifest(fake_env, tmp_path: Path):
     entry = m.find("demo")
     assert entry is not None
     assert entry.bundles == ["alpha"]
+
+
+# ────────────────────────────────────────────────────────────────────
+# Interrupt safety: half-built slots get cleaned up
+# ────────────────────────────────────────────────────────────────────
+
+
+def test_install_keyboardinterrupt_cleans_partial_slot(tmp_path: Path, monkeypatch):
+    """A Ctrl-C during pip install (simulated via KeyboardInterrupt from
+    ``setup_venv_environment``) must remove the partially-built cache slot.
+
+    Otherwise the next ``tb install`` finds a slot with no
+    ``.install_meta.yaml``, mis-detects it as "already installed with all
+    bundles", and silently no-ops on the user's subset request.
+    """
+    from toolbase import config as cfg_mod
+    from toolbase import skills as skills_mod
+    fake_home = tmp_path / "_home" / ".toolbase"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_home)
+    monkeypatch.setattr(skills_mod, "CLAUDE_SKILLS_DIR", tmp_path / "claude-skills")
+
+    def fake_setup_venv_interrupted(*args, **kwargs):
+        raise KeyboardInterrupt()
+    monkeypatch.setattr(cli, "setup_venv_environment", fake_setup_venv_interrupted)
+
+    src = _make_source_toolkit(
+        tmp_path / "src",
+        bundles_block={"alpha": {"deps": ["dep-a"]}},
+        tool_bundles={"ta": "alpha"},
+    )
+    slot = fake_home / "cache" / "demo" / "0.1.0"
+
+    # Click converts KeyboardInterrupt to exit-code-1 + "Aborted!" output;
+    # the contract we care about is that the finally block ran and the slot
+    # is gone before the abort.
+    r = CliRunner().invoke(
+        cli.main, ["install", f"{src}[alpha]", "--no-input"],
+        catch_exceptions=False,
+    )
+    assert r.exit_code != 0
+    assert "Aborted" in r.output
+    assert not slot.exists(), (
+        "partial cache slot survived a KeyboardInterrupt — future installs "
+        "would mis-detect it as a complete install"
+    )
+
+
+def test_install_recovers_from_corrupted_slot(fake_env, tmp_path: Path):
+    """A pre-existing cache slot with no ``.install_meta.yaml`` is
+    recognised as half-built (interrupted prior install) and replaced
+    rather than silently no-op'd as "already installed with all bundles".
+
+    Without this guard, the user-facing symptom is `tb install foo[a,b]`
+    appearing to succeed but actually doing nothing — and serve-time
+    filtering still surfaces every tool because `installed_bundles()`
+    returns ``None`` for a missing meta, equivalent to "all bundles
+    installed".
+    """
+    src = _make_source_toolkit(
+        tmp_path / "src",
+        bundles_block={
+            "alpha": {"deps": ["dep-a"]},
+            "beta": {"deps": ["dep-b"]},
+        },
+        tool_bundles={"ta": "alpha", "tb": "beta"},
+    )
+
+    # Fabricate a half-built slot the way a Ctrl-C'd prior install would
+    # leave it: source files present, no .install_meta.yaml, no real venv.
+    slot = fake_env["home"] / "cache" / "demo" / "0.1.0"
+    slot.mkdir(parents=True)
+    (slot / "toolkit.yaml").write_text((src / "toolkit.yaml").read_text())
+    (slot / "marker.txt").write_text("leftover-from-broken-install")
+    assert not (slot / ".install_meta.yaml").exists()
+
+    r = CliRunner().invoke(
+        cli.main, ["install", f"{src}[alpha]", "--no-input"],
+        catch_exceptions=False,
+    )
+    assert r.exit_code == 0, r.output
+    # User sees a clear explanation of what happened.
+    assert "missing" in r.output.lower() and "install_meta" in r.output.lower()
+
+    # The leftover marker is gone — the slot was rebuilt from scratch.
+    assert not (slot / "marker.txt").exists()
+    # The new install has the expected scope.
+    from toolbase.envs.cache import installed_bundles
+    assert installed_bundles(slot) == ["alpha"]
+    # And bundle filtering at install-time worked — only alpha's deps
+    # were pip-installed.
+    assert fake_env["captured"]["extra_pip_specs_calls"] == [["dep-a"]]
+
+
+def test_install_exception_cleans_partial_slot(tmp_path: Path, monkeypatch):
+    """An ordinary exception during env setup also leaves no slot behind."""
+    from toolbase import config as cfg_mod
+    from toolbase import skills as skills_mod
+    fake_home = tmp_path / "_home" / ".toolbase"
+    fake_home.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(cfg_mod, "CONFIG_DIR", fake_home)
+    monkeypatch.setattr(skills_mod, "CLAUDE_SKILLS_DIR", tmp_path / "claude-skills")
+
+    def fake_setup_venv_failing(*args, **kwargs):
+        raise RuntimeError("simulated pip failure")
+    monkeypatch.setattr(cli, "setup_venv_environment", fake_setup_venv_failing)
+
+    src = _make_source_toolkit(
+        tmp_path / "src",
+        bundles_block={"alpha": {"deps": ["dep-a"]}},
+        tool_bundles={"ta": "alpha"},
+    )
+    slot = fake_home / "cache" / "demo" / "0.1.0"
+    r = CliRunner().invoke(
+        cli.main, ["install", f"{src}[alpha]", "--no-input"],
+        catch_exceptions=False,
+    )
+    assert r.exit_code != 0
+    assert not slot.exists()

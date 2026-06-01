@@ -53,16 +53,26 @@ def _make_slot(
     python_version: str = "3.12",
     last_used: datetime | None = None,
     size_bytes: int | None = None,
+    bundles: list[str] | None = None,
 ) -> Path:
-    """Create a synthetic cache slot with optional .last_used and .disk_size."""
+    """Create a synthetic cache slot with optional .last_used and .disk_size.
+
+    ``bundles=None`` (default) writes no ``bundles`` field — the legacy
+    "full install" semantic. ``bundles=[]`` writes an explicit empty list
+    (base-only install). ``bundles=[...]`` writes a subset install.
+    """
     slot = cache_dir(name, version)
     slot.mkdir(parents=True, exist_ok=True)
+    extras: dict = {}
+    if bundles is not None:
+        extras["bundles"] = list(bundles)
     write_install_meta(
         slot,
         name=name,
         version=version,
         install_method=install_method,
         python_version=python_version,
+        extras=extras or None,
     )
     # Some legacy_meta so the slot is recognised even if install_meta
     # doesn't carry every field the rendering uses.
@@ -239,6 +249,185 @@ class TestListTreeRendering:
         result = runner.invoke(cli.main, ["list"])
         assert "—" in result.output
 
+    def test_subset_install_annotated(self, fake_home):
+        """A version row for a subset install ends with `[subset: a, b]`
+        so the user can tell from `tb list` that not all bundles' deps
+        are installed."""
+        _make_slot(
+            "toolkit-a", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+            bundles=["alpha", "beta"],
+        )
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["list"])
+        assert result.exit_code == 0, result.output
+        assert "[subset: alpha, beta]" in result.output
+
+    def test_full_install_no_subset_annotation(self, fake_home):
+        """No ``bundles`` in meta → no subset annotation (legacy fully-
+        installed semantic stays visually unchanged)."""
+        _make_slot(
+            "toolkit-a", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+            # bundles=None — explicit "full install"
+        )
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["list"])
+        assert result.exit_code == 0
+        assert "subset" not in result.output
+
+    def test_base_only_install_annotated(self, fake_home):
+        """``bundles: []`` is a deliberate base-only install — annotated
+        as ``[subset: (base only)]`` so it's distinguishable from a full
+        install."""
+        _make_slot(
+            "toolkit-a", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+            bundles=[],
+        )
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["list"])
+        assert result.exit_code == 0
+        assert "[subset: (base only)]" in result.output
+
+
+# ── -v per-tool subset annotation ──────────────────────────────────
+
+
+def _write_toolkit_yaml(
+    slot: Path,
+    bundles: dict[str, dict],
+    tools: list[dict],
+) -> None:
+    """Drop a minimal toolkit.yaml into a slot so ``discover_toolkits()``
+    and ``_resolve_bundle_availability()`` can read it for the -v view."""
+    import yaml as pyyaml
+    payload = {
+        "name": slot.parent.name,
+        "version": slot.name,
+        "description": "fixture toolkit",
+        "author": "fixture",
+        "license": "MIT",
+        "category": "general",
+        "python_version": "3.12",
+        "keywords": [],
+        "config": [],
+        "bundles": bundles,
+        "tools": tools,
+    }
+    (slot / "toolkit.yaml").write_text(pyyaml.safe_dump(payload))
+
+
+class TestListVerboseSubsetAnnotation:
+    """``tb list -v`` per-tool annotations for subset-installed toolkits."""
+
+    def test_tool_in_uninstalled_bundle_marked_skipped(self, fake_home):
+        """A tool whose bundle isn't in the install set should render
+        a ``(skipped: bundle X not installed)`` annotation so the user
+        sees why it isn't served."""
+        slot = _make_slot(
+            "kit", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+            bundles=["alpha"],
+        )
+        _write_toolkit_yaml(
+            slot,
+            bundles={"alpha": {}, "beta": {}},
+            tools=[
+                {"name": "ta", "module": "tools.ta",
+                 "description": "alpha tool", "bundle": "alpha"},
+                {"name": "tb", "module": "tools.tb",
+                 "description": "beta tool", "bundle": "beta"},
+            ],
+        )
+        runner = CliRunner()
+        r = runner.invoke(cli.main, ["list", "-v"])
+        assert r.exit_code == 0, r.output
+        # The bundle the user installed: no scope annotation.
+        ta_line = next(l for l in r.output.splitlines() if " ta " in l)
+        assert "skipped" not in ta_line
+        # The bundle they didn't: scope annotation cites the bundle.
+        tb_line = next(l for l in r.output.splitlines() if " tb " in l)
+        assert "skipped: bundle beta not installed" in tb_line
+
+    def test_full_install_no_per_tool_scope_annotation(self, fake_home):
+        """Without ``bundles`` in the meta (full install) no per-tool
+        scope annotation appears — the existing config-gating annotation
+        is unaffected."""
+        slot = _make_slot(
+            "kit", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+            # bundles=None — full install
+        )
+        _write_toolkit_yaml(
+            slot,
+            bundles={"alpha": {}, "beta": {}},
+            tools=[
+                {"name": "ta", "module": "tools.ta",
+                 "description": "alpha tool", "bundle": "alpha"},
+                {"name": "tb", "module": "tools.tb",
+                 "description": "beta tool", "bundle": "beta"},
+            ],
+        )
+        runner = CliRunner()
+        r = runner.invoke(cli.main, ["list", "-v"])
+        assert r.exit_code == 0
+        assert "skipped" not in r.output
+        assert "not installed" not in r.output
+
+    def test_multi_bundle_tool_lists_all_absent_bundles(self, fake_home):
+        """When a multi-bundle tool's bundles are all uninstalled, the
+        annotation lists them: ``(skipped: bundles a, b not installed)``."""
+        slot = _make_slot(
+            "kit", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+            bundles=["gamma"],
+        )
+        _write_toolkit_yaml(
+            slot,
+            bundles={"alpha": {}, "beta": {}, "gamma": {}},
+            tools=[
+                {"name": "bridge", "module": "tools.bridge",
+                 "description": "spans alpha + beta",
+                 "bundle": ["alpha", "beta"]},
+            ],
+        )
+        runner = CliRunner()
+        r = runner.invoke(cli.main, ["list", "-v"])
+        assert r.exit_code == 0
+        assert "skipped: bundles alpha, beta not installed" in r.output
+
+    def test_multi_bundle_tool_with_one_installed_bundle_is_kept(self, fake_home):
+        """A multi-bundle tool stays served (no scope annotation) when
+        at least one of its bundles is in the install set, since pip-
+        installing one bundle's deps was enough to satisfy it."""
+        slot = _make_slot(
+            "kit", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+            bundles=["alpha"],
+        )
+        _write_toolkit_yaml(
+            slot,
+            bundles={"alpha": {}, "beta": {}},
+            tools=[
+                {"name": "bridge", "module": "tools.bridge",
+                 "description": "spans alpha + beta",
+                 "bundle": ["alpha", "beta"]},
+            ],
+        )
+        runner = CliRunner()
+        r = runner.invoke(cli.main, ["list", "-v"])
+        assert r.exit_code == 0
+        bridge_line = next(l for l in r.output.splitlines() if "bridge" in l)
+        assert "skipped" not in bridge_line
+
 
 # ── pinned-version indicator ────────────────────────────────────────
 
@@ -365,6 +554,40 @@ class TestJsonOutput:
         payload = json.loads(result.output)
         assert payload[0]["last_used_iso"] is None
         assert payload[0]["size_bytes"] is None
+
+    def test_json_full_install_omits_or_nulls_installed_bundles(self, fake_home):
+        """A slot installed without ``bundles`` in its meta (the legacy
+        "all bundles" semantic) renders ``installed_bundles: null``."""
+        _make_slot("toolkit-a", "0.1.0", last_used=datetime.now())
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["list", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload[0]["installed_bundles"] is None
+
+    def test_json_subset_install_includes_bundle_list(self, fake_home):
+        _make_slot(
+            "toolkit-a", "0.1.0", last_used=datetime.now(),
+            bundles=["alpha", "beta"],
+        )
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["list", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload[0]["installed_bundles"] == ["alpha", "beta"]
+
+    def test_json_base_only_install_renders_empty_list(self, fake_home):
+        """``bundles: []`` (deliberate base-only install) is distinct from
+        ``bundles`` absent — ``installed_bundles`` is ``[]``, not ``null``."""
+        _make_slot(
+            "toolkit-a", "0.1.0", last_used=datetime.now(),
+            bundles=[],
+        )
+        runner = CliRunner()
+        result = runner.invoke(cli.main, ["list", "--json"])
+        assert result.exit_code == 0
+        payload = json.loads(result.output)
+        assert payload[0]["installed_bundles"] == []
 
     def test_json_sorted_deterministically(self, fake_home):
         _make_slot("zzz", "0.1.0", last_used=datetime.now())
