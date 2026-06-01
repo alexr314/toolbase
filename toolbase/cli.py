@@ -2266,16 +2266,28 @@ def _render_config_scaffold(toolkit_name: str, schema, source_path: Path) -> str
     NEEDS_VALUE = "<NEEDS VALUE>"
 
     def _yaml_repr(v):
-        # Inline YAML scalar suitable for `key: <value>`. yaml.safe_dump
-        # of a single scalar produces ``true\n`` / ``42\n`` / ``foo\n``
-        # so strip the trailing newline. Booleans must come before ints
-        # in the isinstance chain (True is also an int).
+        # Inline YAML scalar suitable for `key: <value>`. Booleans must
+        # come before ints in the isinstance chain (True is also an int).
+        # For everything else we round-trip through a single-entry
+        # mapping and return only the value side: ``yaml.safe_dump`` on
+        # a bare scalar appends a ``\n...`` document-end marker that the
+        # previous ``.strip()`` only partially removed (the trailing
+        # newline, not the marker itself), corrupting the scaffolded
+        # file into a multi-document stream that ``yaml.safe_load``
+        # later refuses with "expected a single document in the stream"
+        # — and at serve time the orchestrator drops the toolkit with a
+        # "config incomplete" message, the user sees Claude Code report
+        # "Failed to reconnect: -32000", and nothing actually works.
+        # Round-tripping ``{"k": v}`` yields ``"k: <value>\n"`` with no
+        # end marker.
         if v is None:
             return "null"
         if isinstance(v, bool):
             return "true" if v else "false"
         import yaml as _y
-        return _y.safe_dump(v, default_flow_style=True).strip()
+        dumped = _y.safe_dump({"k": v}, default_flow_style=False).rstrip()
+        # ``"k: <value>"`` — split off the key and return only the value.
+        return dumped.split(":", 1)[1].strip()
 
     lines: List[str] = []
     lines.append(f"# Toolkit config for `{toolkit_name}`.")
