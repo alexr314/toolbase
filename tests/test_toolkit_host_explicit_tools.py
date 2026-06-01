@@ -229,6 +229,54 @@ class TestImportExplicitTools:
         tools = _import_explicit_tools(spec, tmp_path)
         assert tools[0]._mcp_display_name == "SearchPapers"
 
+    def test_toolkit_yaml_display_name_overrides_class_derived_default(self, tmp_path):
+        """``display_name:`` on the toolkit.yaml entry pins the
+        agent-visible name regardless of the class name."""
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            (
+                "pkg/inspire.py",
+                "from orchestral.tools import BaseTool\n"
+                "class InspireSearchTool(BaseTool):\n"
+                "    name: str = 'x'\n"
+                "    description: str = 'x'\n"
+                "    def _run(self, **kw):\n"
+                "        return 'ok'\n",
+            ),
+        )
+        spec = [{
+            "name": "InspireSearchTool",
+            "module": "pkg.inspire",
+            "display_name": "search_papers",
+        }]
+        tools = _import_explicit_tools(spec, tmp_path)
+        assert tools[0]._mcp_display_name == "search_papers"
+
+    def test_yaml_display_name_outranks_define_tool_override(self, tmp_path):
+        """When both layers set a display_name, the toolkit.yaml entry
+        wins — the YAML is what the registry will see, so authors
+        editing it expect their change to take effect."""
+        _make_pkg(
+            tmp_path,
+            ("pkg/__init__.py", ""),
+            (
+                "pkg/custom.py",
+                "from orchestral import define_tool\n"
+                "@define_tool(display_name='FromPython')\n"
+                "def search():\n"
+                "    \"\"\"x.\"\"\"\n"
+                "    return 'ok'\n",
+            ),
+        )
+        spec = [{
+            "name": "search",
+            "module": "pkg.custom",
+            "display_name": "FromYAML",
+        }]
+        tools = _import_explicit_tools(spec, tmp_path)
+        assert tools[0]._mcp_display_name == "FromYAML"
+
     def test_skips_non_basetool_attribute(self, tmp_path, capsys):
         # Bad entries no longer raise — they skip and emit a structured
         # tool_import_skipped JSON line on stderr (captured by the

@@ -136,6 +136,29 @@ class TestReadToolBundlesAndMembership:
         assert block["pdg"] == {}
         assert "requires" in block["mg5"]
 
+    def test_explicit_display_name_overrides_class_derived_default(self, tmp_path):
+        """A toolkit author can pin the agent-visible name via
+        ``display_name:`` on the tool entry; the orchestrator must key
+        ``name_to_bundles`` by the override so its filter loop's
+        ``name_to_bundles.get(<MCP name>, [])`` actually hits."""
+        disc = _make_toolkit(
+            tmp_path,
+            bundles={"alpha": {}},
+            tools=[
+                {"name": "InspireSearchTool", "module": "x.a",
+                 "display_name": "search_papers",
+                 "bundle": "alpha"},
+                {"name": "PDGDatabaseTool", "module": "x.b",
+                 # No display_name — default kicks in.
+                 "bundle": "alpha"},
+            ],
+        )
+        _, mapping = _read_bundles_and_membership(disc.path)
+        assert mapping == {
+            "search_papers": ["alpha"],          # explicit override
+            "PDGDatabase": ["alpha"],            # derived default
+        }
+
     def test_pascalcase_class_names_normalised_to_mcp_form(self, tmp_path):
         """``toolkit.yaml``'s ``tools[].name`` carries the BaseTool subclass
         name (PascalCase, often ending in ``Tool``). The toolkit host

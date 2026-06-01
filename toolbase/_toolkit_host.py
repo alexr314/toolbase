@@ -350,10 +350,12 @@ def _import_explicit_tools(
                     "or BaseTool subclasses."
                 )
             # Set the MCP-wire name. Precedence (highest → lowest):
-            #   1. ``@define_tool(display_name="...")`` already set
+            #   1. toolkit.yaml ``display_name:`` field — the per-tool
+            #      author override at the YAML layer. Always wins.
+            #   2. ``@define_tool(display_name="...")`` set
             #      ``_mcp_display_name`` on the instance at definition
-            #      time — never clobber an author's explicit choice.
-            #   2. Fall back to the class name with the ``Tool`` suffix
+            #      time — author override at the Python layer.
+            #   3. Fall back to the class name with the ``Tool`` suffix
             #      stripped (kept PascalCase, no lowercasing): so
             #      ``InspireSearchTool`` registers as ``InspireSearch``.
             # The previous behavior (use_display_names=False ->
@@ -361,7 +363,10 @@ def _import_explicit_tools(
             # ``inspiresearch``) was a single-blob lowercase that lost
             # word boundaries — hard for the agent to parse and not
             # something the author could override per-tool.
-            if not getattr(instance, "_mcp_display_name", None):
+            yaml_display = entry.get("display_name") if isinstance(entry, dict) else None
+            if isinstance(yaml_display, str) and yaml_display:
+                instance._mcp_display_name = yaml_display
+            elif not getattr(instance, "_mcp_display_name", None):
                 instance._mcp_display_name = attr_name.removesuffix("Tool")
             tools.append(instance)
         except Exception as exc:

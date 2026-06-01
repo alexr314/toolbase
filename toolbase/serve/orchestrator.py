@@ -481,19 +481,17 @@ def _read_bundles_and_membership(
             bundles_block = cleaned_block
 
     # Tool names in toolkit.yaml are the BaseTool subclass names
-    # (PascalCase, e.g. ``InspireSearchTool``). The toolkit host calls
-    # ``orchestral.mcp.MCPServer(..., use_display_names=False)``, which
-    # registers each tool under ``BaseTool.get_name()`` —
-    # ``cls.__name__.removesuffix("Tool").lower()``. The orchestrator's
-    # per-tool filter loop iterates ``spawn.client.get_tool_definitions()``
-    # and looks each name up in this dict; if we keyed by the raw
-    # PascalCase name, every lookup would miss, ``tool_bundles`` would
-    # come back ``[]``, and ``tool_is_served`` would silently skip both
-    # the install-scope gate (``tool_bundles`` empty short-circuits it)
-    # and the config-gate (same), so every host-loaded tool would
-    # surface regardless of installed-bundle subset or missing-config
-    # bundle drops. Normalise here so the keys match what MCP actually
-    # advertises.
+    # (PascalCase, e.g. ``InspireSearchTool``). The toolkit host
+    # registers each instance under either an explicit
+    # ``display_name:`` from the same yaml entry or — fallback — the
+    # class name with the ``Tool`` suffix stripped (PascalCase
+    # preserved). The orchestrator's per-tool filter loop iterates
+    # ``spawn.client.get_tool_definitions()`` and looks each name up
+    # in this dict; keying by the raw PascalCase ``Tool``-suffixed
+    # name would make every lookup miss, ``tool_bundles`` would come
+    # back ``[]``, and ``tool_is_served`` would silently skip both
+    # the install-scope and config gates. Resolve the key the same
+    # way the host does so the orchestrator and host agree.
     name_to_bundles: Dict[str, List[str]] = {}
     tools = data.get("tools") if isinstance(data, dict) else None
     if isinstance(tools, list):
@@ -503,7 +501,11 @@ def _read_bundles_and_membership(
             tool_name = entry.get("name")
             if not isinstance(tool_name, str):
                 continue
-            mcp_name = _tool_yaml_name_to_mcp_name(tool_name)
+            yaml_display = entry.get("display_name")
+            if isinstance(yaml_display, str) and yaml_display:
+                mcp_name = yaml_display
+            else:
+                mcp_name = _tool_yaml_name_to_mcp_name(tool_name)
             bundle = entry.get("bundle")
             if isinstance(bundle, str) and bundle:
                 name_to_bundles[mcp_name] = [bundle]
