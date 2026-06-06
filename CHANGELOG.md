@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.2.1] — 2026-06-06
+
+### Fixed
+
+- `tb --version` and `toolbase.__version__` now report the installed package version instead of a stale hardcoded `0.1.0`. Both are sourced from `importlib.metadata.version("toolbase")`, so future releases stay in sync with `pyproject.toml` automatically.
+
+## [0.2.0] — 2026-06-05
+
 Serve/curation revamp. **Breaking** (v0, clean cutover — no compatibility aliases).
 
 ### Added

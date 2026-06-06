@@ -19,6 +19,7 @@ import tarfile
 import tempfile
 import shutil
 
+from . import __version__
 from .config import _api_url
 
 console = Console()
@@ -380,7 +381,7 @@ class _SectionedGroup(click.Group):
 
 
 @click.group(cls=_SectionedGroup)
-@click.version_option(version="0.1.0", prog_name="toolbase")
+@click.version_option(version=__version__, prog_name="toolbase")
 @click.option(
     "--project-dir",
     "project_dir_override",

@@ -1,0 +1,4 @@
+include CHANGELOG.md
+prune tests
+prune toolbase.egg-info
+global-exclude __pycache__ *.py[cod] .DS_Store
