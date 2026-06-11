@@ -187,11 +187,14 @@ def discover_toolkits(toolkits_dir: Optional[Path] = None) -> List[ToolkitDiscov
     pin_by_name: Dict[str, str] = {}
     try:
         from ..cli import _resolve_active_project_root
+        from ..envs import load_merged_pins
         project_root, _source = _resolve_active_project_root()
         manifest_path = project_manifest_path(project_root)
-        manifest = load_manifest(manifest_path)
-        for e in manifest.toolkits:
-            pin_by_name[e.name] = e.version
+        # Committed manifest merged with the machine-local layer
+        # (manifest.local.yaml) — local pins win per name. Editable
+        # pins belong in the local layer; they describe THIS machine's
+        # source checkout, not the project.
+        pin_by_name = load_merged_pins(manifest_path)
     except Exception:
         pin_by_name = {}
 
@@ -232,9 +235,29 @@ def discover_toolkits(toolkits_dir: Optional[Path] = None) -> List[ToolkitDiscov
                 reverse=True,
             )[0]
 
+        # An editable slot that lost selection is a likely surprise:
+        # the developer linked a source checkout, but a numbered slot
+        # (or a committed pin) outranks it, so their live code is NOT
+        # what serves. Selection stays deterministic; we just refuse
+        # to be quiet about it. Carried in meta so both the serve
+        # banner and `tb list` can surface it.
+        shadow_note = None
+        if chosen is not None and chosen.version != "editable" and skip_extra is None:
+            editable_slot = next(
+                (c for c in candidates if c.version == "editable"), None)
+            if editable_slot is not None:
+                src = (editable_slot.install_meta or {}).get("source_path", "?")
+                shadow_note = (
+                    f"editable slot (-> {src}) is shadowed by "
+                    f"{chosen.version} — pin 'editable' in "
+                    f".toolbase/manifest.local.yaml to serve your checkout"
+                )
+
         # Build the legacy-shaped meta dict that the rest of the
         # orchestrator expects.
         meta = dict(chosen.legacy_meta)
+        if shadow_note:
+            meta["shadow_note"] = shadow_note
         if not meta.get("environment") and chosen.install_meta.get("install_method"):
             meta["environment"] = chosen.install_meta["install_method"]
             meta.setdefault(
@@ -1056,6 +1079,16 @@ class Orchestrator:
         # config. Tools whose ``bundle:`` field names an unavailable
         # bundle are dropped from the served set. One stderr line per
         # dropped bundle, fired once at startup (NOT per call).
+        # Editable-shadow warning (set at discovery): the developer's
+        # source checkout exists but a numbered slot is what serves.
+        note = (disc.meta or {}).get("shadow_note")
+        if note:
+            self.console.print(f"  [yellow]⚠[/yellow] [dim]{disc.name}: {note}[/dim]")
+            self.logger.log_event(
+                "editable_shadowed", toolkit=disc.name,
+                message=note, level="warn",
+            )
+
         availability, name_to_bundles = _resolve_bundle_availability(disc)
         if availability.dropped_bundles:
             for bname, missing in availability.dropped_bundles.items():
