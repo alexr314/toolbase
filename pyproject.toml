@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "toolbase"
-version = "0.2.1"
+version = "0.3.0"
 description = "The community registry and CLI for AI agent toolkits - discover, share, and serve tools to AI agents over MCP"
 readme = "README.md"
 requires-python = ">=3.12"
