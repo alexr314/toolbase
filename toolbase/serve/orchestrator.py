@@ -752,6 +752,7 @@ class Orchestrator:
         toolkits_dir: Optional[Path] = None,
         profile: Optional[Any] = None,  # serve.profiles.ResolvedProfile
         call_timeout_s: float = DEFAULT_CALL_TIMEOUT_S,
+        config_overrides: Optional[Dict[str, Any]] = None,
     ):
         self.console = console or Console(stderr=True)
         # Stderr console because stdin/stdout are owned by MCP stdio in the
@@ -774,6 +775,13 @@ class Orchestrator:
         # enforced at the CLI boundary, not here.
         self._profile = profile
         self._call_timeout_s = call_timeout_s
+        # Per-serve state-config overrides, merged over every toolkit's
+        # resolved config before host spawn. The embedding harness uses
+        # this to scope file-aware tools to its own working directory
+        # (e.g. a benchmark runner pointing ``base_directory`` at the
+        # trial sandbox); keys a toolkit doesn't declare as StateFields
+        # are ignored by the host's injection.
+        self._config_overrides = dict(config_overrides or {})
 
     def _selection_for(self, name: str):
         """Return the ``ToolkitSelection`` for a toolkit under the active
@@ -999,6 +1007,8 @@ class Orchestrator:
             )
             return
 
+        if self._config_overrides:
+            state_config = {**(state_config or {}), **self._config_overrides}
         spawn, err = self._spawn_and_connect(disc, state_config=state_config)
         if err is not None:
             self.console.print(
@@ -1308,6 +1318,8 @@ class Orchestrator:
             )
             return
 
+        if self._config_overrides:
+            state_config = {**(state_config or {}), **self._config_overrides}
         spawn, err = self._spawn_and_connect(
             rt.discovery, state_config=state_config,
         )

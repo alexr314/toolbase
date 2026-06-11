@@ -36,7 +36,7 @@ from __future__ import annotations
 import contextlib
 import io
 from pathlib import Path
-from typing import Any, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from ..serve.orchestrator import DEFAULT_CALL_TIMEOUT_S, Orchestrator
 
@@ -93,6 +93,7 @@ def toolbase_tools(
     project_root: Optional[Path] = None,
     call_timeout_s: float = DEFAULT_CALL_TIMEOUT_S,
     quiet: bool = False,
+    config_overrides: Optional[Dict[str, Any]] = None,
 ) -> Iterator[List[Any]]:
     """Spin up toolbase's served tools and yield them as orchestral BaseTools.
 
@@ -110,6 +111,14 @@ def toolbase_tools(
             clients (default 60s).
         quiet: suppress the orchestrator's startup banner (which otherwise
             prints to stderr).
+        config_overrides: state-config keys merged over every served
+            toolkit's resolved config before host spawn. The embedding
+            harness uses this to scope file-aware tools to its own
+            working directory — e.g. a benchmark runner passing
+            ``{"base_directory": "<trial sandbox>"}`` so the tools an
+            agent calls read/write the same tree the agent's other
+            tools see. Keys a toolkit doesn't declare as StateFields
+            are ignored by the host.
 
     Yields:
         A list of orchestral ``BaseTool`` instances (namespaced
@@ -130,9 +139,14 @@ def toolbase_tools(
     """
     profile_obj = _resolve(project_root, profile)
     console = _null_console() if quiet else None
-    orch = Orchestrator(
+    orch_kwargs: dict = dict(
         console=console, profile=profile_obj, call_timeout_s=call_timeout_s,
     )
+    if config_overrides:
+        # Passed conditionally so test doubles (and any subclass) with the
+        # pre-override Orchestrator signature keep working unchanged.
+        orch_kwargs["config_overrides"] = config_overrides
+    orch = Orchestrator(**orch_kwargs)
     try:
         tools = orch.start()
         yield tools
