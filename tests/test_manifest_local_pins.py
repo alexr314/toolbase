@@ -135,7 +135,8 @@ def test_pin_editable_local_writes_layer_and_gitignore(tmp_path, monkeypatch):
         "heptapod": "editable"}
     assert local.is_file()
     gitignore = project / ".toolbase" / ".gitignore"
-    assert gitignore.read_text().strip() == "manifest.local.yaml"
+    assert "manifest.local.yaml" in gitignore.read_text()
+    assert "config/*.local.yaml" in gitignore.read_text()
     # Committed manifest untouched.
     assert not (project / ".toolbase" / "manifest.yaml").exists()
 

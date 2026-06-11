@@ -66,9 +66,13 @@ _PROJECT_FILE_TYPE = "project_config"
 def _file_type_for(layer: str) -> str:
     if layer == "user":
         return _USER_FILE_TYPE
-    if layer == "project":
+    if layer in ("project", "local"):
+        # The project-local layer shares the project file format — it's
+        # the same shape of file, just gitignored machine state.
         return _PROJECT_FILE_TYPE
-    raise ValueError(f"unknown config layer {layer!r} (expected 'user' or 'project')")
+    raise ValueError(
+        f"unknown config layer {layer!r} "
+        "(expected 'user', 'project', or 'local')")
 
 
 # ruamel YAML instance, configured for our use case.
@@ -151,13 +155,19 @@ def config_path(
     """
     if layer == "user":
         return config_dir(base=base) / f"{toolkit_name}.yaml"
-    if layer == "project":
+    if layer in ("project", "local"):
+        # "local" = <project>/.toolbase/config/<toolkit>.local.yaml —
+        # project-scoped machine state (absolute tool paths and the
+        # like), gitignored, merged over the committed project layer.
         if project_root is None:
             raise ValueError(
-                "config_path(layer='project') requires project_root"
+                f"config_path(layer={layer!r}) requires project_root"
             )
-        return project_config_dir(project_root) / f"{toolkit_name}.yaml"
-    raise ValueError(f"unknown config layer {layer!r} (expected 'user' or 'project')")
+        suffix = ".local.yaml" if layer == "local" else ".yaml"
+        return project_config_dir(project_root) / f"{toolkit_name}{suffix}"
+    raise ValueError(
+        f"unknown config layer {layer!r} "
+        "(expected 'user', 'project', or 'local')")
 
 
 # ── read / write ─────────────────────────────────────────────────────
