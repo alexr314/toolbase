@@ -146,6 +146,31 @@ _MANIFEST_HEADER_COMMENT = (
 )
 
 
+def local_manifest_path(manifest_path: Path) -> Path:
+    """The machine-local pin layer sitting next to a committed manifest.
+
+    ``manifest.yaml`` is committed (shareable: what the project depends
+    on, optionally pinned to registry versions). ``manifest.local.yaml``
+    is gitignored machine state — the place for pins that are only true
+    on this machine, above all ``version: editable`` (an editable slot
+    points into a local source checkout that no other machine has).
+    Local pins override committed pins name-by-name, mirroring the
+    user->project two-layer merge used for config values.
+    """
+    return manifest_path.with_name("manifest.local.yaml")
+
+
+def load_merged_pins(manifest_path: Path) -> dict:
+    """``{name: version}`` from the committed manifest with the local
+    layer merged over it (local wins per name). Either file may be
+    absent; absent layers contribute nothing."""
+    pins = {e.name: e.version for e in load_manifest(manifest_path).toolkits}
+    local = load_manifest(local_manifest_path(manifest_path))
+    for e in local.toolkits:
+        pins[e.name] = e.version
+    return pins
+
+
 def load_manifest(path: Path) -> Manifest:
     """Read a manifest from disk, returning an empty ``Manifest`` if absent.
 

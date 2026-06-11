@@ -19,7 +19,9 @@ convenience over them.
 
 ```
 <repo>/.toolbase/
-├── manifest.yaml             pinned toolkits + versions
+├── manifest.yaml             pinned toolkits + versions (committed)
+├── manifest.local.yaml       machine-local pins, e.g. editable (gitignored)
+├── .gitignore                written by tb install -e; ignores the local layer
 ├── config/<toolkit>.yaml     per-toolkit config values (project layer)
 ├── profiles/<name>.yaml      project profiles
 ├── serve.yaml                project default.profile + default.disabled
@@ -28,8 +30,11 @@ convenience over them.
 <repo>/.codex/config.toml     Codex wiring (tb connect codex)
 ```
 
-Project files override user files where they overlap. Commit `.toolbase/`,
-`.mcp.json`, and `.codex/config.toml`. Keep secrets in the user-layer
+Project files override user files where they overlap, and
+`manifest.local.yaml` overrides `manifest.yaml` name-by-name (it's the
+home for resolution choices only true on this machine, like `editable`).
+Commit `.toolbase/`, `.mcp.json`, and `.codex/config.toml` — the local
+manifest layer auto-gitignores itself. Keep secrets in the user-layer
 `config/<toolkit>.yaml`.
 
 ## Harness wiring

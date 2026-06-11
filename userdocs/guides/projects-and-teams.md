@@ -53,26 +53,43 @@ tb config set calculator cas_path /opt/sympy --user   # private, your machine
   config/<toolkit>.yaml    # shared, non-secret config
   profiles/default.yaml    # the project's curated tool set
 <repo>/.mcp.json           # harness wiring (Claude Code)
+<repo>/toolkits.yaml       # optional import file (see below)
 ```
 
 Commit all of `.toolbase/` and `.mcp.json`. Keep per-user secrets in your user
-layer (`~/.toolbase/config/<toolkit>.yaml`), not in the repo.
+layer (`~/.toolbase/config/<toolkit>.yaml`), not in the repo. Machine-local
+resolution choices (editable pins) live in `.toolbase/manifest.local.yaml`,
+which auto-gitignores itself — commit the dependency, not your checkout
+layout.
 
 ## Reproduce on a clone
+
+Commit an **import file** listing the project's toolkits and a fresh
+machine provisions with one command:
+
+```yaml
+# <repo>/toolkits.yaml
+toolkits:
+  - name: calculator          # registry install
+    version: 1.4.0
+    bundles: [basic]          # optional subset
+  - name: units
+    version: 0.9.0
+  - source: ../my-private-kit # path install (relative to this file)
+    editable: true            # live symlink for dev machines
+```
 
 ```bash
 git clone <repo> && cd <repo>
 pip install toolbase
-tb install calculator@1.4.0   # install each toolkit the manifest pins
-tb install units@0.9.0
+tb install toolkits.yaml
 # supply any private secrets (e.g. cas_path) in the user layer, then open the agent
 ```
 
-!!! note
-    There's no one-command "install everything in the manifest" yet. Install
-    the pinned toolkits explicitly (the versions are listed in
-    `.toolbase/manifest.yaml`). The committed profile and project config mean
-    the agent then sees exactly what the project intends.
+Entries use `name:` (registry) or `source:` (a path — including an
+exported tarball from `tb export`, the registry-free way to move private
+toolkits between machines). The committed profile and project config
+mean the agent then sees exactly what the project intends.
 
 ## Next
 

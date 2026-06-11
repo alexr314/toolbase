@@ -66,6 +66,8 @@ from .manifest import (
     Manifest,
     ManifestEntry,
     load_manifest,
+    local_manifest_path,
+    load_merged_pins,
     save_manifest,
     add_pin,
     remove_pin,

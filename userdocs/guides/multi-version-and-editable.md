@@ -16,9 +16,10 @@ tb list
   - 1.4.0    (used yesterday, 39 MB)
 ```
 
-Which version serves: the one pinned in the active project's manifest if
-there is one, otherwise the highest installed. `*` marks the project-pinned
-version.
+Which version serves: the pin in the active project's manifest if there
+is one — with the machine-local layer (`manifest.local.yaml`, gitignored)
+overriding the committed `manifest.yaml` name-by-name — otherwise the
+highest installed. `*` marks the pinned version.
 
 ## Pin a version to a project
 
@@ -44,8 +45,13 @@ tb install -e . -a            # symlink + activate
 tb install -e .               # rebuild the env after changing dependencies
 ```
 
-Editable installs aren't pinned into the committed manifest (the path is
-machine-specific). For the authoring loop, see
+Editable installs pin `editable` into `manifest.local.yaml` — the
+gitignored machine-local layer, never the committed manifest (the slot
+points at *your* checkout; no other machine has it). Without that pin an
+editable slot would lose version resolution to any numbered slot; if
+that ever happens (e.g. after deleting the local layer), `tb list` and
+serve startup warn that the editable slot is shadowed and show the
+one-line fix. For the authoring loop, see
 [Authoring → Validate & publish](../authoring/publish.md).
 
 ## Next

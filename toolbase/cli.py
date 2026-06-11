@@ -3480,6 +3480,49 @@ def _pin_after_install(
         )
 
 
+def _pin_editable_local(name: str, *, local_scope: bool) -> None:
+    """Pin (name, "editable") into the machine-local manifest layer.
+
+    Writes ``manifest.local.yaml`` next to the scoped project's
+    committed manifest and drops a ``.gitignore`` into ``.toolbase/``
+    (created only if absent) so the local layer never reaches git.
+    Best-effort like _pin_after_install: a failure warns, the install
+    stands.
+    """
+    try:
+        from .envs import (
+            project_manifest_path as _project_manifest_path,
+            local_manifest_path as _local_manifest_path,
+            add_pin as _add_pin,
+            default_project_root as _default_project_root,
+        )
+        if local_scope:
+            from .envs import find_project_root as _find_project_root
+            found = _find_project_root(cwd=Path.cwd())
+            if found is None:
+                project_root = Path.cwd().resolve()
+                _materialize_project_dir(project_root)
+            else:
+                project_root = found
+        else:
+            project_root = _default_project_root()
+        local_path = _local_manifest_path(_project_manifest_path(project_root))
+        _add_pin(local_path, name, "editable")
+        gitignore = local_path.parent / ".gitignore"
+        if not gitignore.exists():
+            gitignore.write_text("manifest.local.yaml\n")
+        console.print(
+            f"[dim]Pinned editable in {local_path.name} "
+            f"(machine-local, gitignored).[/dim]"
+        )
+    except Exception as e:
+        console.print(
+            f"[dim]Note: could not write the local editable pin: {e} — "
+            f"without it, numbered slots outrank this checkout.[/dim]"
+        )
+
+
+
 def _install_from_path(
     source_path: Path,
     *,
@@ -3861,10 +3904,12 @@ def _install_from_path(
             ),
         )
     else:
-        console.print(
-            "[dim]Editable installs are not pinned into the project "
-            "manifest (the path is machine-specific).[/dim]"
-        )
+        # Editable pins are machine state (they point at THIS machine's
+        # source checkout), so they go to the gitignored local layer —
+        # never the committed manifest. Without a pin the editable slot
+        # would lose version resolution to any numbered slot and the
+        # checkout would silently not serve.
+        _pin_editable_local(name, local_scope=local_scope)
 
     console.print(f"\n[bold]Ready to use! Try:[/bold]")
     console.print(f"  [cyan]tb activate {name}[/cyan]   # expose it to the agent")
@@ -5244,6 +5289,21 @@ def list_cmd(as_json, verbose):
                     f"[dim](used {last_used}, {size})[/dim]"
                     f"{subset_tag}"
                 )
+        # Editable-shadow warning: a live-linked checkout exists but
+        # resolution picks a numbered slot — the developer's code is
+        # not what serves. Same condition as discovery's shadow_note.
+        selected = pin_map.get(name) or (
+            max((e.version for e in grouped[name]),
+                key=lambda v: parse_version(v) or (0, 0, 0))
+            if len(grouped[name]) > 1 else grouped[name][0].version
+        )
+        has_editable = any(e.version == "editable" for e in grouped[name])
+        if has_editable and selected != "editable":
+            console.print(
+                "    [yellow]⚠ editable slot shadowed by "
+                f"{selected} — pin 'editable' in "
+                ".toolbase/manifest.local.yaml to serve your checkout[/yellow]"
+            )
         if verbose:
             _list_print_tools_verbose(name, resolved_profile)
 
@@ -5428,14 +5488,19 @@ def _list_resolve_pin_map(entries):
             load_manifest as _load_manifest,
         )
         project_root, _source = _resolve_active_project_root()
-        manifest_path = _project_manifest_path(project_root)
-        if not manifest_path.exists():
-            return {}, None
-        manifest = _load_manifest(manifest_path)
-        return (
-            {e.name: e.version for e in manifest.toolkits},
-            manifest_path,
+        from .envs import (
+            load_merged_pins as _load_merged_pins,
+            local_manifest_path as _local_manifest_path,
         )
+        manifest_path = _project_manifest_path(project_root)
+        if (not manifest_path.exists()
+                and not _local_manifest_path(manifest_path).exists()):
+            return {}, None
+        # Merged view: committed manifest + machine-local layer
+        # (manifest.local.yaml), local wins — the same resolution
+        # discover_toolkits uses, so the * markers never disagree
+        # with what actually serves.
+        return _load_merged_pins(manifest_path), manifest_path
     except Exception:
         # Manifest read errors (schema-too-new, malformed) shouldn't
         # break list. Skip the pin indicator and proceed.
@@ -5633,11 +5698,36 @@ def uninstall(name, yes, no_, no_input):
     # we silently fall back to default-project (which is where ``install``
     # would have pinned in the no-project case anyway).
     try:
+        from .envs import (
+            local_manifest_path as _local_manifest_path,
+            load_manifest as _load_manifest_for_pins,
+        )
         project_root, _source = _resolve_active_project_root()
         manifest_path = _project_manifest_path(project_root)
+        local_path = _local_manifest_path(manifest_path)
         remaining = _list_versions(name)
         if not remaining:
             _remove_pin(manifest_path, name)
+            _remove_pin(local_path, name)
+        else:
+            # Some versions remain. If a pin (committed or local layer)
+            # still names a version we just removed, it now dangles —
+            # serving would SKIP the toolkit entirely ("pinned version
+            # not in cache") even though usable slots exist. Remove the
+            # stale pin loudly; unpinned resolution falls back to the
+            # highest remaining slot.
+            for layer in (manifest_path, local_path):
+                pins = {e.name: e.version
+                        for e in _load_manifest_for_pins(layer).toolkits}
+                pinned = pins.get(name)
+                if pinned is not None and pinned not in remaining:
+                    _remove_pin(layer, name)
+                    console.print(
+                        f"[yellow]⚠ Removed stale pin {name}@{pinned} from "
+                        f"{layer.name} (slot uninstalled; remaining: "
+                        f"{', '.join(remaining)}). Re-pin with "
+                        f"`tb install {name}@<version> -l` if needed.[/yellow]"
+                    )
     except Exception as e:
         console.print(
             f"[dim]Note: could not update project manifest: {e}[/dim]"
