@@ -8,7 +8,10 @@
 | Command | Purpose | Key flags |
 |---|---|---|
 | `tb install NAME` | Install a toolkit (registry name, `name@version`, or a local path) | `-g`, `-l`, `-e`, `-a/--activate`, `--version`, `--no-skills` |
-| `tb uninstall NAME` | Remove a toolkit (all versions) | `-y`/`--no`/`--no-input` |
+| `tb install FILE.yaml` | Install every toolkit an import file lists (one command provisions a project's set) | file-level `-g`/`-l` + prompt flags; per-toolkit options go on the entries |
+| `tb install FILE.tar.gz` | Install an exported toolkit tarball (registry-free distribution) | same flags as a path install; `-e` rejected |
+| `tb export [PATH]` | Package a toolkit dir as `<name>-<version>.tar.gz` (publish's packaging, no upload) | `-o/--output` |
+| `tb uninstall NAME` | Remove a toolkit — all versions, or one slot with `NAME@VERSION` (stale pins are cleaned up) | `-y`/`--no`/`--no-input` |
 | `tb list` | List installed toolkits, active/inactive | `-v/--verbose`, `--json` |
 | `tb activate ITEM` | Expose a toolkit / `toolkit/bundle` / `toolkit__tool` | `-g`, `-l` |
 | `tb deactivate ITEM` | Hide a toolkit / bundle / tool | `-g`, `-l` |

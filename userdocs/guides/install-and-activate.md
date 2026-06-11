@@ -12,6 +12,8 @@ Get a toolkit onto your machine and expose it to the agent.
 ```bash
 tb install calculator           # latest
 tb install calculator@1.4.0     # a specific version
+tb install toolkits.yaml        # everything an import file lists
+tb install calculator-1.4.0.tar.gz   # an exported tarball (tb export)
 ```
 
 Installing builds the toolkit an isolated environment in the shared global
@@ -89,9 +91,14 @@ Active profile: default
 ## Update & uninstall
 
 ```bash
-tb install calculator@1.5.0   # newer version, alongside 1.4.0
-tb uninstall calculator       # remove it
+tb install calculator@1.5.0     # newer version, alongside 1.4.0
+tb uninstall calculator@1.4.0   # remove one version slot
+tb uninstall calculator         # remove all versions
 ```
+
+Removing a slot that a project manifest still pins cleans up the stale
+pin (loudly) so serving falls back to the remaining versions instead of
+skipping the toolkit.
 
 ## Next
 
