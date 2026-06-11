@@ -144,3 +144,87 @@ def test_per_toolkit_flags_rejected_at_file_level(tmp_path):
     result = CliRunner().invoke(cli.main, ["install", str(f), "-e"])
     assert result.exit_code != 0
     assert "inside the import file" in result.output
+
+
+# ── export + tarball install ──────────────────────────────────────────────
+
+
+def _make_toolkit_dir(tmp_path: Path) -> Path:
+    src = tmp_path / "demo"
+    (src / "tools").mkdir(parents=True)
+    (src / "toolkit.yaml").write_text("name: demo\nversion: 0.4.2\n")
+    (src / "tools" / "__init__.py").write_text("")
+    (src / ".mcp.json").write_text("{}")          # must not ship
+    return src
+
+
+def test_export_packages_toolkit(tmp_path):
+    src = _make_toolkit_dir(tmp_path)
+    out_dir = tmp_path / "dist"
+    result = CliRunner().invoke(
+        cli.main, ["export", str(src), "-o", str(out_dir)])
+    assert result.exit_code == 0, result.output
+    tarball = out_dir / "demo-0.4.2.tar.gz"
+    assert tarball.is_file()
+    import tarfile
+    names = tarfile.open(tarball).getnames()
+    assert any(n.endswith("toolkit.yaml") for n in names)
+    assert not any(".mcp.json" in n for n in names)   # consumer state excluded
+
+
+def test_export_requires_toolkit_yaml(tmp_path):
+    empty = tmp_path / "notakit"
+    empty.mkdir()
+    result = CliRunner().invoke(cli.main, ["export", str(empty)])
+    assert result.exit_code != 0
+    assert "toolkit.yaml" in result.output
+
+
+def test_tarball_install_roundtrip_dispatch(tmp_path):
+    # export → install <tarball> extracts and re-dispatches the normal
+    # path-install with editable=False and the extracted root as target.
+    src = _make_toolkit_dir(tmp_path)
+    CliRunner().invoke(cli.main, ["export", str(src), "-o", str(tmp_path)])
+    tarball = tmp_path / "demo-0.4.2.tar.gz"
+
+    calls = []
+
+    def invoke(**kw):
+        # Assert at dispatch time — the extraction dir is (correctly)
+        # cleaned up once the install completes.
+        kw["had_toolkit_yaml"] = (Path(kw["name"]) / "toolkit.yaml").is_file()
+        calls.append(kw)
+
+    cli._install_from_tarball(
+        None, tarball, version=None, global_scope=False, local_scope=True,
+        no_skills=False, activate_after=False, bundle_flags=(),
+        rebuild=False, yes=True, no_=False, no_input=True, invoke=invoke,
+    )
+    assert len(calls) == 1
+    assert calls[0]["editable"] is False
+    assert calls[0]["had_toolkit_yaml"] is True
+
+
+def test_tarball_install_rejects_editable(tmp_path):
+    src = _make_toolkit_dir(tmp_path)
+    CliRunner().invoke(cli.main, ["export", str(src), "-o", str(tmp_path)])
+    result = CliRunner().invoke(
+        cli.main, ["install", str(tmp_path / "demo-0.4.2.tar.gz"), "-e"])
+    assert result.exit_code != 0
+    assert "meaningless for a tarball" in result.output
+
+
+def test_tarball_install_rejects_non_toolkit_archive(tmp_path):
+    import tarfile
+    bad = tmp_path / "junk-1.0.tar.gz"
+    (tmp_path / "junk.txt").write_text("x")
+    with tarfile.open(bad, "w:gz") as t:
+        t.add(tmp_path / "junk.txt", arcname="junk.txt")
+    with pytest.raises(click.UsageError) as e:
+        cli._install_from_tarball(
+            None, bad, version=None, global_scope=False, local_scope=True,
+            no_skills=False, activate_after=False, bundle_flags=(),
+            rebuild=False, yes=True, no_=False, no_input=True,
+            invoke=lambda **kw: None,
+        )
+    assert "no toolkit.yaml" in str(e.value)

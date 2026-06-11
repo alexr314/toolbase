@@ -4084,6 +4084,52 @@ def _post_install_activate(
         console.print(f"[dim]{result.message}[/dim]")
 
 
+@main.command()
+@click.argument('path', default='.',
+                type=click.Path(exists=True, file_okay=False))
+@click.option('--output', '-o', 'output_dir', default='.',
+              type=click.Path(file_okay=False),
+              help='Directory to write the tarball into (default: cwd).')
+def export(path, output_dir):
+    """
+    Package a toolkit directory as an installable tarball.
+
+    \b
+    The registry-free distribution path: export on one machine,
+    move the file however you like (scp, artifact store), install
+    elsewhere with `tb install <name>-<version>.tar.gz`. Useful for
+    private toolkits that aren't published to the registry.
+
+    Uses the same packaging as `tb publish`: VCS/build cruft and
+    consumer-side state (.toolbase/, .mcp.json, .claude/, ...) are
+    excluded, so local machine paths never leak into the package.
+    """
+    import yaml as _yaml
+
+    source = Path(path).resolve()
+    tk_yaml = source / "toolkit.yaml"
+    if not tk_yaml.is_file():
+        raise click.UsageError(f"{source}: no toolkit.yaml — not a toolkit directory.")
+    try:
+        meta = _yaml.safe_load(tk_yaml.read_text()) or {}
+    except Exception as e:
+        raise click.UsageError(f"{tk_yaml}: unreadable ({e})")
+    name = meta.get("name")
+    version = meta.get("version")
+    if not name or not version:
+        raise click.UsageError(
+            f"{tk_yaml}: needs `name:` and `version:` to name the package."
+        )
+
+    out_dir = Path(output_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"{name}-{version}.tar.gz"
+    create_tarball(source, out, name)
+    size = out.stat().st_size
+    click.echo(f"✓ exported {name} {version} → {out} ({_format_bytes(size)})")
+    click.echo(f"  install elsewhere with: tb install {out.name}")
+
+
 # ── import files (`tb install <file>.yaml`) ─────────────────────────────
 
 # Recognized keys, kept strict: an unknown key in a committed import
@@ -4206,6 +4252,50 @@ def _install_from_import_file(ctx, path: Path, *, global_scope, local_scope,
             f"{len(failures)}/{len(entries)} import entries failed."
         )
     click.echo(f"✓ {len(entries)} toolkit(s) installed from {path.name}")
+
+
+def _install_from_tarball(ctx, path: Path, *, version, global_scope,
+                          local_scope, no_skills, activate_after,
+                          bundle_flags, rebuild, yes, no_, no_input,
+                          invoke=None) -> None:
+    """Install an exported toolkit tarball (``tb export``'s output).
+
+    Extracts to a temp dir, validates a root toolkit.yaml, and
+    re-dispatches through the normal path-install flow — the tarball is
+    just a portable wrapper around a source directory. ``invoke`` is a
+    test seam; production uses ``ctx.invoke(install, ...)``.
+    """
+    import tarfile
+    import tempfile
+
+    if invoke is None:
+        def invoke(**kw):
+            return ctx.invoke(install, **kw)
+
+    with tempfile.TemporaryDirectory(prefix="tb-install-") as tmp:
+        try:
+            with tarfile.open(path, "r:gz") as tar:
+                tar.extractall(path=tmp, filter="data")
+        except Exception as e:
+            raise click.UsageError(f"{path}: not a readable .tar.gz ({e})")
+        root = Path(tmp)
+        if not (root / "toolkit.yaml").is_file():
+            # Tolerate a single top-level directory wrapping the toolkit.
+            subdirs = [d for d in root.iterdir() if d.is_dir()]
+            if len(subdirs) == 1 and (subdirs[0] / "toolkit.yaml").is_file():
+                root = subdirs[0]
+            else:
+                raise click.UsageError(
+                    f"{path}: no toolkit.yaml at the archive root — is this "
+                    "a `tb export` package?"
+                )
+        invoke(
+            name=str(root), version=version,
+            global_scope=global_scope, local_scope=local_scope,
+            editable=False, no_skills=no_skills,
+            activate_after=activate_after, bundle_flags=bundle_flags,
+            rebuild=rebuild, yes=yes, no_=no_, no_input=no_input,
+        )
 
 
 @main.command()
@@ -4336,6 +4426,23 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
             global_scope=global_scope, local_scope=local_scope,
             no_skills=no_skills, activate_after=activate_after,
             rebuild=rebuild, yes=yes, no_=no_, no_input=no_input,
+        )
+
+    # Tarball mode: ``tb install <toolkit>.tar.gz`` installs an exported
+    # package (see ``tb export``) — distribution without the registry,
+    # e.g. moving a private toolkit to a server by scp.
+    if name and name.lower().endswith((".tar.gz", ".tgz")) and Path(name).is_file():
+        if editable:
+            raise click.UsageError(
+                "-e is meaningless for a tarball (nothing to live-link). "
+                "Install the source directory editable instead."
+            )
+        return _install_from_tarball(
+            ctx, Path(name), version=version,
+            global_scope=global_scope, local_scope=local_scope,
+            no_skills=no_skills, activate_after=activate_after,
+            bundle_flags=bundle_flags, rebuild=rebuild,
+            yes=yes, no_=no_, no_input=no_input,
         )
 
     # Flag exclusivity. -e/-l/-g pick one scope/source; -g is the
