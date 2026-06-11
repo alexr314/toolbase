@@ -4085,6 +4085,220 @@ def _post_install_activate(
 
 
 @main.command()
+@click.argument('path', default='.',
+                type=click.Path(exists=True, file_okay=False))
+@click.option('--output', '-o', 'output_dir', default='.',
+              type=click.Path(file_okay=False),
+              help='Directory to write the tarball into (default: cwd).')
+def export(path, output_dir):
+    """
+    Package a toolkit directory as an installable tarball.
+
+    \b
+    The registry-free distribution path: export on one machine,
+    move the file however you like (scp, artifact store), install
+    elsewhere with `tb install <name>-<version>.tar.gz`. Useful for
+    private toolkits that aren't published to the registry.
+
+    Uses the same packaging as `tb publish`: VCS/build cruft and
+    consumer-side state (.toolbase/, .mcp.json, .claude/, ...) are
+    excluded, so local machine paths never leak into the package.
+    """
+    import yaml as _yaml
+
+    source = Path(path).resolve()
+    tk_yaml = source / "toolkit.yaml"
+    if not tk_yaml.is_file():
+        raise click.UsageError(f"{source}: no toolkit.yaml — not a toolkit directory.")
+    try:
+        meta = _yaml.safe_load(tk_yaml.read_text()) or {}
+    except Exception as e:
+        raise click.UsageError(f"{tk_yaml}: unreadable ({e})")
+    name = meta.get("name")
+    version = meta.get("version")
+    if not name or not version:
+        raise click.UsageError(
+            f"{tk_yaml}: needs `name:` and `version:` to name the package."
+        )
+
+    out_dir = Path(output_dir).resolve()
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out = out_dir / f"{name}-{version}.tar.gz"
+    create_tarball(source, out, name)
+    size = out.stat().st_size
+    click.echo(f"✓ exported {name} {version} → {out} ({_format_bytes(size)})")
+    click.echo(f"  install elsewhere with: tb install {out.name}")
+
+
+# ── import files (`tb install <file>.yaml`) ─────────────────────────────
+
+# Recognized keys, kept strict: an unknown key in a committed import
+# file is a typo'd intention, and silently ignoring it would install
+# something other than what the author wrote down.
+_IMPORT_ENTRY_KEYS = {"name", "source", "version", "editable", "bundles"}
+
+
+def _parse_import_file(path: Path) -> list:
+    """Parse a toolkit import file into normalized install entries.
+
+    Shape::
+
+        toolkits:
+          - name: calculator              # registry install
+            version: 0.2.0                # optional
+            bundles: [scientific]         # optional
+          - source: ../heptapod           # path install
+            editable: true                # live symlink (-e)
+
+    Each entry needs ``name`` (registry) or ``source`` (path); relative
+    sources resolve against the import file's directory so the file
+    travels with a repo, and ``${VAR}`` in sources expands from the
+    environment.
+    """
+    import yaml as _yaml
+
+    try:
+        data = _yaml.safe_load(path.read_text()) or {}
+    except Exception as e:
+        raise click.UsageError(f"{path}: unreadable YAML ({e})")
+    if not isinstance(data, dict) or not isinstance(data.get("toolkits"), list):
+        raise click.UsageError(
+            f"{path}: an import file is a mapping with a `toolkits:` list."
+        )
+
+    entries = []
+    for i, raw in enumerate(data["toolkits"]):
+        where = f"{path} toolkits[{i}]"
+        if not isinstance(raw, dict):
+            raise click.UsageError(f"{where}: entry must be a mapping, got {raw!r}")
+        unknown = set(raw) - _IMPORT_ENTRY_KEYS
+        if unknown:
+            raise click.UsageError(
+                f"{where}: unknown key(s) {sorted(unknown)}; "
+                f"expected {sorted(_IMPORT_ENTRY_KEYS)}"
+            )
+        name = raw.get("name")
+        source = raw.get("source")
+        editable = bool(raw.get("editable", False))
+        if not name and not source:
+            raise click.UsageError(f"{where}: needs `name:` (registry) or `source:` (path)")
+        if editable and not source:
+            raise click.UsageError(f"{where}: `editable: true` requires `source:`")
+        if source:
+            expanded = os.path.expandvars(os.path.expanduser(str(source)))
+            src = Path(expanded)
+            if not src.is_absolute():
+                src = (path.parent / src).resolve()
+            target = str(src)
+        else:
+            target = str(name)
+        bundles = raw.get("bundles")
+        if bundles is not None and not (
+            isinstance(bundles, list) and all(isinstance(b, str) for b in bundles)
+        ):
+            raise click.UsageError(f"{where}: `bundles:` must be a list of strings")
+        entries.append({
+            "target": target,
+            "label": str(name or source),
+            "version": raw.get("version"),
+            "editable": editable,
+            "bundles": tuple(bundles) if bundles else (),
+        })
+    if not entries:
+        raise click.UsageError(f"{path}: `toolkits:` list is empty.")
+    return entries
+
+
+def _install_from_import_file(ctx, path: Path, *, global_scope, local_scope,
+                              no_skills, activate_after, rebuild,
+                              yes, no_, no_input, invoke=None) -> None:
+    """Install every toolkit an import file lists, via the normal
+    per-toolkit install path (``ctx.invoke``), with the file-level
+    scope/prompt flags applied to each entry.
+
+    Per-entry failures do not abort the run — the remaining entries
+    still install — but the command exits nonzero with a summary, so a
+    broken entry cannot pass silently in provisioning scripts.
+
+    ``invoke`` is a test seam; production uses ``ctx.invoke(install, ...)``.
+    """
+    entries = _parse_import_file(path)
+    if invoke is None:
+        def invoke(**kw):
+            return ctx.invoke(install, **kw)
+
+    failures = []
+    for e in entries:
+        click.echo("→ installing " + e["label"]
+                   + (" @" + e["version"] if e["version"] else "")
+                   + (" (editable)" if e["editable"] else ""))
+        try:
+            invoke(
+                name=e["target"], version=e["version"],
+                global_scope=global_scope, local_scope=local_scope,
+                editable=e["editable"], no_skills=no_skills,
+                activate_after=activate_after, bundle_flags=e["bundles"],
+                rebuild=rebuild, yes=yes, no_=no_, no_input=no_input,
+            )
+        except click.ClickException as exc:
+            failures.append((e["label"], exc.format_message()))
+        except Exception as exc:
+            failures.append((e["label"], type(exc).__name__ + ": " + str(exc)))
+
+    if failures:
+        for label, msg in failures:
+            click.echo("✗ " + label + ": " + msg, err=True)
+        raise click.ClickException(
+            f"{len(failures)}/{len(entries)} import entries failed."
+        )
+    click.echo(f"✓ {len(entries)} toolkit(s) installed from {path.name}")
+
+
+def _install_from_tarball(ctx, path: Path, *, version, global_scope,
+                          local_scope, no_skills, activate_after,
+                          bundle_flags, rebuild, yes, no_, no_input,
+                          invoke=None) -> None:
+    """Install an exported toolkit tarball (``tb export``'s output).
+
+    Extracts to a temp dir, validates a root toolkit.yaml, and
+    re-dispatches through the normal path-install flow — the tarball is
+    just a portable wrapper around a source directory. ``invoke`` is a
+    test seam; production uses ``ctx.invoke(install, ...)``.
+    """
+    import tarfile
+    import tempfile
+
+    if invoke is None:
+        def invoke(**kw):
+            return ctx.invoke(install, **kw)
+
+    with tempfile.TemporaryDirectory(prefix="tb-install-") as tmp:
+        try:
+            with tarfile.open(path, "r:gz") as tar:
+                tar.extractall(path=tmp, filter="data")
+        except Exception as e:
+            raise click.UsageError(f"{path}: not a readable .tar.gz ({e})")
+        root = Path(tmp)
+        if not (root / "toolkit.yaml").is_file():
+            # Tolerate a single top-level directory wrapping the toolkit.
+            subdirs = [d for d in root.iterdir() if d.is_dir()]
+            if len(subdirs) == 1 and (subdirs[0] / "toolkit.yaml").is_file():
+                root = subdirs[0]
+            else:
+                raise click.UsageError(
+                    f"{path}: no toolkit.yaml at the archive root — is this "
+                    "a `tb export` package?"
+                )
+        invoke(
+            name=str(root), version=version,
+            global_scope=global_scope, local_scope=local_scope,
+            editable=False, no_skills=no_skills,
+            activate_after=activate_after, bundle_flags=bundle_flags,
+            rebuild=rebuild, yes=yes, no_=no_, no_input=no_input,
+        )
+
+
+@main.command()
 @click.argument('name')
 @click.option('--version', '-v', help='Specific version to install (default: latest)')
 @click.option(
@@ -4146,7 +4360,8 @@ def _post_install_activate(
     ),
 )
 @_interactive_options
-def install(name, version, global_scope, local_scope, editable, no_skills, activate_after, bundle_flags, rebuild, yes, no_, no_input):
+@click.pass_context
+def install(ctx, name, version, global_scope, local_scope, editable, no_skills, activate_after, bundle_flags, rebuild, yes, no_, no_input):
     """
     Install a toolkit — from the registry or a local source directory.
 
@@ -4193,6 +4408,42 @@ def install(name, version, global_scope, local_scope, editable, no_skills, activ
     import requests
 
     mode = _resolve_prompt_mode(yes, no_, no_input)
+
+    # Import-file mode: ``tb install <file>.yaml`` installs every
+    # toolkit the file lists — the shareable counterpart to
+    # per-toolkit installs, so a project can commit e.g. toolkits.yaml
+    # and a fresh machine is one command. Detected before name/path
+    # disambiguation: directories (toolkit sources) keep their
+    # meaning; only an existing YAML *file* triggers import.
+    if name and name.lower().endswith((".yaml", ".yml")) and Path(name).is_file():
+        if editable or version or bundle_flags:
+            raise click.UsageError(
+                "-e/--version/--bundle apply per toolkit — set them on "
+                "the entries inside the import file instead."
+            )
+        return _install_from_import_file(
+            ctx, Path(name),
+            global_scope=global_scope, local_scope=local_scope,
+            no_skills=no_skills, activate_after=activate_after,
+            rebuild=rebuild, yes=yes, no_=no_, no_input=no_input,
+        )
+
+    # Tarball mode: ``tb install <toolkit>.tar.gz`` installs an exported
+    # package (see ``tb export``) — distribution without the registry,
+    # e.g. moving a private toolkit to a server by scp.
+    if name and name.lower().endswith((".tar.gz", ".tgz")) and Path(name).is_file():
+        if editable:
+            raise click.UsageError(
+                "-e is meaningless for a tarball (nothing to live-link). "
+                "Install the source directory editable instead."
+            )
+        return _install_from_tarball(
+            ctx, Path(name), version=version,
+            global_scope=global_scope, local_scope=local_scope,
+            no_skills=no_skills, activate_after=activate_after,
+            bundle_flags=bundle_flags, rebuild=rebuild,
+            yes=yes, no_=no_, no_input=no_input,
+        )
 
     # Flag exclusivity. -e/-l/-g pick one scope/source; -g is the
     # default when none is given.
