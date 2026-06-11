@@ -27,7 +27,7 @@
 |---|---|---|
 | `tb install TOOLKIT[a,b]` or `tb install TOOLKIT --bundle a` | Install only the named bundle(s); additive on re-install (pip-style). | `--bundle`, `--rebuild`, plus all the usual install flags |
 | `tb config show TOOLKIT` | Show effective config (merged user+project) | `--user`, `--project`, `--layer` |
-| `tb config set TOOLKIT KEY VALUE` | Set one field | `--user`, `--project`, `--layer` |
+| `tb config set TOOLKIT KEY VALUE` | Set one field | `--user`, `--project`, `--local` (gitignored machine paths), `--layer` |
 | `tb config unset TOOLKIT KEY` | Remove one field | layer flags |
 | `tb config init TOOLKIT` | Scaffold a commented YAML config file from the toolkit's `config:` schema | layer flags, `-f/--force` |
 | `tb config edit TOOLKIT` | Open the config file in `$EDITOR` | layer flags |

@@ -58,6 +58,19 @@ def load_project_config_layer(
     return _read_layer(path, "project_config")
 
 
+def load_project_local_config_layer(
+    toolkit: str,
+    project_root: Path,
+) -> Dict[str, Any]:
+    # The project-local layer: config/<toolkit>.local.yaml next to the
+    # committed project file. Project-scoped machine state (absolute
+    # tool paths and the like), gitignored, highest precedence.
+    # Returns {} if absent.
+    path = project_config_path(project_root, toolkit)
+    path = path.with_name(f"{toolkit}.local.yaml")
+    return _read_layer(path, "project_config")
+
+
 def resolve_toolkit_config(
     toolkit: str,
     project_root: Path,
@@ -99,10 +112,12 @@ def resolve_toolkit_config(
     """
     user_data = load_user_config_layer(toolkit, user_base=user_base)
     project_data = load_project_config_layer(toolkit, project_root)
+    local_data = load_project_local_config_layer(toolkit, project_root)
 
     merged: Dict[str, Any] = {}
     merged.update(user_data)
-    merged.update(project_data)  # project wins key-by-key
+    merged.update(project_data)  # project wins over user key-by-key
+    merged.update(local_data)    # project-local (machine state) wins overall
     return merged
 
 

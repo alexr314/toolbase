@@ -1826,9 +1826,17 @@ def _layer_option(f):
         help="Target the user layer explicitly.",
     )(f)
     f = click.option(
+        "--local", "layer_local", is_flag=True, default=False,
+        help=(
+            "Target the project-LOCAL layer: config/<toolkit>.local.yaml, "
+            "project-scoped but gitignored — machine truth like absolute "
+            "tool paths. Wins over the committed project layer."
+        ),
+    )(f)
+    f = click.option(
         "--layer", "layer_explicit",
-        type=click.Choice(["user", "project"]), default=None,
-        help="Target a specific config layer (alternative to --user/--project).",
+        type=click.Choice(["user", "project", "local"]), default=None,
+        help="Target a specific config layer (alternative to --user/--project/--local).",
     )(f)
     return f
 
@@ -1838,6 +1846,7 @@ def _resolve_config_layer(
     layer_explicit: Optional[str],
     layer_user: bool,
     layer_project: bool,
+    layer_local: bool = False,
     default_context: str = "auto",
 ) -> Tuple[str, Optional[Path]]:
     """Resolve the per-command effective layer.
@@ -1860,9 +1869,11 @@ def _resolve_config_layer(
         explicit.append("user")
     if layer_project:
         explicit.append("project")
+    if layer_local:
+        explicit.append("local")
     if len(explicit) > 1:
         raise click.UsageError(
-            "--layer / --user / --project are mutually exclusive."
+            "--layer / --user / --project / --local are mutually exclusive."
         )
 
     if explicit:
@@ -1873,16 +1884,17 @@ def _resolve_config_layer(
         # the user layer.
         return "project", _cwd_project_root()
 
-    # Explicit layer specified.
-    if layer == "project":
-        return "project", _cwd_project_root()
+    # Explicit layer specified. "local" is project-scoped too — same
+    # root discovery, different (gitignored) file.
+    if layer in ("project", "local"):
+        return layer, _cwd_project_root()
     return "user", None
 
 
 @config.command(name="path")
 @click.argument("toolkit_name")
 @_layer_option
-def config_path_cmd(toolkit_name, layer_explicit, layer_user, layer_project):
+def config_path_cmd(toolkit_name, layer_explicit, layer_user, layer_project, layer_local):
     """Print the absolute path to a toolkit's config file.
 
     Defaults to the active layer for the current context (project layer
@@ -1894,6 +1906,7 @@ def config_path_cmd(toolkit_name, layer_explicit, layer_user, layer_project):
     layer, project_root = _resolve_config_layer(
         layer_explicit=layer_explicit,
         layer_user=layer_user, layer_project=layer_project,
+        layer_local=layer_local,
     )
     print(_cfg_path(toolkit_name, layer=layer, project_root=project_root))
 
@@ -1901,7 +1914,7 @@ def config_path_cmd(toolkit_name, layer_explicit, layer_user, layer_project):
 @config.command(name="show")
 @click.argument("toolkit_name")
 @_layer_option
-def config_show(toolkit_name, layer_explicit, layer_user, layer_project):
+def config_show(toolkit_name, layer_explicit, layer_user, layer_project, layer_local):
     """Show a toolkit's effective configuration.
 
     Default (no flags): merged view of user + project layers, with each
@@ -2073,7 +2086,7 @@ def config_show(toolkit_name, layer_explicit, layer_user, layer_project):
 @config.command(name="edit")
 @click.argument("toolkit_name")
 @_layer_option
-def config_edit(toolkit_name, layer_explicit, layer_user, layer_project):
+def config_edit(toolkit_name, layer_explicit, layer_user, layer_project, layer_local):
     """Open the toolkit's config file in $EDITOR.
 
     Defaults to the project layer in a project context, the user layer
@@ -2096,6 +2109,7 @@ def config_edit(toolkit_name, layer_explicit, layer_user, layer_project):
     layer, project_root = _resolve_config_layer(
         layer_explicit=layer_explicit,
         layer_user=layer_user, layer_project=layer_project,
+        layer_local=layer_local,
     )
     cfg_file = _cfg_path(
         toolkit_name, layer=layer, project_root=project_root,
@@ -2165,7 +2179,7 @@ def config_edit(toolkit_name, layer_explicit, layer_user, layer_project):
 @_layer_option
 def config_set(
     toolkit_name, key, value,
-    layer_explicit, layer_user, layer_project,
+    layer_explicit, layer_user, layer_project, layer_local,
 ):
     """Set one config field on a toolkit (preserves other fields/comments).
 
@@ -2207,11 +2221,16 @@ def config_set(
     layer, project_root = _resolve_config_layer(
         layer_explicit=layer_explicit,
         layer_user=layer_user, layer_project=layer_project,
+        layer_local=layer_local,
     )
-    set_config_value(
+    cfg_written = set_config_value(
         toolkit_name, key, parsed,
         layer=layer, project_root=project_root,
     )
+    if layer == "local":
+        # config/ sits one level below .toolbase/ — keep the local
+        # layer out of git the same way editable pins are.
+        _ensure_toolbase_gitignore(cfg_written.parent.parent)
     cfg_file = _cfg_path(
         toolkit_name, layer=layer, project_root=project_root,
     )
@@ -2227,7 +2246,7 @@ def config_set(
 @_layer_option
 def config_unset(
     toolkit_name, key,
-    layer_explicit, layer_user, layer_project,
+    layer_explicit, layer_user, layer_project, layer_local,
 ):
     """Remove one config field from a toolkit's config file.
 
@@ -2239,6 +2258,7 @@ def config_unset(
     layer, project_root = _resolve_config_layer(
         layer_explicit=layer_explicit,
         layer_user=layer_user, layer_project=layer_project,
+        layer_local=layer_local,
     )
     removed = unset_config_value(
         toolkit_name, key, layer=layer, project_root=project_root,
@@ -2329,7 +2349,7 @@ def _render_config_scaffold(toolkit_name: str, schema, source_path: Path) -> str
     help="Overwrite an existing config file.",
 )
 def config_init(
-    toolkit_name, layer_explicit, layer_user, layer_project, force,
+    toolkit_name, layer_explicit, layer_user, layer_project, layer_local, force,
 ):
     """Scaffold a commented YAML config file from the toolkit's ``config:`` schema.
 
@@ -2359,6 +2379,7 @@ def config_init(
     layer, project_root = _resolve_config_layer(
         layer_explicit=layer_explicit,
         layer_user=layer_user, layer_project=layer_project,
+        layer_local=layer_local,
     )
     out_path = _cfg_path(
         toolkit_name, layer=layer, project_root=project_root,
@@ -3480,6 +3501,17 @@ def _pin_after_install(
         )
 
 
+def _ensure_toolbase_gitignore(tb_dir: Path) -> None:
+    """Drop the canonical .toolbase/.gitignore if none exists.
+
+    Covers both machine-local layers (pins and config). Created only
+    when absent — an existing file is the user's to manage.
+    """
+    gitignore = tb_dir / ".gitignore"
+    if not gitignore.exists():
+        gitignore.write_text("manifest.local.yaml\nconfig/*.local.yaml\n")
+
+
 def _pin_editable_local(name: str, *, local_scope: bool) -> None:
     """Pin (name, "editable") into the machine-local manifest layer.
 
@@ -3508,9 +3540,7 @@ def _pin_editable_local(name: str, *, local_scope: bool) -> None:
             project_root = _default_project_root()
         local_path = _local_manifest_path(_project_manifest_path(project_root))
         _add_pin(local_path, name, "editable")
-        gitignore = local_path.parent / ".gitignore"
-        if not gitignore.exists():
-            gitignore.write_text("manifest.local.yaml\n")
+        _ensure_toolbase_gitignore(local_path.parent)
         console.print(
             f"[dim]Pinned editable in {local_path.name} "
             f"(machine-local, gitignored).[/dim]"

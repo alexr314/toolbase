@@ -40,6 +40,22 @@ tb config unset calculator precision
 The file (`~/.toolbase/config/calculator.yaml`) is canonical. `config set`
 just writes it for you.
 
+## Which layer?
+
+Three layers merge, later wins key-by-key:
+
+| Layer | File | Use for |
+|---|---|---|
+| `--user` | `~/.toolbase/config/<kit>.yaml` | your defaults and secrets, every project on this machine |
+| `--project` | `<repo>/.toolbase/config/<kit>.yaml` | **committed**, shareable values the whole team should get |
+| `--local` | `<repo>/.toolbase/config/<kit>.local.yaml` | project-scoped **machine truth** — absolute tool paths, local builds. Gitignored automatically. |
+
+Inside a project, `config set` defaults to the project layer. The rule of
+thumb: if the value contains a path that only exists on your machine, it's
+`--local`; if it's a secret, it's `--user`; otherwise `--project` and commit
+it. Writing `--local` drops a `.toolbase/.gitignore` (if absent) so the file
+can't reach git by accident.
+
 ## Scaffold a fresh config file
 
 `tb config init <toolkit>` writes a commented YAML stub from the toolkit's
