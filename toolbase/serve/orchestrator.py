@@ -718,8 +718,13 @@ def _strip_caller_env_activation(env: Dict[str, str]) -> Dict[str, str]:
     return env
 
 
-def _build_host_env(toolkit_path: Path, toolkit_name: str) -> Dict[str, str]:
+def _build_host_env(toolkit_path: Path, toolkit_name: str,
+                    *, venv_bin: Optional[str] = None) -> Dict[str, str]:
     """Compose the subprocess environment for the per-toolkit host.
+
+    ``venv_bin`` (the toolkit's venv ``bin`` dir, for venv toolkits) is
+    prepended to PATH so the toolkit's own interpreter and console scripts take
+    precedence over whatever sits first on the caller's inherited PATH.
 
     The toolkit's interpreter doesn't have ``toolbase`` installed, only
     ``orchestral-ai`` and ``mcp``. We need ``toolbase._toolkit_host`` to
@@ -759,6 +764,15 @@ def _build_host_env(toolkit_path: Path, toolkit_name: str) -> Dict[str, str]:
     # tools that rely on the implicit script-dir sys.path (e.g. MadGraph's
     # bin/internal/ufomodel/write_param_card.py doing ``from parameters ...``).
     env["TOOLBASE_HOST_LOG"] = str(LOGS_DIR / f"{toolkit_name}.log")
+    if venv_bin:
+        # Put the toolkit venv's bin first on PATH. External tools the toolkit
+        # spawns (e.g. MadGraph via ``#!/usr/bin/env python3``) then resolve to
+        # the venv interpreter -- which carries the toolkit's declared deps --
+        # rather than whatever python happens to sit first on the caller's PATH
+        # (a homebrew/system python that lacks those deps is a common trap).
+        existing_path = env.get("PATH", "")
+        env["PATH"] = venv_bin + (
+            os.pathsep + existing_path if existing_path else "")
     return env
 
 
@@ -1010,7 +1024,12 @@ class Orchestrator:
         _prepare_per_toolkit_log(disc.name)
 
         cmd = _build_host_command(disc, state_config=state_config)
-        env = _build_host_env(disc.path, disc.name)
+        venv_bin = None
+        if disc.env_type == "venv":
+            python_exe = disc.meta.get("python_path")
+            if python_exe:
+                venv_bin = os.path.dirname(python_exe)
+        env = _build_host_env(disc.path, disc.name, venv_bin=venv_bin)
 
         try:
             from orchestral.mcp import MCPClient

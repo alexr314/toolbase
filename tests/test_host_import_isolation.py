@@ -152,3 +152,15 @@ def test_build_host_env_strips_active_prefix_pollution(tmp_path: Path, monkeypat
     assert "PYTHIA8DATA" not in env
     # toolbase's own PYTHONPATH injection still happens after the strip.
     assert env.get("PYTHONPATH")
+
+
+def test_build_host_env_prepends_venv_bin_to_path(tmp_path: Path):
+    venv_bin = str(tmp_path / ".venv" / "bin")
+    env = _build_host_env(tmp_path, "demo", venv_bin=venv_bin)
+    assert env["PATH"].split(os.pathsep)[0] == venv_bin
+
+
+def test_build_host_env_no_venv_bin_leaves_path(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    env = _build_host_env(tmp_path, "demo")   # venv_bin defaults to None
+    assert env["PATH"] == "/usr/bin:/bin"
