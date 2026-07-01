@@ -635,6 +635,13 @@ def _build_host_command(
     if tools_spec:
         tools_spec_arg = json.dumps(tools_spec, ensure_ascii=False)
     base_args = [
+        # ``-P`` (Python 3.11+) drops the implicit cwd/script-dir entry from
+        # this interpreter's sys.path (same effect as PYTHONSAFEPATH=1), so a
+        # toolkit dir can't shadow an installed package. Unlike the env var,
+        # the flag is NOT inherited by child subprocesses the toolkit spawns —
+        # external tools (e.g. MadGraph's own python helpers) keep normal
+        # script-dir resolution. See _build_host_env and test_host_import_isolation.
+        "-P",
         "-m", "toolbase._toolkit_host",
         "--toolkit-dir", str(disc.path),
         "--name", disc.name,
@@ -688,15 +695,16 @@ def _build_host_env(toolkit_path: Path, toolkit_name: str) -> Dict[str, str]:
     )
     env["PYTHONUNBUFFERED"] = "1"
     # The host is launched as ``python -m toolbase._toolkit_host`` with cwd
-    # at the toolkit dir, and ``-m`` prepends cwd to sys.path. A toolkit
-    # that ships a top-level dir named like an installed package (the
-    # scaffold's ``mcp/`` is the canonical trap) would then shadow that
-    # package -- e.g. ``import mcp`` resolves to the toolkit's ``mcp/``
-    # instead of the MCP SDK, and ``orchestral.mcp`` fails to import.
-    # PYTHONSAFEPATH (3.11+) stops the implicit cwd/script-dir entry; the
-    # explicit PYTHONPATH above and the spec_from_file_location tool loader
-    # are unaffected. Pins the regression in test_host_import_isolation.
-    env["PYTHONSAFEPATH"] = "1"
+    # at the toolkit dir, and ``-m`` prepends cwd to sys.path. A toolkit that
+    # ships a top-level dir named like an installed package (the scaffold's
+    # ``mcp/`` is the canonical trap) would then shadow that package -- e.g.
+    # ``import mcp`` resolves to the toolkit's ``mcp/`` instead of the MCP SDK.
+    # That cwd/script-dir entry is suppressed via the ``-P`` interpreter flag
+    # in the host argv (see _build_host_argv), NOT a PYTHONSAFEPATH env var:
+    # the flag isolates only the host interpreter, whereas the env var is
+    # inherited by every child subprocess a toolkit spawns and breaks external
+    # tools that rely on the implicit script-dir sys.path (e.g. MadGraph's
+    # bin/internal/ufomodel/write_param_card.py doing ``from parameters ...``).
     env["TOOLBASE_HOST_LOG"] = str(LOGS_DIR / f"{toolkit_name}.log")
     return env
 
