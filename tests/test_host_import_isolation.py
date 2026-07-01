@@ -29,6 +29,7 @@ from toolbase.serve.orchestrator import (
     ToolkitDiscovery,
     _build_host_command,
     _build_host_env,
+    _strip_caller_env_activation,
 )
 
 
@@ -92,3 +93,62 @@ def test_dash_P_isolates_host_but_not_children(tmp_path: Path):
         cwd=tmp_path, env=base_env,
     )
     assert child_from_guarded_parent.returncode == 0
+
+
+# --- Caller conda/venv activation isolation -------------------------------- #
+# _build_host_env must not leak the CALLER's activated-env pollution
+# (PYTHIA8DATA, ROOTSYS, compiler flags, ...) into the toolkit host, or a
+# toolkit's own bundled software gets pointed at the caller's install.
+
+
+def test_strip_removes_vars_bound_to_active_prefix(tmp_path: Path):
+    prefix = str(tmp_path / "envs" / "caller")
+    env = {
+        "CONDA_PREFIX": prefix,
+        "PYTHIA8DATA": prefix + "/share/Pythia8/xmldoc",   # data path -> strip
+        "ROOTSYS": prefix,                                  # -> strip
+        "CFLAGS": f"-isystem {prefix}/include",             # build flag -> strip
+        "SOME_API_KEY": "sk-abc",                           # unrelated -> keep
+    }
+    out = _strip_caller_env_activation(dict(env))
+    assert "PYTHIA8DATA" not in out
+    assert "ROOTSYS" not in out
+    assert "CFLAGS" not in out
+    assert out.get("SOME_API_KEY") == "sk-abc"
+
+
+def test_strip_keeps_path_family_and_conda_bookkeeping(tmp_path: Path):
+    prefix = str(tmp_path / "envs" / "caller")
+    env = {
+        "CONDA_PREFIX": prefix,
+        "PATH": f"{prefix}/bin:/usr/bin",           # search path -> keep
+        "LD_LIBRARY_PATH": f"{prefix}/lib",         # loader path -> keep
+        "CONDA_DEFAULT_ENV": "caller",              # CONDA_* bookkeeping -> keep
+    }
+    out = _strip_caller_env_activation(dict(env))
+    assert out["PATH"] == f"{prefix}/bin:/usr/bin"
+    assert out["LD_LIBRARY_PATH"] == f"{prefix}/lib"
+    assert out["CONDA_DEFAULT_ENV"] == "caller"
+
+
+def test_strip_is_noop_without_active_env():
+    env = {"PYTHIA8DATA": "/somewhere/xmldoc", "PATH": "/usr/bin"}
+    out = _strip_caller_env_activation(dict(env))
+    assert out == env  # no CONDA_PREFIX/VIRTUAL_ENV -> nothing to attribute
+
+
+def test_strip_honors_virtualenv_prefix(tmp_path: Path):
+    venv = str(tmp_path / ".venv")
+    env = {"VIRTUAL_ENV": venv, "PYTHIA8DATA": venv + "/share/Pythia8/xmldoc"}
+    out = _strip_caller_env_activation(dict(env))
+    assert "PYTHIA8DATA" not in out
+
+
+def test_build_host_env_strips_active_prefix_pollution(tmp_path: Path, monkeypatch):
+    prefix = str(tmp_path / "envs" / "caller")
+    monkeypatch.setenv("CONDA_PREFIX", prefix)
+    monkeypatch.setenv("PYTHIA8DATA", prefix + "/share/Pythia8/xmldoc")
+    env = _build_host_env(tmp_path, "demo")
+    assert "PYTHIA8DATA" not in env
+    # toolbase's own PYTHONPATH injection still happens after the strip.
+    assert env.get("PYTHONPATH")

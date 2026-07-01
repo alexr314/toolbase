@@ -669,6 +669,55 @@ def _build_host_command(
     raise RuntimeError(f"unsupported env_type {disc.env_type!r}")
 
 
+# Environment variables never stripped by ``_strip_caller_env_activation``,
+# even when their value references the caller's active prefix. These compose
+# search paths (rather than binding a package to a single foreign install), and
+# tools/loaders rely on them; the toolkit's own launcher and PATH resolution
+# manage what belongs on them.
+_HOST_ENV_KEEP = frozenset({
+    "PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH",
+    "DYLD_FALLBACK_LIBRARY_PATH", "MANPATH", "INFOPATH",
+})
+
+
+def _strip_caller_env_activation(env: Dict[str, str]) -> Dict[str, str]:
+    """Drop variables bound to the CALLER's activated conda/virtualenv prefix.
+
+    A toolkit runs in its OWN isolated env. But toolbase is frequently invoked
+    from *inside* an activated conda/virtual environment (a harness's env, a
+    developer shell), and that env's ``activate.d`` scripts export variables
+    bound to the caller's prefix -- package data/config paths (``PYTHIA8DATA``,
+    ``ROOTSYS``, ``GSETTINGS_SCHEMA_DIR``, ``XML_CATALOG_FILES``, ...) and build
+    flags (``CFLAGS``, ``LDFLAGS``, ``CMAKE_ARGS``, ...). Inherited by the
+    toolkit host and the external tools it spawns, these point the toolkit's
+    OWN bundled software at the caller's install and cause instance/version
+    mismatches -- e.g. a toolkit's Pythia 8.317 loading the caller env's 8.312
+    xmldoc via ``PYTHIA8DATA`` and aborting on a version check.
+
+    Any variable whose value references the caller's active prefix
+    (``CONDA_PREFIX`` / ``VIRTUAL_ENV``) is removed so the toolkit's own env is
+    authoritative. This is prefix-scoped, not a hardcoded name list, so it
+    covers whatever a given activation injected. ``_HOST_ENV_KEEP`` (PATH-like
+    search paths), toolbase's own vars, and conda bookkeeping (``CONDA_*``) are
+    preserved. Mutates and returns ``env``.
+    """
+    prefixes = []
+    for var in ("CONDA_PREFIX", "VIRTUAL_ENV"):
+        val = env.get(var)
+        if val:
+            prefixes.append(os.path.normpath(val) + os.sep)
+    if not prefixes:
+        return env
+    for key in list(env):
+        if key in _HOST_ENV_KEEP or key.startswith(("CONDA", "TOOLBASE")):
+            continue
+        value = env.get(key) or ""
+        if any(pfx in (os.path.normpath(value) + os.sep) or pfx in value
+               for pfx in prefixes):
+            del env[key]
+    return env
+
+
 def _build_host_env(toolkit_path: Path, toolkit_name: str) -> Dict[str, str]:
     """Compose the subprocess environment for the per-toolkit host.
 
@@ -676,6 +725,10 @@ def _build_host_env(toolkit_path: Path, toolkit_name: str) -> Dict[str, str]:
     ``orchestral-ai`` and ``mcp``. We need ``toolbase._toolkit_host`` to
     be importable, so we point ``PYTHONPATH`` at the parent package
     location of the running orchestrator.
+
+    The caller's activated-conda/venv pollution is first stripped (see
+    ``_strip_caller_env_activation``) so the toolkit's isolated env is
+    authoritative for its own bundled software.
 
     We also pass ``TOOLBASE_HOST_LOG`` so the host can redirect its
     stderr into ``~/.toolbase/logs/<toolkit>.log``. Pre-0.4.1 the
@@ -685,7 +738,7 @@ def _build_host_env(toolkit_path: Path, toolkit_name: str) -> Dict[str, str]:
     stderr, so the host writes directly. Same destination, simpler
     plumbing.
     """
-    env = os.environ.copy()
+    env = _strip_caller_env_activation(os.environ.copy())
     # Find the directory that contains the ``toolbase`` package.
     import toolbase as _sk
     pkg_parent = str(Path(_sk.__file__).resolve().parent.parent)
