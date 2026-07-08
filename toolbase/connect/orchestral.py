@@ -36,7 +36,7 @@ from __future__ import annotations
 import contextlib
 import io
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Dict, Iterator, List, Optional, Union
 
 from ..serve.orchestrator import DEFAULT_CALL_TIMEOUT_S, Orchestrator
 
@@ -64,18 +64,21 @@ def is_orchestral_available() -> bool:
     return importlib.util.find_spec("orchestral") is not None
 
 
-def _resolve(project_root: Optional[Path], profile: Optional[str]):
+def _resolve(project_root, profile: Optional[str]):
     """Resolve the active profile, auto-discovering the project root.
 
     Mirrors ``tb serve``: if ``project_root`` is None we walk up from the
     cwd for a project; absent one, resolution falls through to the user
-    layer.
+    layer. ``project_root`` may be a ``str`` or ``Path``; a ``str`` is
+    coerced (downstream path handling requires ``Path``).
     """
     from ..envs import find_project_root
     from ..serve.profiles import resolve_profile
 
     if project_root is None:
         project_root = find_project_root()
+    elif not isinstance(project_root, Path):
+        project_root = Path(project_root)
     return resolve_profile(project_root, cli_profile=profile)
 
 
@@ -90,7 +93,7 @@ def _null_console():
 def toolbase_tools(
     *,
     profile: Optional[str] = None,
-    project_root: Optional[Path] = None,
+    project_root: Optional[Union[str, Path]] = None,
     call_timeout_s: float = DEFAULT_CALL_TIMEOUT_S,
     quiet: bool = False,
     config_overrides: Optional[Dict[str, Any]] = None,

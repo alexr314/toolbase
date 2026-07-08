@@ -149,6 +149,16 @@ def test_toolbase_tools_discovers_project_root_when_omitted(fake_orch, monkeypat
     assert fake_orch["root"] == Path("/discovered/root")
 
 
+def test_toolbase_tools_accepts_str_project_root(fake_orch):
+    # Regression: the documented public API took `project_root: PATH` but a
+    # str crashed downstream path handling (`'str' has no attribute
+    # 'resolve'`). A str must be coerced to Path.
+    with oc.toolbase_tools(project_root="/some/project"):
+        pass
+    assert fake_orch["root"] == Path("/some/project")
+    assert isinstance(fake_orch["root"], Path)
+
+
 # ── CLI: tb connect orchestral ────────────────────────────────────────
 
 
