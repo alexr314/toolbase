@@ -81,5 +81,13 @@ logs/
 # live spec; the rest stay archived locally.)
 docs/archive/
 
+# Design drafts and proposals: worked on locally, not shipped in the public
+# repo. Promote a doc by removing its ignore entry once it is finished and
+# meant for readers outside the team.
+docs/proposals/
+docs/BENCHMARKING_INTEGRATION.md
+docs/DOCS_SNIPPET_AUDIT_2026-05-06.md
+docs/KNOWN_GAPS.md
+
 # MkDocs build output
 /site/
