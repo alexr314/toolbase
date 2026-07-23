@@ -15,7 +15,7 @@
 | `tb list` | List installed toolkits, active/inactive | `-v/--verbose`, `--json` |
 | `tb activate ITEM` | Expose a toolkit / `toolkit/bundle` / `toolkit__tool` | `-g`, `-l` |
 | `tb deactivate ITEM` | Hide a toolkit / bundle / tool | `-g`, `-l` |
-| `tb serve` | Serve the active profile over MCP (the harness runs this) | `--profile`, `--dry-run`, `--call-timeout` |
+| `tb serve` | Serve the active profile over MCP (the harness runs this) | `--profile`, `--dry-run`, `--call-timeout`, `--bare`/`--qualified` |
 | `tb connect [HARNESS]` | Wire toolbase into a harness: `claude-code`/`codex` config, or scaffold an `orchestral` script | `-g`, `-l`, `--profile`, `--abspath`, `--remove`, `--dry-run`, `--list`, `--harnesses`, `--out`, `--force` |
 | `tb disconnect HARNESS` | Remove toolbase from a harness | `-g`, `-l` |
 | `tb orchestral` | Run the agent script from `tb connect orchestral` | `--script` |

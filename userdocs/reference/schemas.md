@@ -11,10 +11,15 @@ User: `~/.toolbase/serve.yaml`. Project: `<repo>/.toolbase/serve.yaml`.
 ```yaml
 default:
   profile: paper            # the active profile
+  bare: false               # true = serve <tool> instead of <toolkit>__<tool>
   disabled:                 # absolute blocklist, on top of any profile
     toolkits: [legacy]      # never serve these toolkits
     tools: [calc__noisy]    # never serve these tools (qualified)
 ```
+
+With `bare: true` (or `tb serve --bare`) tools are advertised un-namespaced;
+a name exposed by two toolkits stays qualified (both remain callable) with a
+warning, while the rest are served bare.
 
 ## Profile
 

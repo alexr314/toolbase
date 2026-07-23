@@ -558,8 +558,12 @@ def _tool_yaml_name_to_mcp_name(class_name: str) -> str:
     ``@define_tool`` — both override the derived default at the host.
     For those, ``_read_bundles_and_membership`` keys ``name_to_bundles``
     by the explicit ``display_name`` rather than calling this helper.
+
+    Delegates to ``toolbase.naming.mcp_tool_name`` so the strip-``Tool`` rule
+    has exactly one definition shared with the host and external consumers.
     """
-    return class_name.removesuffix("Tool")
+    from ..naming import mcp_tool_name
+    return mcp_tool_name(class_name)
 
 
 def _resolve_bundle_availability(
@@ -745,8 +749,15 @@ def _build_host_env(toolkit_path: Path, toolkit_name: str,
     """
     env = _strip_caller_env_activation(os.environ.copy())
     # Find the directory that contains the ``toolbase`` package.
-    import toolbase as _sk
-    pkg_parent = str(Path(_sk.__file__).resolve().parent.parent)
+    import toolbase as _tb
+    _tb_file = getattr(_tb, "__file__", None)
+    if _tb_file:
+        pkg_parent = str(Path(_tb_file).resolve().parent.parent)
+    else:
+        # Namespace-package / some editable layouts leave ``__file__`` None;
+        # ``__path__`` still points at the package dir, so its parent is the
+        # directory that contains the ``toolbase`` package.
+        pkg_parent = str(Path(next(iter(_tb.__path__))).resolve().parent)
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = (
         pkg_parent + (os.pathsep + existing if existing else "")
@@ -851,6 +862,7 @@ class Orchestrator:
         profile: Optional[Any] = None,  # serve.profiles.ResolvedProfile
         call_timeout_s: float = DEFAULT_CALL_TIMEOUT_S,
         config_overrides: Optional[Dict[str, Any]] = None,
+        bare: bool = False,
     ):
         self.console = console or Console(stderr=True)
         # Stderr console because stdin/stdout are owned by MCP stdio in the
@@ -880,6 +892,23 @@ class Orchestrator:
         # trial sandbox); keys a toolkit doesn't declare as StateFields
         # are ignored by the host's injection.
         self._config_overrides = dict(config_overrides or {})
+        # Bare mode: advertise un-namespaced <tool> names instead of the
+        # default <toolkit>__<tool>. Opt-in (CLI --bare / serve.yaml
+        # default.bare) because it re-introduces cross-toolkit name clashes,
+        # which the default namespacing avoids.
+        self._bare = bool(bare)
+        # Per-toolkit {toolkit, advertised, served, hidden} summaries, filled
+        # during start(). Lets an in-process embedder see how many tools were
+        # dropped (and flag it) without scraping serve.log.
+        self._tool_report: List[Dict[str, Any]] = []
+
+    @property
+    def tool_report(self) -> List[Dict[str, Any]]:
+        """Per-toolkit serve summary from the last ``start()``: one
+        ``{toolkit, advertised, served, hidden}`` dict each. ``hidden > 0``
+        means tools were dropped by the profile / bundle selection / config
+        gating."""
+        return list(self._tool_report)
 
     def _selection_for(self, name: str):
         """Return the ``ToolkitSelection`` for a toolkit under the active
@@ -898,6 +927,7 @@ class Orchestrator:
         server with zero tools).
         """
         self.logger.log_event("serve_started", message="orchestrator booting")
+        self._tool_report = []  # reset so a re-start() doesn't accumulate
 
         discoveries = discover_toolkits(self.toolkits_dir)
         if not discoveries:
@@ -934,11 +964,79 @@ class Orchestrator:
 
         # Print second half of the banner (final status + tool count).
         self._print_startup_banner_post()
+        if self._bare:
+            # Bare mode: a name shared by two toolkits can't be served bare
+            # without one shadowing the other, so those tools fall back to
+            # their qualified <toolkit>__<tool> form (never dropped).
+            self._disambiguate_bare_collisions()
+        else:
+            # Default (namespaced): overlaps are harmless; just flag them.
+            self._warn_name_collisions()
 
         if not self._runtimes:
             raise RuntimeError("no toolkits could be started")
 
         return self._proxy_tools
+
+    def _disambiguate_bare_collisions(self) -> None:
+        """In bare mode two toolkits exposing the same tool name would yield
+        two identically-named wire tools the agent can't tell apart. Rather
+        than pick a winner and drop the rest (which would make a real tool
+        uncallable), fall the *colliding* tools back to their qualified
+        ``<toolkit>__<tool>`` form so both stay callable — bare naming is
+        applied only where it's unambiguous. Non-colliding tools keep their
+        bare name. One warning per collided name. Never blocks serving."""
+        from collections import defaultdict
+
+        groups: Dict[str, List[Any]] = defaultdict(list)
+        for p in self._proxy_tools:
+            groups[p._stk_namespaced_name].append(p)
+
+        for bare_name, group in groups.items():
+            if len(group) < 2:
+                continue
+            toolkits = sorted(getattr(p, "_stk_toolkit", "?") for p in group)
+            # Re-point each colliding proxy at its qualified name. The proxy's
+            # get_name()/get_tool_spec() read _stk_namespaced_name, so this is
+            # all it takes to change the advertised name.
+            for p in group:
+                tk = getattr(p, "_stk_toolkit", "?")
+                p._stk_namespaced_name = f"{tk}__{p._stk_upstream_name}"
+            qualified = ", ".join(f"{tk}__{bare_name}" for tk in toolkits)
+            self.console.print(
+                f"  [yellow]⚠[/yellow] bare mode: tool [bold]{bare_name}[/bold] "
+                f"is provided by {toolkits} — served qualified ({qualified}) so "
+                "both stay callable. Set a toolkit.yaml display_name to give one "
+                "a distinct bare name."
+            )
+            self.logger.log_event(
+                "bare_collision_qualified", tool=bare_name,
+                toolkits=",".join(toolkits), level="warn",
+            )
+
+    def _warn_name_collisions(self) -> None:
+        """One warning per bare tool name exposed by more than one served
+        toolkit. Harmless under the default ``<toolkit>__<tool>`` form (the
+        prefix keeps them distinct on the wire), but surfaced because it's a
+        real clash if tools are ever served un-namespaced and is usually a sign
+        of overlapping toolkits. Deterministic order (toolkits sorted) so the
+        message is stable across restarts."""
+        from ..naming import find_name_collisions
+
+        tools_by_toolkit = {
+            name: rt.upstream_tool_names for name, rt in self._runtimes.items()
+        }
+        for tool_name, toolkits in find_name_collisions(tools_by_toolkit).items():
+            wire = " / ".join(f"{tk}__{tool_name}" for tk in toolkits)
+            self.console.print(
+                f"  [yellow]⚠[/yellow] tool [bold]{tool_name}[/bold] is provided "
+                f"by {len(toolkits)} active toolkits {toolkits} — served "
+                f"distinctly as {wire} (a clash only if served un-namespaced)"
+            )
+            self.logger.log_event(
+                "tool_name_collision", tool=tool_name,
+                toolkits=",".join(toolkits), level="warn",
+            )
 
     def _print_startup_banner_pre(self, discoveries: List[ToolkitDiscovery]) -> None:
         self.console.print("\n[bold]Checking installed toolkits...[/bold]")
@@ -1201,7 +1299,9 @@ class Orchestrator:
         exposed_tools: List[str] = []
         forward = self._make_forwarder(disc.name)
         skipped_install = 0
+        n_advertised = 0
         for defn in spawn.client.get_tool_definitions():
+            n_advertised += 1
             upstream_name = defn["name"]
             tool_bundles = name_to_bundles.get(upstream_name, [])
             if not tool_is_served(
@@ -1217,16 +1317,20 @@ class Orchestrator:
                 ):
                     skipped_install += 1
                 continue
-            namespaced = f"{disc.name}__{upstream_name}"
-            self._proxy_tools.append(make_proxy_tool(
+            # Default: qualified <toolkit>__<tool>. Bare mode: the un-prefixed
+            # <tool> (upstream_name is already the resolved display name).
+            wire_name = upstream_name if self._bare else f"{disc.name}__{upstream_name}"
+            proxy = make_proxy_tool(
                 upstream_name=upstream_name,
-                namespaced_name=namespaced,
+                namespaced_name=wire_name,
                 description=defn.get("description") or "",
                 input_schema=defn.get("inputSchema") or {
                     "type": "object", "properties": {}, "required": []
                 },
                 forward=forward,
-            ))
+            )
+            proxy._stk_toolkit = disc.name  # for bare-mode collision resolution
+            self._proxy_tools.append(proxy)
             exposed_tools.append(upstream_name)
 
         # One info-level line per toolkit if subset-install skipped any
@@ -1244,6 +1348,49 @@ class Orchestrator:
                 toolkit=disc.name,
                 skipped_count=skipped_install,
                 installed_bundles=installed_repr,
+            )
+
+        # Catch-all visibility: whenever fewer tools are served than the
+        # toolkit advertised, say so — regardless of reason (active profile,
+        # bundle selection, config gating, subset install, disabled list). The
+        # subset-install line above only covers one reason and only fires when
+        # `tool_bundles` is non-empty, so tools that match no served bundle
+        # would otherwise vanish with no signal at any log level. This is the
+        # line that turns "why did I only get 1 of 54 tools?" from a mystery
+        # into a log entry. Recorded per toolkit so an in-process embedder
+        # (e.g. a benchmark runner) can read it back from `self._tool_report`.
+        n_served = len(exposed_tools)
+        n_hidden = n_advertised - n_served
+        report = {
+            "toolkit": disc.name,
+            "advertised": n_advertised,
+            "served": n_served,
+            "hidden": n_hidden,
+        }
+        self._tool_report.append(report)
+        if n_advertised > 0 and n_served == 0:
+            # Nothing survived the filters — an actual "you'll get no tools"
+            # misconfiguration, worth a real warning.
+            self.console.print(
+                f"  [yellow]⚠[/yellow] {disc.name}: advertised {n_advertised} "
+                "tools but serving 0 — all filtered out by the active profile / "
+                "bundle selection / config gating"
+            )
+            self.logger.log_event(
+                "tools_all_hidden", toolkit=disc.name, advertised=n_advertised,
+                level="warn",
+            )
+        elif n_hidden > 0:
+            # A profile serving a subset of a toolkit's tools is normal; report
+            # the count as info (no alarm) so "where did the rest go?" is
+            # answerable without implying something broke.
+            self.console.print(
+                f"  [dim]{disc.name}: serving {n_served} of {n_advertised} "
+                f"tools ({n_hidden} not in the active profile's bundles)[/dim]"
+            )
+            self.logger.log_event(
+                "tools_hidden", toolkit=disc.name, served=n_served,
+                advertised=n_advertised, hidden=n_hidden,
             )
 
         self._runtimes[disc.name] = ToolkitRuntime(
@@ -1648,6 +1795,7 @@ def serve(
     no_tui: bool = True,
     profile: Optional[Any] = None,
     call_timeout_s: float = DEFAULT_CALL_TIMEOUT_S,
+    bare: bool = False,
 ) -> int:
     """Top-level entry point for ``toolbase serve``.
 
@@ -1660,6 +1808,11 @@ def serve(
 
     ``call_timeout_s`` is the upper bound on each upstream tool call as
     enforced by Orchestral's MCPClient. Default 60 s.
+
+    ``bare`` advertises un-namespaced ``<tool>`` names instead of the default
+    qualified ``<toolkit>__<tool>``. A name shared by two toolkits can't be
+    served bare unambiguously, so those tools fall back to their qualified
+    form (both stay callable) with a warning; bare naming applies to the rest.
     """
     if not no_tui:
         raise NotImplementedError("TUI mode not yet implemented; use --no-tui")
@@ -1669,6 +1822,7 @@ def serve(
     console = Console(stderr=True)
     orch = Orchestrator(
         console=console, profile=profile, call_timeout_s=call_timeout_s,
+        bare=bare,
     )
 
     try:

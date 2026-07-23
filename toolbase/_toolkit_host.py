@@ -363,11 +363,15 @@ def _import_explicit_tools(
             # ``inspiresearch``) was a single-blob lowercase that lost
             # word boundaries — hard for the agent to parse and not
             # something the author could override per-tool.
+            # Resolve the wire name via the one canonical rule (toolbase.naming),
+            # keeping the host's precedence: toolkit.yaml display_name >
+            # @define_tool display_name (already on the instance) > stripped class.
+            from .naming import mcp_tool_name
             yaml_display = entry.get("display_name") if isinstance(entry, dict) else None
             if isinstance(yaml_display, str) and yaml_display:
                 instance._mcp_display_name = yaml_display
             elif not getattr(instance, "_mcp_display_name", None):
-                instance._mcp_display_name = attr_name.removesuffix("Tool")
+                instance._mcp_display_name = mcp_tool_name(attr_name)
             tools.append(instance)
         except Exception as exc:
             _emit_tool_skip(

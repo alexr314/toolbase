@@ -22,6 +22,10 @@ except PackageNotFoundError:
 
 __author__ = "Alex Roman"
 
+# The canonical tool-naming rule, public so external integrators (e.g.
+# toolbench's `python:` bridge) reproduce served names without re-deriving them.
+from .naming import mcp_tool_name, namespaced_tool_name, strip_tool_suffix
+
 # Placeholder imports for future toolkit categories
 # from .astro import aster
 # from .hep import heptapod

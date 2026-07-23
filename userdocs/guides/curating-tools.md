@@ -57,6 +57,18 @@ tb serve --dry-run   # the set the agent will see
 A tool is hidden if its bundle isn't active, you deactivated it, or its bundle
 needs config you haven't set ([Configuring toolkits](configuring-toolkits.md)).
 
+If two active toolkits expose the same tool name, `tb list -v` flags it and
+`tb serve` warns at startup:
+
+```console
+    ✓ add     [bundle: basic]  (also in: matrix)
+```
+
+It's harmless — tools are served namespaced (`calculator__add`, `matrix__add`),
+so they stay distinct — but the flag lets you spot redundant toolkits or names
+that would clash if ever served un-namespaced. See
+[Troubleshooting](../troubleshooting.md#two-toolkits-expose-the-same-tool-name).
+
 ## Next
 
 - [Configuring toolkits](configuring-toolkits.md): unlock config-gated bundles

@@ -37,6 +37,26 @@ needs config:
 
 Set the key (`tb config set <toolkit> cas_path <value>`) and re-serve.
 
+## Two toolkits expose the same tool name
+
+If two active toolkits each define, say, an `add` tool, `tb serve` prints a
+warning at startup and `tb list -v` annotates the rows:
+
+```console
+✓ add     [bundle: basic]  (also in: matrix)
+```
+
+This is **harmless by default**: tools are served namespaced as
+`<toolkit>__<tool>`, so the agent still sees `calculator__add` and
+`matrix__add` as distinct. The warning is a heads-up. It only *matters*
+under bare serving (`tb serve --bare`): there, a shared name can't be served
+bare unambiguously, so those tools fall back to their qualified
+`<toolkit>__<tool>` form (both stay callable) with a warning, while the rest
+are served bare. To give one a distinct bare name, set a `display_name:` in its
+`toolkit.yaml`, or `tb deactivate` the other. `tb install` prints the same
+heads-up when installing a toolkit whose tool names overlap an already-active
+one.
+
 ## "config incomplete" / a toolkit is skipped at serve
 
 A required config field is unset. Find and fill it:

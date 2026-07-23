@@ -97,6 +97,8 @@ def toolbase_tools(
     call_timeout_s: float = DEFAULT_CALL_TIMEOUT_S,
     quiet: bool = False,
     config_overrides: Optional[Dict[str, Any]] = None,
+    report: Optional[List[Dict[str, Any]]] = None,
+    bare: bool = False,
 ) -> Iterator[List[Any]]:
     """Spin up toolbase's served tools and yield them as orchestral BaseTools.
 
@@ -122,6 +124,14 @@ def toolbase_tools(
             agent calls read/write the same tree the agent's other
             tools see. Keys a toolkit doesn't declare as StateFields
             are ignored by the host.
+        report: optional list; when provided, it is extended with one
+            ``{toolkit, advertised, served, hidden}`` dict per served toolkit
+            so the caller can detect and surface dropped tools even under
+            ``quiet=True`` (where the console diagnostics are suppressed).
+        bare: advertise tools un-namespaced (``<tool>``) instead of the default
+            qualified ``<toolkit>__<tool>``. A name shared by two toolkits
+            falls back to its qualified form (both stay callable) with a
+            warning; the rest are served bare.
 
     Yields:
         A list of orchestral ``BaseTool`` instances (namespaced
@@ -149,9 +159,17 @@ def toolbase_tools(
         # Passed conditionally so test doubles (and any subclass) with the
         # pre-override Orchestrator signature keep working unchanged.
         orch_kwargs["config_overrides"] = config_overrides
+    if bare:
+        # Conditional for the same back-compat reason (default False == the
+        # long-standing namespaced behavior, so old signatures are untouched).
+        orch_kwargs["bare"] = bare
     orch = Orchestrator(**orch_kwargs)
     try:
         tools = orch.start()
+        if report is not None:
+            # Let the caller see how many tools each toolkit dropped (profile /
+            # bundle / config gating) — invisible otherwise when quiet=True.
+            report.extend(orch.tool_report)
         yield tools
     finally:
         orch.shutdown()
