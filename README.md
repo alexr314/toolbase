@@ -1,195 +1,155 @@
 # toolbase
 
-The package manager and runtime for AI agent tools. Publish toolkits to
-the [Toolbase registry](https://toolbase-ai.com) and use them in coding
-agents (Claude Code, Codex) or any client that speaks the
-[Model Context Protocol](https://modelcontextprotocol.io). Toolkits span
-any domain, from web and data utilities to scientific categories like
-astro, hep, and quantum.
+The package manager for AI agent toolkits. Install toolkits into
+isolated environments, curate which tools your agent sees, and serve
+them to your harness over the [Model Context Protocol](https://modelcontextprotocol.io). Toolkits
+span any domain, from web and data utilities to scientific categories
+like astro, hep, and quantum.
 
 A **toolkit** is the publishable unit; it bundles one or more **tools**
 an agent can call. Each toolkit installs into its own isolated Python
 environment, so dependency conflicts between toolkits are never a
 problem.
 
+Full CLI reference: <https://toolbase-ai.com/docs>.
+
 ---
 
-## Quickstart
+## Install toolbase
 
 ```bash
-pip install toolbase
-
-# Install a toolkit from the registry (global by default)
-tb install arxiv-search
-
-# Expose it to the agent (installing alone serves nothing)
-tb activate arxiv-search
-
-# Wire toolbase into Claude Code (writes its MCP config for you)
-tb connect claude-code
-
-# See what's installed and what's active
-tb list
+pip install toolbase     # Python 3.12+
 ```
 
-`tb` is a shorter alias for `toolbase`; both ship with the package
-and behave identically.
+## Arm your agent
 
-**Install, then activate.** Installing places a toolkit in the cache but
-does not serve it — nothing reaches the agent until you `tb activate` it
-(conda-style: install ≠ activate). `tb install -a arxiv-search` does both
-in one step. Use `tb deactivate` to hide a toolkit, bundle, or tool again.
-
-Installs are global by default (`-g`). Use `-l` to pin a toolkit into
-the current project's `.toolbase/manifest.yaml` instead — the binary
-still lives in the shared global cache, only the pin is project-scoped,
-so a collaborator who clones the project and runs `tb install` (no
-args) gets the same toolkits at the same versions.
-
-**`tb connect` replaces hand-editing MCP config.** It writes the
-`toolbase` server entry into [Claude Code](https://claude.ai/code)'s
-config (`~/.claude.json` for user scope, `.mcp.json` for `-l` project
-scope). Claude Code then spawns its own `toolbase serve` subprocess and
-discovers the active profile's tools. To watch tool calls fire in real
-time, run `tb logs` in another terminal. (If you'd rather wire it by
-hand, the entry is `{"mcpServers": {"toolbase": {"command": "toolbase",
-"args": ["serve"]}}}`.)
-
-### Curating what the agent sees
-
-`tb activate` / `tb deactivate` edit the active **profile** — a named
-curated set of tools. Three granularities:
+The loop is **install → activate → connect**. `tb` is a short alias for
+`toolbase`; both ship with the package and behave identically.
 
 ```bash
-tb activate heptapod                 # the whole toolkit
-tb activate heptapod/pythia          # one bundle (a coherent group of tools)
-tb activate heptapod__run_pythia     # one specific tool
+tb install calculator             # download into an isolated environment
+tb activate calculator            # expose it to the agent
+tb connect claude-code            # write toolbase into Claude Code's MCP config
 ```
 
-Most users only ever touch the default profile via these commands. Power
-users can keep several named profiles (`tb profile create paper`,
-`tb connect claude-code --profile paper`) and switch between them. Run
-`tb profile tools` to see the bundles and tools a toolkit offers.
+Now launch your harness (e.g. `claude` for Claude Code) — or, in an
+already-running session, reconnect the toolbase MCP server. The tools
+appear as `calculator__add`, `calculator__multiply`, etc.
+`tb install calculator -a` installs and activates in one step.
+
+**Install ≠ activate.** Installing places a toolkit in the global cache
+but serves nothing — activation is what exposes it to the agent. The
+binary always lives in the shared cache (`~/.toolbase/cache/`); only
+the activation is scoped: `tb activate` writes to the current
+directory's `.toolbase/` by default, `-g` writes to the user-wide
+profile instead.
+
+**`tb connect` writes the MCP config for you.** Claude Code, Codex, and
+Orchestral are all supported (`tb connect --harnesses` lists them);
+Claude Code and Codex are MCP clients (`tb connect` edits their config
+file), while Orchestral gets a runnable agent script you launch
+yourself.
+
+## Inspect
+
+```bash
+tb list              # installed toolkits, ✓ active / ✗ inactive
+tb list -v           # per-tool view with bundle + config-gating annotations
+tb logs              # tool calls, live (best diagnostic for "did it fire?")
+```
+
+## Curate what the agent sees
+
+`tb activate` / `deactivate` work at three granularities:
+
+```bash
+tb activate calculator                # the whole toolkit
+tb activate calculator/scientific     # one bundle (group of related tools)
+tb activate calculator__add           # one specific tool
+tb deactivate calculator__add         # hide it again
+```
+
+A **bundle** is a self-contained capability an author carves out of a
+toolkit, with its own deps and skills. `tb profile tools calculator`
+lists what's available. Power users can keep several named profiles
+(`tb profile create paper`,
+`tb connect claude-code --profile paper`) and switch between them; most
+users only ever touch the default profile.
+
+## Share a project without sharing your machine
+
+Toolkits that need configuration (an API key, a path to an external
+binary) read it from three layers, later winning key-by-key:
+
+| Layer | File | For |
+|---|---|---|
+| user | `~/.toolbase/config/<kit>.yaml` | your defaults and secrets, every project |
+| project | `<repo>/.toolbase/config/<kit>.yaml` | committed, shared with the team |
+| local | `<repo>/.toolbase/config/<kit>.local.yaml` | this project on *this* machine; gitignored |
+
+```bash
+tb config set calculator precision 10                  # committed
+tb config set calculator solver_path /opt/bin --local  # yours alone
+```
+
+Toolkit versions split the same way: `manifest.yaml` is committed so a
+collaborator who clones the project and runs `tb install` gets the same
+toolkits at the same versions, while `manifest.local.yaml` holds machine-local
+pins like editable installs.
 
 ---
 
 ## Authoring a toolkit
 
 ```bash
-tb init my-toolkit              # scaffold from template
-# tb init my-toolkit --with-setup   # if your toolkit needs a setup.py
+tb init my-toolkit             # scaffold from template
 cd my-toolkit
-# write your tools in tools/ ; write skills in skills/
-tb validate                     # check structure
-tb login                        # one-time, browser-flow auth (per-user)
-tb publish                      # ship it (auto-registers on first run)
+# write tools in tools/ and skills in skills/
+tb validate                    # check structure
+tb login                       # one-time browser-flow auth
+tb publish                     # ship it (auto-registers on first run)
 ```
 
-`tb publish` registers the toolkit on the registry on its first run —
-no separate step. If the name isn't registered yet, it prompts you
-(using the metadata in `toolkit.yaml`) and registers it before
-uploading. `tb create` is still available if you want to reserve a
-name without uploading code yet, but it's no longer required.
-
-`tb login` (no toolkit name) does a browser-flow that gives you a
-per-user token good for any toolkit you own or collaborate on. Legacy
-per-toolkit tokens are still accepted (`tb login my-toolkit`) but
-deprecated.
-
-**Iterating locally.** To develop a toolkit's code without a
-publish→install round-trip on every change, install it editable:
+**Iterating locally.** Develop a toolkit's code without a
+publish→install round-trip by installing it editable:
 
 ```bash
 cd my-toolkit
-tb install -e . -a              # live symlink to this source dir, and activate it
-# edit tools/, restart your agent session — edits are live
+tb install -e . -a             # live symlink to this source dir, and activate
 ```
 
-An editable install symlinks your source into the cache and builds the
-environment there (your source tree stays clean — no `.venv` written
-into it). Edits to your tool source appear on the next serve. If you
-change dependencies, re-run `tb install -e .` to rebuild the env.
+Edits to your tool source appear on the next serve; rerun
+`tb install -e .` to rebuild the env when dependencies change.
 
+For the full author guide — tool conventions, skills, bundles,
+configuration, `setup.py` — see <https://toolbase-ai.com/docs/authoring>.
 For the agent-assisted authoring flow (recommended for first toolkits),
 see <https://toolbase-ai.com/docs/scaffold-with-an-agent>.
 
-For the full author guide — toolkit layout, tool conventions, skills,
-bundles, expected_toolkits, configuration — see
-<https://toolbase-ai.com/docs/authoring> and
-<https://toolbase-ai.com/docs/configuration>.
-
 ---
 
-## What's in toolbase
+## Commands
 
-**Commands:**
+Full reference with all flags: <https://toolbase-ai.com/docs/reference/commands>.
 
-- `init`, `create`, `ingest`, `validate`, `login`, `whoami`, `logout`,
-  `publish` — author and ship toolkits.
-- `search`, `install`, `uninstall`, `list` — manage installed toolkits.
-  `install` takes `-g` (global, the default), `-l` (pin into this
-  project), `-e <path>` (editable, live symlink to a local source), or
-  `-a` (also activate). `list` takes `-v` for a per-tool served/hidden
-  view.
-- `activate` / `deactivate` — expose or hide a toolkit, bundle
-  (`toolkit/bundle`), or tool (`toolkit__tool`) in the active profile.
-- `connect <client>` / `disconnect <client>` — write (or remove)
-  toolbase in an agent client's MCP config (`claude-code` in v1).
-  `--list` shows where it's wired; `--clients` lists supported targets.
-- `serve` — run the active profile's tools as an MCP stdio server
-  (`--profile`, `--dry-run`, `--call-timeout`). Normally spawned by the
-  client, not run by hand.
-- `profile <list|show|create|edit|delete|set-default|path|tools>` —
-  manage named profiles (curated tool sets).
-- `setup <toolkit>` — run a toolkit's `setup.py` (`--reset`, `--check`).
-- `config <show|edit|path|set|unset|validate>` — manage per-toolkit
-  config files at `~/.toolbase/config/<toolkit>.yaml`.
-- `logs` — tail the serve log with Rich coloring.
-
-**Features:**
-
-- **Editable installs.** `tb install -e <path>` symlinks a local
-  toolkit source into the cache so `serve` loads tools live — the
-  `pip install -e .` parallel for the toolkit dev loop. The env is
-  built and cached; only the source is symlinked, so your source tree
-  stays clean.
-- **Multi-version installs + per-project pinning.** Different versions
-  of a toolkit coexist in the global cache; each project pins which
-  version it uses in a git-committed `.toolbase/manifest.yaml`. The
-  binary lives once in the shared cache (`-g`/`-l` choose the manifest
-  scope, not the file location).
-- **Configuration system.** Toolkits declare a `config:` block in
-  `toolkit.yaml` (seven types: `string`, `secret`, `path`, `integer`,
-  `float`, `boolean`, `choice`); users fill it at install time or by
-  editing `~/.toolbase/config/<toolkit>.yaml`. Toolkits with more
-  involved setup ship a `setup.py` with full prompts, downloads
-  (resumable, SHA256-verified, auto-extracting tar/zip with zip-slip
-  defense), and derived-state writes via `ctx.set_config(...)`.
-- **Per-user auth.** `toolbase login` does a browser-flow that
-  stores a per-user token good for any toolkit you own or
-  collaborate on. Legacy per-toolkit tokens still work but are
-  deprecated.
-- **Multi-tier execution:** same-Python toolkits run in venv,
-  different-Python toolkits run under conda (auto-detected). Docker
-  mode coming in 3B.
-- **Profiles:** curated tool sets assembled across toolkits at
-  toolkit / bundle / tool granularity, stored one-file-per-profile under
-  `.toolbase/profiles/`. Activate with `tb activate`; the active profile
-  is chosen by `default.profile` in `~/.toolbase/serve.yaml` (or a
-  project-level override).
-- **Skills surfacing:** a toolkit's `skills/*.md` files are
-  auto-mirrored to `~/.claude/skills/` so Claude Code discovers
-  them. Symlinked on POSIX for live edits, copied on Windows.
-- **Agent-friendly flags:** every state-modifying command supports
-  `--yes`, `--no`, `--no-input`. Non-TTY stdin auto-applies
-  non-interactive behavior.
-- **Versioning safeguards:** `publish` blocks "version already
-  exists" and "version decrease" with helpful suggestions before
-  upload.
-- **Crash resilience:** per-toolkit subprocess auto-restart with
-  exponential backoff. A crashed toolkit doesn't take the
-  orchestrator down.
-- Python 3.12+ required.
+| Command | Purpose |
+|---|---|
+| `tb install NAME` | Install a toolkit (`-a` to also activate, `-e <path>` for editable, `NAME[a,b]` for selected bundles) |
+| `tb uninstall NAME` | Remove a toolkit |
+| `tb list` | Installed toolkits (`-v` for a per-tool view) |
+| `tb activate ITEM` | Expose a toolkit / `toolkit/bundle` / `toolkit__tool` (project-local; `-g` for user-wide) |
+| `tb deactivate ITEM` | Hide a toolkit / bundle / tool |
+| `tb connect HARNESS` | Wire toolbase into Claude Code, Codex, or scaffold an Orchestral agent script |
+| `tb disconnect HARNESS` | Remove toolbase from a harness |
+| `tb logs` | Tail the serve log, live |
+| `tb profile …` | Manage named profiles: `list \| show \| create \| edit \| delete \| set-default \| path \| tools` |
+| `tb config …` | Manage per-toolkit config: `show \| init \| set \| unset \| edit \| path \| validate` (`--user` / `--project` / `--local` pick the layer) |
+| `tb setup TOOLKIT` | Run a toolkit's `setup.py` (`--reset`, `--check`) |
+| `tb project init` | Create `.toolbase/` here |
+| `tb init NAME` | Scaffold a toolkit from template |
+| `tb validate` / `tb ingest` | Check toolkit structure / regenerate `toolkit.yaml` from code |
+| `tb login` / `tb whoami` / `tb logout` | Registry auth |
+| `tb publish` | Package and upload to the registry |
 
 See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
@@ -197,19 +157,19 @@ See [CHANGELOG.md](CHANGELOG.md) for the full release history.
 
 ## Architecture
 
-The package has three pieces:
+Three pieces:
 
 - **CLI** (this package) — installed locally, manages toolkit
   environments and serves tools.
 - **Backend** ([api.scitoolkit.org](https://api.scitoolkit.org)) —
   registry, auth, tarball storage.
-- **Website** ([toolbase-ai.com](https://toolbase-ai.com)) — discover and
-  manage published toolkits.
+- **Website** ([toolbase-ai.com](https://toolbase-ai.com)) — discover
+  and manage published toolkits.
 
 Each installed toolkit runs in its own subprocess in its own Python
-environment. The `toolbase serve` orchestrator aggregates them and
-exposes the union as a single MCP server upstream. Failures in one
-toolkit don't affect others.
+environment. `toolbase serve` aggregates them and exposes the union as
+a single MCP server upstream; failures in one toolkit don't affect
+others.
 
 ---
 
@@ -218,8 +178,6 @@ toolkit don't affect others.
 Issues and PRs are welcome at
 <https://github.com/alexr314/toolbase>.
 
----
-
 ## License
 
 MIT. See [LICENSE](LICENSE).
@@ -227,6 +185,7 @@ MIT. See [LICENSE](LICENSE).
 ## Links
 
 - Website: <https://toolbase-ai.com>
+- Docs: <https://toolbase-ai.com/docs>
 - Backend API: <https://api.scitoolkit.org>
 - GitHub: <https://github.com/alexr314/toolbase>
 - Issues: <https://github.com/alexr314/toolbase/issues>
