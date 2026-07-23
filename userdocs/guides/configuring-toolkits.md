@@ -102,40 +102,26 @@ in the harness's environment:
 `tb config show` renders the template alongside its current expansion:
 
 ```console
-$ tb config show heptapod
-heptapod
-  user layer:    ~/.toolbase/config/heptapod.yaml
-  project layer: <project>/.toolbase/config/heptapod.yaml
+$ tb config show calculator
+calculator
+  user layer:    ~/.toolbase/config/calculator.yaml
+  project layer: <project>/.toolbase/config/calculator.yaml
 
-  base_directory: ${CWD}  → /Users/you/papers/zprime  # from schema default
-  cache_enabled: false                                # from user
+  output_dir: ${CWD}  → /Users/you/work/report   # from schema default
+  precision: 10                                  # from user
 ```
 
-Pin a specific path in either layer to override:
+Pin a specific path in any layer to override:
 
 ```bash
-tb config set heptapod base_directory ~/heptapod-sandbox --user
+tb config set calculator output_dir ~/calculator-scratch --user
 ```
 
-User values beat the template; project layer beats user layer.
+An explicit value beats the template, and the layer order above still
+applies: local beats project beats user.
 
-## User vs project layers
-
-Config has two layers, and **project overrides user** key by key. `config`
-writes the project layer by default. Pass `--user` for the user layer.
-
-| Layer | File | For |
-|---|---|---|
-| User | `~/.toolbase/config/<toolkit>.yaml` | values that follow you (secrets, machine paths) |
-| Project | `<project>/.toolbase/config/<toolkit>.yaml` | values committed with the project |
-
-```bash
-tb config set calculator precision 10                # project layer (default, committed)
-tb config set calculator cas_path /opt/sympy --user  # user layer (private, your machine)
-```
-
-Keep secrets in the user layer (never committed). Pin shared, non-secret
-values in the project layer. Secret-typed fields are masked in `config show`.
+Keep secrets in the user layer (never committed). Secret-typed fields are
+masked in `config show`.
 
 ## Toolkits with a setup step
 
