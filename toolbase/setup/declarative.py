@@ -325,14 +325,21 @@ def load_state_config(
                 toolkit_name, base=base,
                 layer="project", project_root=project_root,
             )
-            # Merge: user → project; project wins key-by-key. We use a
-            # plain dict here because we don't need to preserve comments
-            # at this stage — the merged view is consumed as data.
+            local_stored = load_config(
+                toolkit_name, base=base,
+                layer="local", project_root=project_root,
+            )
+            # Merge: user → project → project-local; later layers win
+            # key-by-key. The local layer is the project-scoped,
+            # gitignored home for machine truth (absolute tool paths),
+            # so it outranks the committed project file. Plain dict
+            # because the merged view is consumed as data.
             stored = dict(user_stored)
-            for k, v in project_stored.items():
-                if k == "schema_version":
-                    continue
-                stored[k] = v
+            for layer_data in (project_stored, local_stored):
+                for k, v in layer_data.items():
+                    if k == "schema_version":
+                        continue
+                    stored[k] = v
         else:
             stored = user_stored
         # The schema_version envelope is a file-format concern, never a

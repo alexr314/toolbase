@@ -22,7 +22,8 @@ convenience over them.
 ├── manifest.yaml             pinned toolkits + versions (committed)
 ├── manifest.local.yaml       machine-local pins, e.g. editable (gitignored)
 ├── .gitignore                written by tb install -e; ignores the local layer
-├── config/<toolkit>.yaml     per-toolkit config values (project layer)
+├── config/<toolkit>.yaml     per-toolkit config values (project layer, committed)
+├── config/<toolkit>.local.yaml  machine paths etc. (project-local layer, gitignored)
 ├── profiles/<name>.yaml      project profiles
 ├── serve.yaml                project default.profile + default.disabled
 └── orchestral.py             Orchestral launcher (tb connect orchestral)
@@ -30,9 +31,11 @@ convenience over them.
 <repo>/.codex/config.toml     Codex wiring (tb connect codex)
 ```
 
-Project files override user files where they overlap, and
-`manifest.local.yaml` overrides `manifest.yaml` name-by-name (it's the
-home for resolution choices only true on this machine, like `editable`).
+Project files override user files where they overlap, and the two
+`.local` files override their committed siblings (`manifest.local.yaml`
+name-by-name for pins; `config/<toolkit>.local.yaml` key-by-key for
+config) — they're the home for state only true on this machine:
+editable pins, absolute tool paths.
 Commit `.toolbase/`, `.mcp.json`, and `.codex/config.toml` — the local
 manifest layer auto-gitignores itself. Keep secrets in the user-layer
 `config/<toolkit>.yaml`.

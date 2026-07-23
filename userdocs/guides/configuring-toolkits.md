@@ -40,6 +40,22 @@ tb config unset calculator precision
 The file (`~/.toolbase/config/calculator.yaml`) is canonical. `config set`
 just writes it for you.
 
+## Which layer?
+
+Three layers merge, later wins key-by-key:
+
+| Layer | File | Use for |
+|---|---|---|
+| `--user` | `~/.toolbase/config/<kit>.yaml` | your defaults and secrets, every project on this machine |
+| `--project` | `<repo>/.toolbase/config/<kit>.yaml` | **committed**, shareable values the whole team should get |
+| `--local` | `<repo>/.toolbase/config/<kit>.local.yaml` | project-scoped **machine truth** — absolute tool paths, local builds. Gitignored automatically. |
+
+Inside a project, `config set` defaults to the project layer. The rule of
+thumb: if the value contains a path that only exists on your machine, it's
+`--local`; if it's a secret, it's `--user`; otherwise `--project` and commit
+it. Writing `--local` drops a `.toolbase/.gitignore` (if absent) so the file
+can't reach git by accident.
+
 ## Scaffold a fresh config file
 
 `tb config init <toolkit>` writes a commented YAML stub from the toolkit's
@@ -86,40 +102,26 @@ in the harness's environment:
 `tb config show` renders the template alongside its current expansion:
 
 ```console
-$ tb config show heptapod
-heptapod
-  user layer:    ~/.toolbase/config/heptapod.yaml
-  project layer: <project>/.toolbase/config/heptapod.yaml
+$ tb config show calculator
+calculator
+  user layer:    ~/.toolbase/config/calculator.yaml
+  project layer: <project>/.toolbase/config/calculator.yaml
 
-  base_directory: ${CWD}  → /Users/you/papers/zprime  # from schema default
-  cache_enabled: false                                # from user
+  output_dir: ${CWD}  → /Users/you/work/report   # from schema default
+  precision: 10                                  # from user
 ```
 
-Pin a specific path in either layer to override:
+Pin a specific path in any layer to override:
 
 ```bash
-tb config set heptapod base_directory ~/heptapod-sandbox --user
+tb config set calculator output_dir ~/calculator-scratch --user
 ```
 
-User values beat the template; project layer beats user layer.
+An explicit value beats the template, and the layer order above still
+applies: local beats project beats user.
 
-## User vs project layers
-
-Config has two layers, and **project overrides user** key by key. `config`
-writes the project layer by default. Pass `--user` for the user layer.
-
-| Layer | File | For |
-|---|---|---|
-| User | `~/.toolbase/config/<toolkit>.yaml` | values that follow you (secrets, machine paths) |
-| Project | `<project>/.toolbase/config/<toolkit>.yaml` | values committed with the project |
-
-```bash
-tb config set calculator precision 10                # project layer (default, committed)
-tb config set calculator cas_path /opt/sympy --user  # user layer (private, your machine)
-```
-
-Keep secrets in the user layer (never committed). Pin shared, non-secret
-values in the project layer. Secret-typed fields are masked in `config show`.
+Keep secrets in the user layer (never committed). Secret-typed fields are
+masked in `config show`.
 
 ## Toolkits with a setup step
 
