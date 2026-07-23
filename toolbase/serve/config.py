@@ -53,11 +53,14 @@ class DefaultBlock:
     profile: Optional[str] = None
     disabled_toolkits: List[str] = field(default_factory=list)
     disabled_tools: List[str] = field(default_factory=list)  # "toolkit__tool"
+    bare: bool = False  # serve un-namespaced <tool> names (default: <toolkit>__<tool>)
 
     def to_yaml_dict(self) -> dict:
         out: dict = {}
         if self.profile:
             out["profile"] = self.profile
+        if self.bare:
+            out["bare"] = True
         disabled: dict = {}
         if self.disabled_toolkits:
             disabled["toolkits"] = list(self.disabled_toolkits)
@@ -123,6 +126,13 @@ def load_serve_config(path: Path = SERVE_CONFIG_PATH) -> ServeConfig:
             )
         cfg.default.profile = profile
 
+    bare = default_raw.get("bare", False)
+    if not isinstance(bare, bool):
+        raise ServeConfigError(
+            f"{path}: 'default.bare' must be a boolean (true/false)"
+        )
+    cfg.default.bare = bare
+
     disabled_raw = default_raw.get("disabled") or {}
     if not isinstance(disabled_raw, dict):
         raise ServeConfigError(f"{path}: 'default.disabled' must be a mapping")
@@ -155,6 +165,9 @@ def merge_serve_configs(user: ServeConfig, project: ServeConfig) -> ServeConfig:
     """
     merged = ServeConfig()
     merged.default.profile = project.default.profile or user.default.profile
+    # A mode toggle: on if either layer turns it on (the CLI flag is the
+    # per-invocation override either way).
+    merged.default.bare = project.default.bare or user.default.bare
 
     def _union(a: List[str], b: List[str]) -> List[str]:
         seen: set = set()

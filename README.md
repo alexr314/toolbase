@@ -76,6 +76,14 @@ lists what's available. Power users can keep several named profiles
 `tb connect claude-code --profile paper`) and switch between them; most
 users only ever touch the default profile.
 
+Tools are served namespaced as `<toolkit>__<tool>` by default, so two active
+toolkits that both define, say, an `add` tool stay distinct (`calculator__add`
+vs `matrix__add`). When names do overlap, `tb serve`, `tb list -v`, and
+`tb install` flag it so it's never a surprise. Prefer bare names? `tb serve
+--bare` (or `default.bare: true` in `serve.yaml`) advertises the plain `<tool>`;
+with multiple toolkits, a clashing name resolves to the alphabetically-first
+toolkit.
+
 ## Share a project without sharing your machine
 
 Toolkits that need configuration (an API key, a path to an external

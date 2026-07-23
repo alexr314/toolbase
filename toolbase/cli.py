@@ -3902,6 +3902,7 @@ def _install_from_path(
         f"\n[bold green]✓ Successfully installed {name} "
         f"{'(editable)' if editable else 'v' + version}[/bold green]\n"
     )
+    _warn_install_name_collisions(name)
     if editable:
         console.print(f"Source: [cyan]{source_path}[/cyan] (live link)")
         console.print(
@@ -4966,6 +4967,7 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
 
     # Step 9: Success message
     console.print(f"\n[bold green]✓ Successfully installed {name} v{version}[/bold green]\n")
+    _warn_install_name_collisions(name)
 
     if activate_after:
         _post_install_activate(
@@ -5222,6 +5224,10 @@ def list_cmd(as_json, verbose):
     # Resolve the active profile to mark which toolkits are active (served).
     # Best-effort: no active profile => everything inactive, no error.
     resolved_profile, active_set = _list_resolve_active()
+    # Tool names shared by >1 active toolkit — annotated per row under -v so
+    # overlap (harmless while namespaced, a clash if ever served bare) is
+    # visible. Only meaningful with an active multi-toolkit profile.
+    _name_collisions = _active_name_collisions(active_set) if verbose else {}
     active_profile = resolved_profile.name if resolved_profile is not None else None
 
     if as_json:
@@ -5335,7 +5341,7 @@ def list_cmd(as_json, verbose):
                 ".toolbase/manifest.local.yaml to serve your checkout[/yellow]"
             )
         if verbose:
-            _list_print_tools_verbose(name, resolved_profile)
+            _list_print_tools_verbose(name, resolved_profile, _name_collisions)
 
     if any_pin_applied and manifest_path is not None:
         # Render the manifest path relative to cwd when possible — keeps
@@ -5373,7 +5379,68 @@ def _list_resolve_active():
     return resolved, active
 
 
-def _list_print_tools_verbose(name, resolved_profile) -> None:
+def _toolkit_declared_tool_names(name: str) -> set:
+    """Bare tool names a toolkit declares in its ``toolkit.yaml`` (empty for
+    implicit-form toolkits that don't enumerate tools there)."""
+    from .serve.orchestrator import (
+        discover_toolkits, _resolve_bundle_availability,
+    )
+    disc = next(
+        (d for d in discover_toolkits()
+         if d.name == name and d.skip_reason is None),
+        None,
+    )
+    if disc is None:
+        return set()
+    _availability, name_to_bundles = _resolve_bundle_availability(disc)
+    return set(name_to_bundles or {})
+
+
+def _active_name_collisions(active_toolkit_names) -> dict:
+    """``{bare_name: [toolkits]}`` for tool names declared by more than one of
+    the given (active) toolkits — the ``tb list -v`` / ``tb install`` view of
+    :func:`toolbase.naming.find_name_collisions`."""
+    from .naming import find_name_collisions
+    return find_name_collisions(
+        {tk: _toolkit_declared_tool_names(tk) for tk in active_toolkit_names}
+    )
+
+
+def _warn_install_name_collisions(new_toolkit: str) -> None:
+    """After an install, warn if the toolkit shares any bare tool name with an
+    already-active toolkit (a clash only if ever served un-namespaced; harmless
+    under the default ``<toolkit>__<tool>`` form). Best-effort — never raises,
+    never blocks the install."""
+    try:
+        _resolved, active = _list_resolve_active()
+        others = {tk for tk in active if tk != new_toolkit}
+        new_tools = _toolkit_declared_tool_names(new_toolkit)
+        if not others or not new_tools:
+            return
+        overlaps = {}
+        for tk in others:
+            shared = sorted(new_tools & _toolkit_declared_tool_names(tk))
+            if shared:
+                overlaps[tk] = shared
+        if not overlaps:
+            return
+        console.print(
+            f"\n[yellow]⚠ {new_toolkit} shares tool name(s) with active "
+            "toolkit(s):[/yellow]"
+        )
+        for tk, shared in sorted(overlaps.items()):
+            console.print(f"    [dim]{', '.join(shared)} — also in {tk}[/dim]")
+        console.print(
+            "  [dim]Served distinctly as <toolkit>__<tool>, so this is only a "
+            "clash if tools are served un-namespaced. To pre-empt it: set a "
+            "toolkit.yaml display_name:, tb deactivate one, or keep the "
+            "namespaced default.[/dim]"
+        )
+    except Exception:
+        pass  # a heads-up must never break install
+
+
+def _list_print_tools_verbose(name, resolved_profile, collisions=None) -> None:
     """Print a toolkit's declared tools with served/hidden status.
 
     Tool list comes from the toolkit.yaml declaration (explicit form);
@@ -5463,7 +5530,11 @@ def _list_print_tools_verbose(name, resolved_profile) -> None:
                 f" [yellow](needs config: "
                 f"{'; '.join(missing_per_bundle)})[/yellow]"
             )
-        console.print(f"    {mk} {tool}{btag}{gate}")
+        clash = ""
+        others = [tk for tk in (collisions or {}).get(tool, []) if tk != name]
+        if others:
+            clash = f" [yellow](also in: {', '.join(others)})[/yellow]"
+        console.print(f"    {mk} {tool}{btag}{gate}{clash}")
 
     if install_gated:
         if len(install_gated) >= _VERBOSE_INSTALL_GATED_COLLAPSE_THRESHOLD:
@@ -6035,8 +6106,17 @@ def toolbase_config_dir() -> Path:
     '--no-tui', is_flag=True, default=True,
     help='Run without TUI. Currently the only supported mode.',
 )
+@click.option(
+    '--bare/--qualified', 'bare_flag', default=None,
+    help=(
+        'Advertise tools un-namespaced (<tool>) instead of the default '
+        'qualified <toolkit>__<tool>. Overrides serve.yaml default.bare for '
+        'this invocation. With multiple toolkits, colliding names resolve to '
+        'the alphabetically-first toolkit.'
+    ),
+)
 @click.pass_context
-def serve(ctx, profile_name, dry_run, call_timeout, no_tui):
+def serve(ctx, profile_name, dry_run, call_timeout, no_tui, bare_flag):
     """
     Start the MCP server for the active profile's tools.
 
@@ -6093,8 +6173,18 @@ def serve(ctx, profile_name, dry_run, call_timeout, no_tui):
         console.print(f"[red]Error in serve config:[/red] {e}")
         sys.exit(1)
 
+    # Bare naming: explicit --bare/--qualified wins; else serve.yaml default.bare.
+    if bare_flag is not None:
+        bare = bare_flag
+    else:
+        from .serve.profiles import load_merged_serve_config
+        try:
+            bare = load_merged_serve_config(project_root).default.bare
+        except ServeConfigError:
+            bare = False
+
     if dry_run:
-        _print_resolution(profile)
+        _print_resolution(profile, bare=bare)
         return
 
     # The MCP stdio protocol owns this process's stdin/stdout, so we do NOT
@@ -6102,11 +6192,12 @@ def serve(ctx, profile_name, dry_run, call_timeout, no_tui):
     # orchestrator builds its own stderr-bound Console.
     from .serve.orchestrator import DEFAULT_CALL_TIMEOUT_S, serve as _serve_entry
     timeout_s = call_timeout if call_timeout is not None else DEFAULT_CALL_TIMEOUT_S
-    rc = _serve_entry(no_tui=True, profile=profile, call_timeout_s=timeout_s)
+    rc = _serve_entry(no_tui=True, profile=profile, call_timeout_s=timeout_s,
+                      bare=bare)
     sys.exit(rc)
 
 
-def _print_resolution(profile) -> None:
+def _print_resolution(profile, bare: bool = False) -> None:
     """Render --dry-run output: the active profile and what it selects.
 
     Shows the profile name + provenance, each selected toolkit and its
@@ -6118,6 +6209,11 @@ def _print_resolution(profile) -> None:
     console.print(
         f"\n[bold]Active profile:[/bold] [cyan]{profile.name}[/cyan] "
         f"[dim]({profile.source})[/dim]"
+    )
+    console.print(
+        f"[bold]Naming:[/bold] "
+        + ("[yellow]bare <tool>[/yellow] (un-namespaced)" if bare
+           else "qualified [cyan]<toolkit>__<tool>[/cyan]")
     )
     if not profile.toolkits:
         console.print("  [dim](profile selects no toolkits)[/dim]")
