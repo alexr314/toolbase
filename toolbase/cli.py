@@ -6111,8 +6111,8 @@ def toolbase_config_dir() -> Path:
     help=(
         'Advertise tools un-namespaced (<tool>) instead of the default '
         'qualified <toolkit>__<tool>. Overrides serve.yaml default.bare for '
-        'this invocation. With multiple toolkits, colliding names resolve to '
-        'the alphabetically-first toolkit.'
+        'this invocation. A name shared by two toolkits stays qualified (both '
+        'callable) with a warning; the rest are served bare.'
     ),
 )
 @click.pass_context

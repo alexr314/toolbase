@@ -18,7 +18,8 @@ default:
 ```
 
 With `bare: true` (or `tb serve --bare`) tools are advertised un-namespaced;
-a name exposed by two toolkits resolves to the alphabetically-first one.
+a name exposed by two toolkits stays qualified (both remain callable) with a
+warning, while the rest are served bare.
 
 ## Profile
 

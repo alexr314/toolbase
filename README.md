@@ -81,8 +81,8 @@ toolkits that both define, say, an `add` tool stay distinct (`calculator__add`
 vs `matrix__add`). When names do overlap, `tb serve`, `tb list -v`, and
 `tb install` flag it so it's never a surprise. Prefer bare names? `tb serve
 --bare` (or `default.bare: true` in `serve.yaml`) advertises the plain `<tool>`;
-with multiple toolkits, a clashing name resolves to the alphabetically-first
-toolkit.
+a name shared by two toolkits stays qualified (both remain callable) with a
+warning, and the rest are served bare.
 
 ## Share a project without sharing your machine
 

@@ -129,8 +129,9 @@ def toolbase_tools(
             so the caller can detect and surface dropped tools even under
             ``quiet=True`` (where the console diagnostics are suppressed).
         bare: advertise tools un-namespaced (``<tool>``) instead of the default
-            qualified ``<toolkit>__<tool>``. With multiple toolkits, colliding
-            names resolve to the alphabetically-first toolkit's tool.
+            qualified ``<toolkit>__<tool>``. A name shared by two toolkits
+            falls back to its qualified form (both stay callable) with a
+            warning; the rest are served bare.
 
     Yields:
         A list of orchestral ``BaseTool`` instances (namespaced

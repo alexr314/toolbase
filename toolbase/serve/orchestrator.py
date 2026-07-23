@@ -965,9 +965,10 @@ class Orchestrator:
         # Print second half of the banner (final status + tool count).
         self._print_startup_banner_post()
         if self._bare:
-            # Bare mode: same-named tools from different toolkits would collide
-            # on the wire; keep one deterministically and drop the rest.
-            self._resolve_bare_collisions()
+            # Bare mode: a name shared by two toolkits can't be served bare
+            # without one shadowing the other, so those tools fall back to
+            # their qualified <toolkit>__<tool> form (never dropped).
+            self._disambiguate_bare_collisions()
         else:
             # Default (namespaced): overlaps are harmless; just flag them.
             self._warn_name_collisions()
@@ -977,42 +978,41 @@ class Orchestrator:
 
         return self._proxy_tools
 
-    def _resolve_bare_collisions(self) -> None:
+    def _disambiguate_bare_collisions(self) -> None:
         """In bare mode two toolkits exposing the same tool name would yield
-        two identically-named wire tools, which the agent can't disambiguate.
-        Keep the alphabetically-first toolkit's tool (deterministic, so the
-        served list is stable across restarts) and drop the rest, one warning
-        each. The default namespaced mode never needs this."""
+        two identically-named wire tools the agent can't tell apart. Rather
+        than pick a winner and drop the rest (which would make a real tool
+        uncallable), fall the *colliding* tools back to their qualified
+        ``<toolkit>__<tool>`` form so both stay callable — bare naming is
+        applied only where it's unambiguous. Non-colliding tools keep their
+        bare name. One warning per collided name. Never blocks serving."""
         from collections import defaultdict
 
         groups: Dict[str, List[Any]] = defaultdict(list)
         for p in self._proxy_tools:
             groups[p._stk_namespaced_name].append(p)
 
-        drop_ids: set = set()
-        for wire_name, group in groups.items():
+        for bare_name, group in groups.items():
             if len(group) < 2:
                 continue
-            group.sort(key=lambda p: getattr(p, "_stk_toolkit", ""))
-            winner = group[0]
-            for loser in group[1:]:
-                drop_ids.add(id(loser))
-                lose_tk = getattr(loser, "_stk_toolkit", "?")
-                win_tk = getattr(winner, "_stk_toolkit", "?")
-                self.console.print(
-                    f"  [yellow]⚠[/yellow] bare mode: tool [bold]{wire_name}"
-                    f"[/bold] from '{lose_tk}' hidden — '{win_tk}' wins "
-                    "(alphabetical). Serve namespaced (the default) or set a "
-                    "toolkit.yaml display_name to keep both."
-                )
-                self.logger.log_event(
-                    "bare_collision_resolved", tool=wire_name,
-                    dropped_toolkit=lose_tk, kept_toolkit=win_tk, level="warn",
-                )
-        if drop_ids:
-            self._proxy_tools = [
-                p for p in self._proxy_tools if id(p) not in drop_ids
-            ]
+            toolkits = sorted(getattr(p, "_stk_toolkit", "?") for p in group)
+            # Re-point each colliding proxy at its qualified name. The proxy's
+            # get_name()/get_tool_spec() read _stk_namespaced_name, so this is
+            # all it takes to change the advertised name.
+            for p in group:
+                tk = getattr(p, "_stk_toolkit", "?")
+                p._stk_namespaced_name = f"{tk}__{p._stk_upstream_name}"
+            qualified = ", ".join(f"{tk}__{bare_name}" for tk in toolkits)
+            self.console.print(
+                f"  [yellow]⚠[/yellow] bare mode: tool [bold]{bare_name}[/bold] "
+                f"is provided by {toolkits} — served qualified ({qualified}) so "
+                "both stay callable. Set a toolkit.yaml display_name to give one "
+                "a distinct bare name."
+            )
+            self.logger.log_event(
+                "bare_collision_qualified", tool=bare_name,
+                toolkits=",".join(toolkits), level="warn",
+            )
 
     def _warn_name_collisions(self) -> None:
         """One warning per bare tool name exposed by more than one served
@@ -1810,8 +1810,9 @@ def serve(
     enforced by Orchestral's MCPClient. Default 60 s.
 
     ``bare`` advertises un-namespaced ``<tool>`` names instead of the default
-    qualified ``<toolkit>__<tool>``; cross-toolkit name clashes then resolve to
-    the alphabetically-first toolkit.
+    qualified ``<toolkit>__<tool>``. A name shared by two toolkits can't be
+    served bare unambiguously, so those tools fall back to their qualified
+    form (both stay callable) with a warning; bare naming applies to the rest.
     """
     if not no_tui:
         raise NotImplementedError("TUI mode not yet implemented; use --no-tui")

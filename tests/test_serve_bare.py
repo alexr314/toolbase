@@ -1,10 +1,10 @@
 """Tests for the ``--bare`` opt-in.
 
 Qualified ``<toolkit>__<tool>`` is the default. Bare serving advertises the
-un-namespaced ``<tool>`` and, when two toolkits expose the same name, resolves
-the clash to the alphabetically-first toolkit (deterministic served list).
-Covers the serve.yaml ``default.bare`` field and the orchestrator's bare-mode
-collision resolution + the qualified-mode collision heads-up.
+un-namespaced ``<tool>``; when two toolkits expose the same name, those tools
+fall back to their qualified form (both stay callable) rather than one being
+dropped. Covers the serve.yaml ``default.bare`` field and the orchestrator's
+bare-mode collision disambiguation + the qualified-mode collision heads-up.
 """
 
 from __future__ import annotations
@@ -71,10 +71,12 @@ def test_merge_bare_is_or():
 
 class _FakeProxy:
     """Minimal stand-in for a proxy tool — only the fields the bare-collision
-    resolver reads."""
+    disambiguator reads. In bare mode the wire name starts as the bare
+    upstream name."""
 
-    def __init__(self, wire: str, toolkit: str):
-        self._stk_namespaced_name = wire
+    def __init__(self, bare_name: str, toolkit: str):
+        self._stk_namespaced_name = bare_name
+        self._stk_upstream_name = bare_name
         self._stk_toolkit = toolkit
 
 
@@ -88,32 +90,35 @@ def test_bare_flag_stored():
     assert _orch(False)[0]._bare is False
 
 
-def test_bare_collision_keeps_alphabetically_first():
+def test_bare_collision_qualifies_both_and_keeps_them():
     orch, buf = _orch(True)
-    # 'calc' and 'matrix' both expose bare 'Multiply'; 'calc' < 'matrix' wins.
+    # 'calc' and 'matrix' both expose bare 'Multiply'; 'calc' also has 'Add'.
     orch._proxy_tools = [
         _FakeProxy("Multiply", "matrix"),
         _FakeProxy("Add", "calc"),
         _FakeProxy("Multiply", "calc"),
     ]
-    orch._resolve_bare_collisions()
+    orch._disambiguate_bare_collisions()
 
-    survivors = {
-        (p._stk_namespaced_name, p._stk_toolkit) for p in orch._proxy_tools
+    names = {(p._stk_namespaced_name, p._stk_toolkit) for p in orch._proxy_tools}
+    # Nothing dropped: all three still served.
+    assert len(orch._proxy_tools) == 3
+    # The unique name stays bare; the colliding one falls back to qualified.
+    assert names == {
+        ("Add", "calc"),                 # unique -> stays bare
+        ("calc__Multiply", "calc"),      # collided -> qualified, still callable
+        ("matrix__Multiply", "matrix"),  # collided -> qualified, still callable
     }
-    assert survivors == {("Add", "calc"), ("Multiply", "calc")}
-    # exactly one 'Multiply' survives, and the warning names the loser
-    assert sum(p._stk_namespaced_name == "Multiply"
-               for p in orch._proxy_tools) == 1
-    assert "matrix" in buf.getvalue()
-    assert "Multiply" in buf.getvalue()
+    out = buf.getvalue()
+    assert "Multiply" in out and "calc__Multiply" in out and "matrix__Multiply" in out
 
 
-def test_bare_no_collision_keeps_all():
+def test_bare_no_collision_keeps_bare_names():
     orch, _ = _orch(True)
     orch._proxy_tools = [_FakeProxy("Add", "calc"), _FakeProxy("Invert", "mx")]
-    orch._resolve_bare_collisions()
+    orch._disambiguate_bare_collisions()
     assert len(orch._proxy_tools) == 2
+    assert {p._stk_namespaced_name for p in orch._proxy_tools} == {"Add", "Invert"}
 
 
 # ── qualified-mode collision heads-up (no dedup) ─────────────────────────────
