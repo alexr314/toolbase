@@ -21,18 +21,14 @@ backlog, see the parent `../../STATUS.md`; for this package's agent context see
   decisions and open questions (incl. the Docker Phase 3B direction). Cited from
   the project `STATUS.md` roadmap.
 
-## Proposals
+## Working notes (not in the repo)
 
-- [`proposals/PORTABLE_GROUP_MANIFESTS.md`](proposals/PORTABLE_GROUP_MANIFESTS.md)
+Design drafts, proposals, audits, and gap lists are kept on disk and
+gitignored rather than shipped — `docs/proposals/`, the snippet audits, and
+`KNOWN_GAPS.md` are working documents, not things a reader of the public repo
+should have to sort through. Promote one by removing its `.gitignore` entry
+once it is finished and meant for an outside audience.
 
-## Audits
-
-- [`DOCS_SNIPPET_AUDIT_2026-05-06.md`](DOCS_SNIPPET_AUDIT_2026-05-06.md) —
-  Phase 3C docs-snippet close-out audit.
-
-## Frozen history (not in the repo)
-
-`docs/archive/` holds scitoolkit-era phase-completion summaries. It is
-gitignored — kept on disk as local history, not shipped. (`PLATFORM_DECISIONS.md`
-was promoted out of the archive into `docs/` because it's a live, still-cited
-spec rather than frozen history.)
+`docs/archive/` holds scitoolkit-era phase-completion summaries on the same
+terms. (`PLATFORM_DECISIONS.md` was promoted out of the archive into `docs/`
+because it's a live, still-cited spec rather than frozen history.)
