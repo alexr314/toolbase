@@ -95,6 +95,19 @@ You supply the LLM and its API key. Tools load in-process, so there's no
 `tb serve`. The scaffold also ships commented-out headless and web-GUI launch
 modes.
 
+`toolbase_tools()` takes keyword-only arguments, all optional:
+
+| Argument | Default | Effect |
+|---|---|---|
+| `profile` | active profile | Serve a named profile, like `tb serve --profile` |
+| `project_root` | discovered from the cwd | Project whose `.toolbase/` config applies; `str` or `Path` |
+| `call_timeout_s` | `60` | Per-call upper bound |
+| `quiet` | `False` | Suppress the startup banner (it prints to stderr) |
+| `config_overrides` | none | Config keys merged over every served toolkit |
+
+Pass `project_root` when the script runs from somewhere other than the project
+directory — otherwise resolution follows the same chain `tb serve` uses.
+
 ## Common operations
 
 Set the active profile while connecting:
