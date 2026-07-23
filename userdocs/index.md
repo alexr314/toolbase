@@ -1,6 +1,6 @@
 # **<span class="tb-tool">tool</span><span class="tb-base">base</span>**
 
-**toolbase is the package manager and runtime for AI agent tools.** Install
+**toolbase is the package manager for AI agent toolkits.** Install
 toolkits into isolated environments, curate which tools your agent sees, and
 serve them to your harness over the
 [Model Context Protocol](https://modelcontextprotocol.io). This site is the
@@ -19,13 +19,13 @@ The loop is **install → activate → connect**. `tb` is a short alias for
 `toolbase`.
 
 ```bash
-tb install arxiv-search      # download into an isolated environment
-tb activate arxiv-search     # expose it to the agent
+tb install calculator        # download into an isolated environment
+tb activate calculator       # expose it to the agent
 tb connect claude-code       # write toolbase into Claude Code's config
 ```
 
-Restart your agent session. The tools appear as `arxiv-search__<tool>`.
-`tb install arxiv-search -a` installs and activates in one step.
+Restart your agent session. The tools appear as `calculator__<tool>`.
+`tb install calculator -a` installs and activates in one step.
 
 ## Inspect
 
