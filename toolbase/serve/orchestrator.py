@@ -635,6 +635,13 @@ def _build_host_command(
     if tools_spec:
         tools_spec_arg = json.dumps(tools_spec, ensure_ascii=False)
     base_args = [
+        # ``-P`` (Python 3.11+) drops the implicit cwd/script-dir entry from
+        # this interpreter's sys.path (same effect as PYTHONSAFEPATH=1), so a
+        # toolkit dir can't shadow an installed package. Unlike the env var,
+        # the flag is NOT inherited by child subprocesses the toolkit spawns —
+        # external tools (e.g. MadGraph's own python helpers) keep normal
+        # script-dir resolution. See _build_host_env and test_host_import_isolation.
+        "-P",
         "-m", "toolbase._toolkit_host",
         "--toolkit-dir", str(disc.path),
         "--name", disc.name,
@@ -662,13 +669,71 @@ def _build_host_command(
     raise RuntimeError(f"unsupported env_type {disc.env_type!r}")
 
 
-def _build_host_env(toolkit_path: Path, toolkit_name: str) -> Dict[str, str]:
+# Environment variables never stripped by ``_strip_caller_env_activation``,
+# even when their value references the caller's active prefix. These compose
+# search paths (rather than binding a package to a single foreign install), and
+# tools/loaders rely on them; the toolkit's own launcher and PATH resolution
+# manage what belongs on them.
+_HOST_ENV_KEEP = frozenset({
+    "PATH", "LD_LIBRARY_PATH", "DYLD_LIBRARY_PATH",
+    "DYLD_FALLBACK_LIBRARY_PATH", "MANPATH", "INFOPATH",
+})
+
+
+def _strip_caller_env_activation(env: Dict[str, str]) -> Dict[str, str]:
+    """Drop variables bound to the CALLER's activated conda/virtualenv prefix.
+
+    A toolkit runs in its OWN isolated env. But toolbase is frequently invoked
+    from *inside* an activated conda/virtual environment (a harness's env, a
+    developer shell), and that env's ``activate.d`` scripts export variables
+    bound to the caller's prefix -- package data/config paths (``PYTHIA8DATA``,
+    ``ROOTSYS``, ``GSETTINGS_SCHEMA_DIR``, ``XML_CATALOG_FILES``, ...) and build
+    flags (``CFLAGS``, ``LDFLAGS``, ``CMAKE_ARGS``, ...). Inherited by the
+    toolkit host and the external tools it spawns, these point the toolkit's
+    OWN bundled software at the caller's install and cause instance/version
+    mismatches -- e.g. a toolkit's Pythia 8.317 loading the caller env's 8.312
+    xmldoc via ``PYTHIA8DATA`` and aborting on a version check.
+
+    Any variable whose value references the caller's active prefix
+    (``CONDA_PREFIX`` / ``VIRTUAL_ENV``) is removed so the toolkit's own env is
+    authoritative. This is prefix-scoped, not a hardcoded name list, so it
+    covers whatever a given activation injected. ``_HOST_ENV_KEEP`` (PATH-like
+    search paths), toolbase's own vars, and conda bookkeeping (``CONDA_*``) are
+    preserved. Mutates and returns ``env``.
+    """
+    prefixes = []
+    for var in ("CONDA_PREFIX", "VIRTUAL_ENV"):
+        val = env.get(var)
+        if val:
+            prefixes.append(os.path.normpath(val) + os.sep)
+    if not prefixes:
+        return env
+    for key in list(env):
+        if key in _HOST_ENV_KEEP or key.startswith(("CONDA", "TOOLBASE")):
+            continue
+        value = env.get(key) or ""
+        if any(pfx in (os.path.normpath(value) + os.sep) or pfx in value
+               for pfx in prefixes):
+            del env[key]
+    return env
+
+
+def _build_host_env(toolkit_path: Path, toolkit_name: str,
+                    *, venv_bin: Optional[str] = None) -> Dict[str, str]:
     """Compose the subprocess environment for the per-toolkit host.
+
+    ``venv_bin`` (the toolkit's venv ``bin`` dir, for venv toolkits) is
+    prepended to PATH so the toolkit's own interpreter and console scripts take
+    precedence over whatever sits first on the caller's inherited PATH.
 
     The toolkit's interpreter doesn't have ``toolbase`` installed, only
     ``orchestral-ai`` and ``mcp``. We need ``toolbase._toolkit_host`` to
     be importable, so we point ``PYTHONPATH`` at the parent package
     location of the running orchestrator.
+
+    The caller's activated-conda/venv pollution is first stripped (see
+    ``_strip_caller_env_activation``) so the toolkit's isolated env is
+    authoritative for its own bundled software.
 
     We also pass ``TOOLBASE_HOST_LOG`` so the host can redirect its
     stderr into ``~/.toolbase/logs/<toolkit>.log``. Pre-0.4.1 the
@@ -678,7 +743,7 @@ def _build_host_env(toolkit_path: Path, toolkit_name: str) -> Dict[str, str]:
     stderr, so the host writes directly. Same destination, simpler
     plumbing.
     """
-    env = os.environ.copy()
+    env = _strip_caller_env_activation(os.environ.copy())
     # Find the directory that contains the ``toolbase`` package.
     import toolbase as _sk
     pkg_parent = str(Path(_sk.__file__).resolve().parent.parent)
@@ -688,16 +753,26 @@ def _build_host_env(toolkit_path: Path, toolkit_name: str) -> Dict[str, str]:
     )
     env["PYTHONUNBUFFERED"] = "1"
     # The host is launched as ``python -m toolbase._toolkit_host`` with cwd
-    # at the toolkit dir, and ``-m`` prepends cwd to sys.path. A toolkit
-    # that ships a top-level dir named like an installed package (the
-    # scaffold's ``mcp/`` is the canonical trap) would then shadow that
-    # package -- e.g. ``import mcp`` resolves to the toolkit's ``mcp/``
-    # instead of the MCP SDK, and ``orchestral.mcp`` fails to import.
-    # PYTHONSAFEPATH (3.11+) stops the implicit cwd/script-dir entry; the
-    # explicit PYTHONPATH above and the spec_from_file_location tool loader
-    # are unaffected. Pins the regression in test_host_import_isolation.
-    env["PYTHONSAFEPATH"] = "1"
+    # at the toolkit dir, and ``-m`` prepends cwd to sys.path. A toolkit that
+    # ships a top-level dir named like an installed package (the scaffold's
+    # ``mcp/`` is the canonical trap) would then shadow that package -- e.g.
+    # ``import mcp`` resolves to the toolkit's ``mcp/`` instead of the MCP SDK.
+    # That cwd/script-dir entry is suppressed via the ``-P`` interpreter flag
+    # in the host argv (see _build_host_argv), NOT a PYTHONSAFEPATH env var:
+    # the flag isolates only the host interpreter, whereas the env var is
+    # inherited by every child subprocess a toolkit spawns and breaks external
+    # tools that rely on the implicit script-dir sys.path (e.g. MadGraph's
+    # bin/internal/ufomodel/write_param_card.py doing ``from parameters ...``).
     env["TOOLBASE_HOST_LOG"] = str(LOGS_DIR / f"{toolkit_name}.log")
+    if venv_bin:
+        # Put the toolkit venv's bin first on PATH. External tools the toolkit
+        # spawns (e.g. MadGraph via ``#!/usr/bin/env python3``) then resolve to
+        # the venv interpreter -- which carries the toolkit's declared deps --
+        # rather than whatever python happens to sit first on the caller's PATH
+        # (a homebrew/system python that lacks those deps is a common trap).
+        existing_path = env.get("PATH", "")
+        env["PATH"] = venv_bin + (
+            os.pathsep + existing_path if existing_path else "")
     return env
 
 
@@ -949,7 +1024,12 @@ class Orchestrator:
         _prepare_per_toolkit_log(disc.name)
 
         cmd = _build_host_command(disc, state_config=state_config)
-        env = _build_host_env(disc.path, disc.name)
+        venv_bin = None
+        if disc.env_type == "venv":
+            python_exe = disc.meta.get("python_path")
+            if python_exe:
+                venv_bin = os.path.dirname(python_exe)
+        env = _build_host_env(disc.path, disc.name, venv_bin=venv_bin)
 
         try:
             from orchestral.mcp import MCPClient
