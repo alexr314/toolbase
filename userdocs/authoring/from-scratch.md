@@ -71,6 +71,29 @@ sympy>=1.12
 
 `tb install` installs them into the toolkit's isolated environment.
 
+## Calling external programs
+
+If a tool shells out to a separate binary, the environment it runs in is the
+toolkit's, not the shell you happened to launch the agent from. Two rules
+follow, and both are the opposite of what you may expect from testing in an
+activated environment:
+
+- **Your toolkit's environment comes first on `PATH`.** A helper script
+  starting with `#!/usr/bin/env python3` gets your toolkit's interpreter with
+  your declared dependencies, not the system or homebrew one.
+- **The calling environment's variables don't reach you.** toolbase is often
+  launched from inside an activated conda env or virtualenv, and those export
+  variables pointing at their own files (data directories, library roots,
+  build flags). Anything bound to the caller's environment is stripped before
+  your toolkit runs, so it can't shadow software your toolkit ships. Search
+  paths like `PATH` and `LD_LIBRARY_PATH` are kept.
+
+So if your tool needs to know where something lives, declare it — a config
+field the user fills, or a `setup.py` that resolves it and records the answer.
+Don't rely on a variable your own shell happens to have set: it won't be there
+when a harness runs your toolkit. See
+[Config & setup](config-and-setup.md).
+
 ## Group into bundles
 
 A bundle is a named group of tools. Assign one with `bundle:`:

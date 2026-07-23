@@ -58,6 +58,35 @@ tb connect --list      # shows the toolbase on your PATH
 If you switched virtualenvs, re-run `tb connect` (optionally `--abspath` to pin
 the exact binary).
 
+## A toolkit works in my shell but fails under toolbase
+
+Usually the tool was quietly relying on your shell's environment. A toolkit
+runs in its own isolated environment, and toolbase deliberately does not hand
+it the environment you launched from: variables bound to an activated conda
+env or virtualenv are stripped, so they can't point the toolkit's own bundled
+software at some other install. That's what makes a toolkit behave the same on
+your laptop and on a colleague's.
+
+The failure usually looks like a version or "file not found" complaint from an
+external program, not from Python. Check the toolkit's log for what it
+actually tried to load:
+
+```bash
+tb logs                              # tool calls, live
+cat ~/.toolbase/logs/<toolkit>.log   # that toolkit's own stderr
+```
+
+If the tool needs a path or a data directory, set it as config rather than
+exporting it in your shell:
+
+```bash
+tb config show <toolkit>              # what the toolkit expects
+tb config set <toolkit> <key> <value>
+```
+
+If you author the toolkit, see
+[Calling external programs](authoring/from-scratch.md#calling-external-programs).
+
 ## Project's `.mcp.json` prompts teammates
 
 Claude Code shows a one-time trust prompt per person for a project's
