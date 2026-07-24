@@ -185,7 +185,11 @@ def read_versioned_yaml(
 
     try:
         with open(path, "r", encoding="utf-8") as f:
-            data = _yaml.load(f)
+            # A fresh loader per call: ruamel's YAML() holds mutable parse
+            # state and is NOT thread-safe, so a shared module-level instance
+            # races under parallel resolution (corrupting into spurious
+            # 'NoneType has no attribute anchor' / DuplicateKeyError).
+            data = _new_yaml().load(f)
     except Exception as e:
         raise ValueError(f"failed to parse {path}: {e}") from e
 
@@ -327,7 +331,7 @@ def write_versioned_yaml(
 
     tmp = path.with_suffix(path.suffix + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
-        _yaml.dump(to_write, f)
+        _new_yaml().dump(to_write, f)  # fresh instance: YAML() is not thread-safe
     os.replace(tmp, path)
 
     try:
