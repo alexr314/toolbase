@@ -200,7 +200,7 @@ def load_config(
         return CommentedMap()
     try:
         with open(path, "r", encoding="utf-8") as f:
-            data = _yaml.load(f)
+            data = _new_yaml().load(f)  # fresh instance: YAML() is not thread-safe
     except Exception as e:
         raise ValueError(
             f"failed to parse {path}: {e}"
@@ -302,7 +302,7 @@ def save_config(
 
     tmp = path.with_suffix(path.suffix + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
-        _yaml.dump(data, f)
+        _new_yaml().dump(data, f)  # fresh instance: YAML() is not thread-safe
     os.replace(tmp, path)
 
     try:

@@ -12,6 +12,7 @@ Covers:
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 
 import pytest
@@ -275,3 +276,43 @@ def test_chain_two_step_migration(tmp_path, monkeypatch):
     assert out["step1"] is True
     assert out["step2"] is True
     assert out["schema_version"] == 2
+
+
+def test_concurrent_reads_and_writes_are_thread_safe(tmp_path):
+    """Resolution parses every cached toolkit's metadata, and runs execute
+    trials in parallel — so read/write_versioned_yaml are called concurrently.
+    A shared module-level ruamel YAML() is not thread-safe and corrupts under
+    that load (spurious "'NoneType' object has no attribute 'anchor'" /
+    DuplicateKeyError). Each call must use its own loader/dumper instead.
+    """
+    f = tmp_path / "meta.yaml"
+    f.write_text("schema_version: 1\nname: demo\nvalue: 42\n")
+    errors: list[BaseException] = []
+
+    def reader() -> None:
+        for _ in range(300):
+            try:
+                out = schema_mod.read_versioned_yaml(f, "toolkit_config")
+                assert out["name"] == "demo"
+            except BaseException as e:  # noqa: BLE001 - record, don't swallow
+                errors.append(e)
+                return
+
+    def writer() -> None:
+        wf = tmp_path / f"w{threading.get_ident()}.yaml"
+        for i in range(300):
+            try:
+                schema_mod.write_versioned_yaml(
+                    wf, "toolkit_config", {"n": i})
+            except BaseException as e:  # noqa: BLE001
+                errors.append(e)
+                return
+
+    threads = [threading.Thread(target=reader) for _ in range(5)]
+    threads += [threading.Thread(target=writer) for _ in range(3)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert not errors, f"thread-safety regression: {errors[:2]}"
