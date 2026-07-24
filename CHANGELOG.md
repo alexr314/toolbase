@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.6.1] — 2026-07-24
+
+### Fixed
+
+- `read_versioned_yaml` / `write_versioned_yaml` (`envs/schema.py`) and the setup-storage helpers (`setup/storage.py`) no longer share a single module-level `ruamel.yaml.YAML()` instance across calls. A `YAML()` object holds mutable parse state and is not thread-safe, so concurrent callers (e.g. two trials resolving an environment in parallel, which parses every cached toolkit's `.install_meta.yaml`) intermittently corrupted it into a misleading `'NoneType' object has no attribute 'anchor'` or a spurious `DuplicateKeyError` against a file that parses cleanly single-threaded. Each read and write now constructs its own loader/dumper. ([#39](https://github.com/alexr314/toolbase/pull/39))
+
 ## [0.2.1] — 2026-06-06
 
 ### Fixed
