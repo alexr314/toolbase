@@ -8,6 +8,14 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **`tb connect --abspath` no longer silently falls back to a bare command.** It resolved the binary with `shutil.which("toolbase")`, which returns `None` exactly when toolbase isn't on PATH at connect time (a venv/conda install, or toolbase invoked by absolute path) — the very case `--abspath` exists for — so it quietly wrote a bare `toolbase` that the harness then couldn't launch. It now resolves the toolbase beside the running interpreter first (`sys.executable`'s dir), falling back to `which` then bare.
+
+### Changed
+
+- **`tb connect` command default is now scope-aware.** User-scope connects (`-g`, a machine-local config that is never committed) default to the **absolute** toolbase path so the harness always finds it — important because a harness process (e.g. a GUI app, or a shell without your env activated) often doesn't have a venv/conda `bin` on PATH. Project-scope connects (git-committed, shared) stay **bare** `toolbase` for portability, and now print a note when toolbase is env-installed that a bare command may not resolve for the harness (suggesting `--abspath`, `-g`, or a login-PATH install). New `--portable` flag forces the bare command in any scope; `--abspath` still forces the absolute path.
+
 ## [0.8.0] — 2026-07-27
 
 ### Added

@@ -6830,18 +6830,66 @@ def _resolve_connect_scope(global_scope: bool, local_scope: bool):
     return "project", root
 
 
-def _toolbase_command(abspath: bool) -> str:
-    """The command string to write into the harness's config.
+def _toolbase_abspath() -> str:
+    """Absolute path of the *running* toolbase binary.
 
-    Default is the bare ``toolbase`` (PATH-resolved, portable across
-    machines — important for team-shared project configs). ``--abspath``
-    writes the resolved absolute path of the current binary.
+    A harness launches the MCP server by exec'ing this command against its
+    own process PATH — which for a venv/conda install often does not include
+    the env's ``bin``, so a bare ``toolbase`` fails to launch. The absolute
+    path is PATH-independent.
+
+    Resolution prefers the ``toolbase`` beside the running interpreter
+    (``sys.executable``'s ``bin/`` — where a console-script entry point
+    lives, i.e. *this* toolbase), because ``shutil.which`` returns ``None``
+    when toolbase isn't on the PATH at connect time (exactly the case that
+    needs an absolute path). Falls back to ``which`` then bare.
     """
-    if not abspath:
-        return "toolbase"
     import shutil
-    resolved = shutil.which("toolbase")
-    return resolved or "toolbase"
+    bindir = Path(sys.executable).parent
+    for cand in (bindir / "toolbase", bindir / "toolbase.exe"):
+        if cand.exists():
+            return str(cand)
+    return shutil.which("toolbase") or "toolbase"
+
+
+def _toolbase_is_env_installed() -> bool:
+    """True when toolbase runs from an isolated env whose ``bin`` a harness
+    process likely won't have on PATH — a venv/virtualenv, or a *named*
+    (non-base) conda env. Used to warn before writing a bare command that
+    may not resolve for the harness."""
+    if sys.prefix != getattr(sys, "base_prefix", sys.prefix):
+        return True  # venv / virtualenv
+    conda_env = os.environ.get("CONDA_DEFAULT_ENV")
+    return bool(conda_env) and conda_env != "base"  # named conda env
+
+
+def _resolve_connect_command(*, abspath: bool, portable: bool, scope: str) -> str:
+    """The command string to write into the harness's config, scope-aware.
+
+    Default optimizes for the config's shareability: ``user`` scope (``-g``,
+    a machine-local config that is never committed) writes the absolute path
+    so the harness always finds it; ``project`` scope (git-committed, shared)
+    stays bare ``toolbase`` for portability across machines. ``--abspath``
+    forces the absolute path in any scope; ``--portable`` forces bare. On a
+    project-scope bare write from an isolated env, warn that the harness may
+    not resolve a bare command."""
+    if abspath and portable:
+        raise click.UsageError("--abspath and --portable are mutually exclusive.")
+    use_abspath = abspath or (not portable and scope == "user")
+    if use_abspath:
+        return _toolbase_abspath()
+    if scope != "user" and _toolbase_is_env_installed():
+        console.print(
+            "[yellow]Note:[/yellow] wrote a bare [cyan]toolbase[/cyan] (portable). "
+            "The harness resolves it against its own PATH, and toolbase lives in "
+            "an isolated env — so a harness launched outside that env (a desktop "
+            "app, or a terminal without the env active) won't find it and the MCP "
+            "server will show as failed. Fixes: reconnect with [cyan]--abspath[/cyan] "
+            "(machine-specific path), use [cyan]-g[/cyan] (user scope uses the "
+            "absolute path by default), or put toolbase on your login PATH "
+            "(e.g. [cyan]pipx install toolbase[/cyan]) to keep it bare and portable."
+        )
+    return "toolbase"
 
 
 def _activated_toolkit_dirs() -> "dict[str, Path]":
@@ -6956,7 +7004,11 @@ def _unsurface_skills_for_connect(adapter) -> None:
 @click.option('--dry-run', 'dry_run', is_flag=True, default=False,
               help='Print the intended write without changing anything.')
 @click.option('--abspath', 'abspath', is_flag=True, default=False,
-              help='Write the absolute toolbase binary path instead of relying on PATH.')
+              help='Force the absolute toolbase binary path (PATH-independent). '
+                   'Default for user scope (-g); project scope stays bare.')
+@click.option('--portable', 'portable', is_flag=True, default=False,
+              help='Force the bare `toolbase` command (portable across machines) '
+                   'even for user scope.')
 @click.option('--list', 'do_list', is_flag=True, default=False,
               help='Show where toolbase is wired across harnesses, then exit.')
 @click.option('--harnesses', 'do_harnesses', is_flag=True, default=False,
@@ -6970,7 +7022,7 @@ def _unsurface_skills_for_connect(adapter) -> None:
               help="Don't surface the activated toolkits' skills into the "
                    "harness (wire the MCP server only).")
 def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
-            abspath, do_list, do_harnesses, out_path, force, no_skills):
+            abspath, portable, do_list, do_harnesses, out_path, force, no_skills):
     """Wire toolbase into an agent harness.
 
     \b
@@ -7063,7 +7115,7 @@ def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
         _unsurface_skills_for_connect(adapter)
         return
 
-    command = _toolbase_command(abspath)
+    command = _resolve_connect_command(abspath=abspath, portable=portable, scope=scope)
     try:
         path = adapter.install(
             scope=scope, project_root=project_root, server_name="toolbase",
