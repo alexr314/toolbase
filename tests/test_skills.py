@@ -345,6 +345,42 @@ def test_validate_ok_when_skill_bundle_declared(tmp_path: Path):
     ), result.errors
 
 
+# ── skill packs (skills-only toolkits) ───────────────────────────────────
+
+
+def _make_skillpack(tmp_path: Path, name: str, *, tools_line: str = "") -> Path:
+    tk = tmp_path / name
+    (tk / "skills").mkdir(parents=True)
+    (tk / "skills" / "guide.md").write_text(
+        "---\nname: Guide\ndescription: A guide.\n---\nBody\n"
+    )
+    (tk / "README.md").write_text(f"# {name}\n")
+    (tk / "requirements.txt").write_text("")  # no orchestral-ai needed
+    (tk / "toolkit.yaml").write_text(
+        f"name: {name}\nversion: 0.1.0\ndescription: A skill pack\n"
+        f"author: t\ncategory: utils\n" + tools_line
+    )
+    return tk
+
+
+def test_validate_skillpack_no_tools_key(tmp_path: Path):
+    result = validation.validate_toolkit(_make_skillpack(tmp_path, "skillpack"))
+    assert result.is_valid, result.errors
+    assert result.metadata.tools == []
+
+
+def test_validate_skillpack_empty_tools_list(tmp_path: Path):
+    result = validation.validate_toolkit(
+        _make_skillpack(tmp_path, "skillpack", tools_line="tools: []\n")
+    )
+    assert result.is_valid, result.errors
+
+
+def test_validate_skillpack_does_not_require_orchestral_ai(tmp_path: Path):
+    result = validation.validate_toolkit(_make_skillpack(tmp_path, "skillpack"))
+    assert not any("orchestral-ai" in e for e in result.errors), result.errors
+
+
 def _make_minimal_valid_toolkit(tmp_path: Path, name: str) -> Path:
     """Build a toolkit dir that satisfies the rest of validate_toolkit
     so we can isolate the skills-frontmatter warnings.
@@ -375,3 +411,127 @@ def _make_minimal_valid_toolkit(tmp_path: Path, name: str) -> Path:
     (tk / "requirements.txt").write_text("orchestral-ai>=1.0.0\n")
     (tk / "skills").mkdir()
     return tk
+
+
+# ── flat layout (Codex ~/.codex/prompts) ─────────────────────────────────────
+
+
+def _flat_target(root: Path) -> "skills.SkillTarget":
+    return skills.SkillTarget("codex", root, layout="flat", keep_frontmatter=False)
+
+
+def _dir_target(root: Path) -> "skills.SkillTarget":
+    return skills.SkillTarget("claude-code", root, layout="dir", keep_frontmatter=True)
+
+
+def test_surface_flat_strips_frontmatter(tmp_path: Path):
+    tk = _make_toolkit(tmp_path, "tk", (
+        "intro.md",
+        "---\nname: Intro\ndescription: d.\n---\n\n# Body\nDo the thing.\n",
+    ))
+    out = tmp_path / "codex-prompts"
+    surfaced = skills.surface_skills("tk", tk, _flat_target(out))
+    assert surfaced == ["tk__intro"]
+    f = out / "tk__intro.md"
+    assert f.exists() and not f.is_dir()
+    text = f.read_text()
+    # Frontmatter stripped; body is the prompt.
+    assert not text.startswith("---")
+    assert text.startswith("# Body")
+    # Ownership is tracked in the manifest, not a per-dir marker.
+    assert skills._read_manifest(out) == {"tk__intro.md": "tk"}
+
+
+def test_surface_flat_keeps_body_when_no_frontmatter(tmp_path: Path):
+    tk = _make_toolkit(tmp_path, "tk", ("raw.md", "# Raw\nJust text.\n"))
+    out = tmp_path / "codex-prompts"
+    skills.surface_skills("tk", tk, _flat_target(out))
+    assert (out / "tk__raw.md").read_text().startswith("# Raw")
+
+
+def test_unsurface_flat_removes_only_manifest_files(tmp_path: Path):
+    tk = _make_toolkit(tmp_path, "tk", ("a.md", "body a"))
+    out = tmp_path / "codex-prompts"
+    skills.surface_skills("tk", tk, _flat_target(out))
+    # A user-authored prompt with the same prefix must survive.
+    (out / "tk__mine.md").write_text("mine")
+    removed = skills.unsurface_skills("tk", _flat_target(out))
+    assert removed == ["tk__a"]
+    assert not (out / "tk__a.md").exists()
+    assert (out / "tk__mine.md").exists()  # not in manifest → untouched
+    assert skills._read_manifest(out) == {}
+
+
+def test_unsurface_flat_only_targets_named_toolkit(tmp_path: Path):
+    out = tmp_path / "codex-prompts"
+    skills.surface_skills("tk", _make_toolkit(tmp_path, "tk", ("a.md", "a")),
+                          _flat_target(out))
+    skills.surface_skills("other", _make_toolkit(tmp_path, "other", ("b.md", "b")),
+                          _flat_target(out))
+    skills.unsurface_skills("tk", _flat_target(out))
+    assert not (out / "tk__a.md").exists()
+    assert (out / "other__b.md").exists()
+    assert skills._read_manifest(out) == {"other__b.md": "other"}
+
+
+def test_unsurface_all_flat_clears_manifest(tmp_path: Path):
+    out = tmp_path / "codex-prompts"
+    skills.surface_skills("tk", _make_toolkit(tmp_path, "tk", ("a.md", "a")),
+                          _flat_target(out))
+    removed = skills.unsurface_all(_flat_target(out))
+    assert removed == ["tk__a"]
+    assert skills._read_manifest(out) == {}
+
+
+def test_unsurface_all_dir_removes_all_owned(tmp_path: Path):
+    out = tmp_path / "claude"
+    skills.surface_skills(
+        "tk", _make_toolkit(tmp_path, "tk", ("a.md", "a"), ("b.md", "b")),
+        _dir_target(out),
+    )
+    # A user dir without a marker must survive.
+    (out / "tk__user").mkdir()
+    removed = skills.unsurface_all(_dir_target(out))
+    assert sorted(removed) == ["tk__a", "tk__b"]
+    assert (out / "tk__user").exists()
+
+
+def test_surface_respects_disabled_slugs(tmp_path: Path):
+    tk = _make_toolkit(
+        tmp_path, "tk",
+        ("keep.md", "keep body"),
+        ("drop.md", "drop body"),
+    )
+    out = tmp_path / "codex-prompts"
+    surfaced = skills.surface_skills(
+        "tk", tk, _flat_target(out), disabled_slugs={"drop"},
+    )
+    assert surfaced == ["tk__keep"]
+    assert (out / "tk__keep.md").exists()
+    assert not (out / "tk__drop.md").exists()
+
+
+def test_surface_disabled_slugs_dir_layout(tmp_path: Path):
+    tk = _make_toolkit(
+        tmp_path, "tk", ("keep.md", "a"), ("drop.md", "b"),
+    )
+    out = tmp_path / "claude"
+    surfaced = skills.surface_skills(
+        "tk", tk, _dir_target(out), disabled_slugs={"drop"},
+    )
+    assert surfaced == ["tk__keep"]
+    assert not (out / "tk__drop").exists()
+
+
+def test_flat_bundle_gating(tmp_path: Path):
+    tk = _make_toolkit(
+        tmp_path, "tk",
+        ("core.md", "core body"),
+        ("pro.md", "---\nname: Pro\ndescription: d.\nbundle: pro\n---\nbody\n"),
+    )
+    out = tmp_path / "codex-prompts"
+    surfaced = skills.surface_skills(
+        "tk", tk, _flat_target(out), available_bundles={"basic"},
+    )
+    assert surfaced == ["tk__core"]
+    assert not (out / "tk__pro.md").exists()

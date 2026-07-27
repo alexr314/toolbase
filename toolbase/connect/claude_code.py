@@ -52,6 +52,17 @@ class ClaudeCodeAdapter(HarnessAdapter):
     def supported_scopes(self) -> Dict[str, str]:
         return {"user": "user", "project": "project"}
 
+    def skill_target(self):
+        # ~/.claude/skills/<toolkit>__<skill>/SKILL.md — a dir per skill,
+        # frontmatter preserved (Claude Code requires it). Claude Code both
+        # auto-surfaces these to the model and exposes each as a slash
+        # command.
+        from ..skills import SkillTarget, CLAUDE_SKILLS_DIR
+        return SkillTarget(
+            harness=self.name, root=CLAUDE_SKILLS_DIR,
+            layout="dir", keep_frontmatter=True,
+        )
+
     # ── paths ────────────────────────────────────────────────────────
 
     def config_path(self, scope: str, project_root: Optional[Path]) -> Path:

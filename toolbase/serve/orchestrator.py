@@ -451,6 +451,22 @@ def _read_tools_spec(toolkit_path: Path) -> List[Dict[str, Any]]:
     return out
 
 
+def _toolkit_is_skills_only(toolkit_path: Path) -> bool:
+    """True for a "skill pack": a toolkit that declares no tools and has no
+    implicit ``tools/__init__.py`` package, so it serves nothing over MCP and
+    ships only ``skills/`` guides.
+
+    Both conditions are needed because :func:`_read_tools_spec` returns ``[]``
+    for an implicit-form toolkit too (it discovers tools via
+    ``tools/__init__.py`` rather than the yaml). The serve orchestrator skips
+    launching a skill pack — there is no host to run — but it stays fully
+    discoverable, so ``tb activate`` + ``tb connect`` still surface its
+    skills."""
+    if _read_tools_spec(toolkit_path):
+        return False
+    return not (toolkit_path / "tools" / "__init__.py").exists()
+
+
 def _read_bundles_and_membership(
     toolkit_path: Path,
 ) -> Tuple[Optional[Dict[str, Dict[str, Any]]], Dict[str, List[str]]]:
@@ -956,6 +972,13 @@ class Orchestrator:
             for w in self._profile.warnings:
                 self.console.print(f"  [yellow]warning:[/yellow] {w}")
 
+        # Skip launching skill packs (toolkits with no tools). They have no
+        # host to serve; their skills surface via `tb connect`. Marked here
+        # (not in discover_toolkits) so they stay discoverable/activatable.
+        for d in discoveries:
+            if d.skip_reason is None and _toolkit_is_skills_only(d.path):
+                d.skip_reason = "skills-only toolkit (no tools to serve)"
+
         self._print_startup_banner_pre(discoveries)
 
         ready = [d for d in discoveries if d.skip_reason is None]
@@ -974,6 +997,30 @@ class Orchestrator:
             self._warn_name_collisions()
 
         if not self._runtimes:
+            SKILLS_ONLY = "skills-only toolkit (no tools to serve)"
+            not_in_profile = (
+                f"not in active profile '{self._profile.name}'"
+                if self._profile is not None else None
+            )
+            skillpacks = sorted(
+                d.name for d in discoveries if d.skip_reason == SKILLS_ONLY
+            )
+            # Toolkits the profile actually selected (i.e. not dropped for
+            # being out of the active profile). If every one of those is a
+            # skill pack, there is genuinely nothing to serve — not a
+            # misconfiguration — so say that instead of the generic error.
+            selected = [d for d in discoveries if d.skip_reason != not_in_profile]
+            if skillpacks and selected and all(
+                d.skip_reason == SKILLS_ONLY for d in selected
+            ):
+                raise RuntimeError(
+                    "only skill packs are active ("
+                    + ", ".join(skillpacks)
+                    + "); they ship skills, not tools, so there is nothing to "
+                    "serve over MCP. Their skills surface via `tb connect "
+                    "<harness>`. Activate a toolkit that has tools to run "
+                    "`tb serve`."
+                )
             raise RuntimeError("no toolkits could be started")
 
         return self._proxy_tools

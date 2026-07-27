@@ -1,44 +1,50 @@
 """Skills surfacing.
 
-A toolkit's ``skills/*.md`` files are agent-facing how-to guides. On
-install, we mirror them into ``~/.claude/skills/`` so Claude Code (which
-watches that directory) picks them up automatically. On uninstall, we
-remove them. On publish, we validate that they carry the frontmatter
-Claude Code expects.
+A toolkit's ``skills/*.md`` files are agent-facing how-to guides. Surfacing
+is a per-harness ``tb connect`` concern (each harness has its own skill
+location and format), driven through a :class:`SkillTarget` an adapter
+returns. ``tb connect <harness>`` surfaces the activated toolkits' skills
+into that target; ``tb disconnect`` (and uninstalling the toolkit) clears
+them. On publish we validate that skills carry the frontmatter Claude Code
+expects.
 
-A skill may scope itself to a bundle with ``bundle: <name>`` in its
-frontmatter. Such a skill is surfaced only when that bundle is available
-(its ``requires:`` config keys are set), parallel to how the orchestrator
-drops an unavailable bundle's tools. Skills with no ``bundle:`` are
-toolkit-wide and always surfaced. See ``install_skills_for_toolkit``.
+Two layouts, one per supported harness:
 
-The mirror layout is:
+    Claude Code  (dir)   ~/.claude/skills/<toolkit>__<skill>/SKILL.md
+    Codex        (flat)  ~/.codex/prompts/<toolkit>__<skill>.md
 
-    ~/.claude/skills/<toolkit>__<skill_name>/SKILL.md
+Claude Code watches its dir and both auto-surfaces each skill to the model
+and exposes it as a ``/<name>`` slash command; frontmatter is required, so
+we preserve it (synthesizing when missing). Codex has no model-facing skill
+concept — a prompt file is a user-invoked ``/<name>`` slash command — so we
+strip frontmatter to the body. Either way the ``<toolkit>__`` namespace
+mirrors the tool-namespacing convention and prevents collisions.
 
-Each skill gets its own directory. Namespacing the directory name with
-``<toolkit>__`` mirrors the tool-namespacing convention and prevents
-collisions with skills from other toolkits or unrelated installations.
+Ownership so we never clobber a user's own file: the dir layout drops an
+``OWNED_MARKER`` in each ``<toolkit>__<skill>/`` dir; the flat layout (no
+dir to mark) records each file in a ``MANIFEST_NAME`` JSON manifest at the
+target root. Unsurfacing only removes what we own.
 
-This module deliberately uses *copies*, not symlinks, even though the
-original spec said "symlink." Copies survive ``rm -rf`` of the toolkit
-dir cleaner (orphan symlinks are confusing); they survive Windows; and
-the source files are tiny markdown so the disk cost is negligible. We
-still call the operation "surfacing" to match user-facing terminology.
+The dir layout symlinks a complete-frontmatter source (so editable installs
+propagate edits) and falls back to a copy when it must rewrite (synthesized
+frontmatter) or can't symlink (Windows/FUSE). The flat layout always copies,
+since stripping frontmatter changes the content.
 
-If the user has manually placed something in
-``~/.claude/skills/<toolkit>__<skill>/`` we won't blow it away on
-install — we only overwrite ``SKILL.md`` itself.
+New code should call :func:`surface_skills` / :func:`unsurface_skills` with
+an explicit :class:`SkillTarget` (typically ``adapter.skill_target()``).
+``install_skills_for_toolkit`` / ``uninstall_skills_for_toolkit`` remain as
+Claude-dir back-compat wrappers.
 """
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import yaml
 
@@ -73,6 +79,62 @@ class SkillFrontmatter:
 
     def is_complete(self) -> bool:
         return bool(self.name) and bool(self.description)
+
+
+# Manifest that records which flat-layout files toolbase owns (a flat file
+# has no directory to drop OWNED_MARKER in). Maps ``<filename> -> <toolkit>``.
+MANIFEST_NAME = ".toolbase-managed.json"
+
+
+@dataclass
+class SkillTarget:
+    """Where and how one harness surfaces a toolkit's skills.
+
+    A harness's ``connect`` adapter returns a target (or ``None`` if it has
+    no skill surface). Two layouts, because the two harnesses that support
+    skills expect different things:
+
+    - ``"dir"`` — a directory per skill holding ``SKILL.md``. Claude Code
+      watches ``~/.claude/skills/<name>/SKILL.md`` and both auto-surfaces
+      the skill to the model and exposes it as a ``/<name>`` slash command.
+      Frontmatter is required, so it is preserved (synthesized when
+      missing). Ownership is tracked by an ``OWNED_MARKER`` file in each dir.
+    - ``"flat"`` — a single markdown file per skill. Codex reads
+      ``~/.codex/prompts/<name>.md`` as a ``/<name>`` slash-command prompt
+      (user-invoked only; Codex has no model-facing skill concept), so
+      frontmatter is stripped to the body — Codex would otherwise render the
+      YAML block as prose. A flat file has no dir to mark, so ownership is
+      tracked by a JSON manifest at ``<root>/<MANIFEST_NAME>``.
+    """
+
+    harness: str
+    root: Path
+    layout: str  # "dir" | "flat"
+    keep_frontmatter: bool
+
+
+def _read_manifest(root: Path) -> Dict[str, str]:
+    path = root / MANIFEST_NAME
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _write_manifest(root: Path, data: Dict[str, str]) -> None:
+    path = root / MANIFEST_NAME
+    if data:
+        path.write_text(
+            json.dumps(data, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+    elif path.exists():
+        try:
+            path.unlink()
+        except OSError:
+            pass
 
 
 def parse_frontmatter(text: str) -> Tuple[Optional[SkillFrontmatter], str]:
@@ -135,18 +197,19 @@ def _slug(stem: str) -> str:
     return s.lower() or "skill"
 
 
-def install_skills_for_toolkit(
+def surface_skills(
     toolkit_name: str,
     toolkit_dir: Path,
+    target: SkillTarget,
     *,
-    skills_dir: Optional[Path] = None,
     available_bundles: Optional[set] = None,
+    disabled_slugs: Optional[set] = None,
 ) -> List[str]:
-    """Copy a toolkit's skills into ``~/.claude/skills/``.
+    """Surface a toolkit's skills into a harness's ``SkillTarget``.
 
     Returns the list of skill slugs that were surfaced (empty if the
-    toolkit ships none). Idempotent: safe to call repeatedly; existing
-    SKILL.md files we own will be overwritten.
+    toolkit ships none). Idempotent: safe to call repeatedly; entries we
+    own are overwritten.
 
     ``available_bundles`` gates bundle-scoped skills. A skill declares a
     bundle via ``bundle:`` in its frontmatter. When ``available_bundles``
@@ -154,31 +217,28 @@ def install_skills_for_toolkit(
     (its bundle's config requirements aren't met, so the matching tools
     aren't served either — surfacing the guide would be misleading).
     Skills with no ``bundle:`` are always surfaced. ``None`` (the
-    default) disables gating and surfaces every skill — the back-compat
-    behavior for callers that don't evaluate bundles.
+    default) disables gating and surfaces every skill.
 
-    ``skills_dir`` defaults to the module-level ``CLAUDE_SKILLS_DIR`` at
-    call time. We use a ``None`` sentinel rather than
-    ``skills_dir: Path = CLAUDE_SKILLS_DIR`` because Python evaluates
-    default-argument expressions exactly once, at function definition.
-    A bound default would freeze the import-time value of
-    ``CLAUDE_SKILLS_DIR``, defeating monkeypatching in tests and the
-    e2e harness — which silently leaked synthetic skill files into the
-    developer's real ``~/.claude/skills/`` until that bug was caught.
-    Resolve at call time to keep tests honest.
+    ``disabled_slugs`` is a per-toolkit blocklist of bare skill slugs
+    (from the active profile's ``skills.disabled``, set by ``tb
+    deactivate <toolkit>__<skill>``). A source whose slug is in the set is
+    skipped — the per-skill analog of ``available_bundles``.
     """
-    if skills_dir is None:
-        skills_dir = CLAUDE_SKILLS_DIR
     sources = discover_skills(toolkit_dir)
     if not sources:
         return []
 
-    skills_dir.mkdir(parents=True, exist_ok=True)
+    target.root.mkdir(parents=True, exist_ok=True)
+    manifest = _read_manifest(target.root) if target.layout == "flat" else None
     surfaced: List[str] = []
-    use_symlinks = _can_symlink()
     for src in sources:
+        bare_slug = _slug(src.stem)
+        if disabled_slugs is not None and bare_slug in disabled_slugs:
+            # Individually deactivated in the active profile.
+            continue
+
         text = src.read_text(encoding="utf-8")
-        fm, _body = parse_frontmatter(text)
+        fm, body = parse_frontmatter(text)
         bundle = fm.bundle if fm else None
         if (
             bundle is not None
@@ -190,50 +250,179 @@ def install_skills_for_toolkit(
             # tools.
             continue
 
-        slug = f"{toolkit_name}__{_slug(src.stem)}"
-        dest_dir = skills_dir / slug
-        dest_dir.mkdir(parents=True, exist_ok=True)
-        # Drop the marker so we know we own this directory.
-        (dest_dir / OWNED_MARKER).write_text(toolkit_name + "\n")
-
-        needs_synthesis = fm is None or not fm.is_complete()
-
-        skill_path = dest_dir / "SKILL.md"
-        # If a previous install left a file/symlink here, replace it.
-        if skill_path.exists() or skill_path.is_symlink():
-            skill_path.unlink()
-
-        if needs_synthesis:
-            # Synthesize frontmatter on disk because we can't safely
-            # mutate the source file. Using the file stem as `name` and
-            # the first descriptive line as `description` is a backward-
-            # compat fallback for toolkits that predate the requirement.
-            synthesized_name = src.stem.replace("_", " ").replace("-", " ").strip().title()
-            description = _first_line_summary(text) or f"Guidance for {toolkit_name}."
-            text = (
-                "---\n"
-                f"name: {synthesized_name}\n"
-                f"description: {description}\n"
-                "---\n\n"
-                + text
-            )
-            skill_path.write_text(text, encoding="utf-8")
-        elif use_symlinks:
-            # Symlink to the source file. Edits to the source show up on
-            # the next time Claude Code re-reads, which matters for
-            # editable / dev installs where the toolkit dir is the
-            # author's working copy.
-            try:
-                skill_path.symlink_to(src.resolve())
-            except OSError:
-                # Fall back to a copy (filesystem doesn't support symlinks,
-                # e.g. some FUSE mounts).
-                skill_path.write_text(text, encoding="utf-8")
+        slug = f"{toolkit_name}__{bare_slug}"
+        if target.layout == "dir":
+            _surface_dir(target.root, toolkit_name, slug, src, text, fm)
         else:
-            # Windows or non-symlinkable filesystem: write a copy.
-            skill_path.write_text(text, encoding="utf-8")
+            _surface_flat(
+                target.root, slug, text, body, fm,
+                keep_frontmatter=target.keep_frontmatter,
+                manifest=manifest, toolkit_name=toolkit_name,
+            )
         surfaced.append(slug)
+
+    if target.layout == "flat" and manifest is not None:
+        _write_manifest(target.root, manifest)
     return surfaced
+
+
+def _surface_dir(
+    root: Path, toolkit_name: str, slug: str, src: Path, text: str,
+    fm: Optional[SkillFrontmatter],
+) -> None:
+    """Write one skill as ``<root>/<slug>/SKILL.md`` (Claude Code layout)."""
+    dest_dir = root / slug
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    # Drop the marker so we know we own this directory.
+    (dest_dir / OWNED_MARKER).write_text(toolkit_name + "\n")
+
+    needs_synthesis = fm is None or not fm.is_complete()
+
+    skill_path = dest_dir / "SKILL.md"
+    # If a previous surface left a file/symlink here, replace it.
+    if skill_path.exists() or skill_path.is_symlink():
+        skill_path.unlink()
+
+    if needs_synthesis:
+        # Synthesize frontmatter on disk because we can't safely mutate the
+        # source file. Using the file stem as `name` and the first
+        # descriptive line as `description` is a backward-compat fallback
+        # for toolkits that predate the requirement.
+        synthesized_name = src.stem.replace("_", " ").replace("-", " ").strip().title()
+        description = _first_line_summary(text) or f"Guidance for {toolkit_name}."
+        text = (
+            "---\n"
+            f"name: {synthesized_name}\n"
+            f"description: {description}\n"
+            "---\n\n"
+            + text
+        )
+        skill_path.write_text(text, encoding="utf-8")
+    elif _can_symlink():
+        # Symlink to the source file. Edits to the source show up the next
+        # time Claude Code re-reads, which matters for editable / dev
+        # installs where the toolkit dir is the author's working copy.
+        try:
+            skill_path.symlink_to(src.resolve())
+        except OSError:
+            # Fall back to a copy (filesystem doesn't support symlinks,
+            # e.g. some FUSE mounts).
+            skill_path.write_text(text, encoding="utf-8")
+    else:
+        # Windows or non-symlinkable filesystem: write a copy.
+        skill_path.write_text(text, encoding="utf-8")
+
+
+def _surface_flat(
+    root: Path, slug: str, text: str, body: str,
+    fm: Optional[SkillFrontmatter], *, keep_frontmatter: bool,
+    manifest: Dict[str, str], toolkit_name: str,
+) -> None:
+    """Write one skill as ``<root>/<slug>.md`` (Codex prompt layout).
+
+    Codex has no model-facing skill concept and no frontmatter support, so
+    by default we strip the YAML block and write only the guide body — it
+    becomes the text of a ``/<slug>`` slash-command prompt. We always
+    (re)write a copy (never symlink): the on-disk content differs from the
+    source once frontmatter is stripped, and Codex reads it once at
+    invocation rather than watching for edits.
+    """
+    dest = root / f"{slug}.md"
+    content = text if keep_frontmatter else body
+    content = content.lstrip("\n")
+    if not content.endswith("\n"):
+        content += "\n"
+    dest.write_text(content, encoding="utf-8")
+    manifest[dest.name] = toolkit_name
+
+
+def unsurface_skills(toolkit_name: str, target: SkillTarget) -> List[str]:
+    """Remove a single toolkit's surfaced skills from ``target``.
+
+    Only removes entries toolbase owns (an ``OWNED_MARKER`` for the ``dir``
+    layout, a manifest entry for the ``flat`` layout). User-placed files
+    with the same name prefix are left alone. Returns removed slugs.
+    """
+    if not target.root.exists():
+        return []
+    if target.layout == "dir":
+        return _unsurface_dir(target.root, toolkit_name=toolkit_name)
+    return _unsurface_flat(target.root, toolkit_name=toolkit_name)
+
+
+def unsurface_all(target: SkillTarget) -> List[str]:
+    """Remove every toolbase-owned skill from ``target`` (used on disconnect)."""
+    if not target.root.exists():
+        return []
+    if target.layout == "dir":
+        return _unsurface_dir(target.root, toolkit_name=None)
+    return _unsurface_flat(target.root, toolkit_name=None)
+
+
+def _unsurface_dir(root: Path, *, toolkit_name: Optional[str]) -> List[str]:
+    prefix = f"{toolkit_name}__" if toolkit_name is not None else None
+    removed: List[str] = []
+    for entry in root.iterdir():
+        if not entry.is_dir():
+            continue
+        if prefix is not None and not entry.name.startswith(prefix):
+            continue
+        if not (entry / OWNED_MARKER).exists():
+            continue
+        try:
+            shutil.rmtree(entry)
+            removed.append(entry.name)
+        except OSError:
+            # Leave it; user can clean up manually. Don't fail the caller.
+            pass
+    return removed
+
+
+def _unsurface_flat(root: Path, *, toolkit_name: Optional[str]) -> List[str]:
+    manifest = _read_manifest(root)
+    removed: List[str] = []
+    for fname, owner in list(manifest.items()):
+        if toolkit_name is not None and owner != toolkit_name:
+            continue
+        fpath = root / fname
+        try:
+            if fpath.exists():
+                fpath.unlink()
+        except OSError:
+            # Leave it and keep the manifest entry so a later run retries.
+            continue
+        removed.append(fname[:-3] if fname.endswith(".md") else fname)
+        del manifest[fname]
+    _write_manifest(root, manifest)
+    return removed
+
+
+# ── back-compat: the Claude-Code dir layout, kept for existing callers ──
+
+
+def _claude_dir_target(skills_dir: Optional[Path]) -> SkillTarget:
+    # Resolve ``CLAUDE_SKILLS_DIR`` at call time (not as a default-arg
+    # expression, which Python binds once at definition) so tests and the
+    # e2e harness can monkeypatch it — otherwise synthetic skills leak into
+    # the developer's real ``~/.claude/skills/``.
+    root = skills_dir if skills_dir is not None else CLAUDE_SKILLS_DIR
+    return SkillTarget("claude-code", root, layout="dir", keep_frontmatter=True)
+
+
+def install_skills_for_toolkit(
+    toolkit_name: str,
+    toolkit_dir: Path,
+    *,
+    skills_dir: Optional[Path] = None,
+    available_bundles: Optional[set] = None,
+) -> List[str]:
+    """Back-compat wrapper: surface into the Claude Code ``~/.claude/skills/``
+    dir layout. New code should call :func:`surface_skills` with an explicit
+    :class:`SkillTarget` (typically ``adapter.skill_target()``)."""
+    return surface_skills(
+        toolkit_name, toolkit_dir, _claude_dir_target(skills_dir),
+        available_bundles=available_bundles,
+    )
 
 
 def uninstall_skills_for_toolkit(
@@ -241,33 +430,9 @@ def uninstall_skills_for_toolkit(
     *,
     skills_dir: Optional[Path] = None,
 ) -> List[str]:
-    """Remove ``~/.claude/skills/<toolkit>__*`` directories we own.
-
-    Only removes directories that carry the ``OWNED_MARKER`` written by
-    ``install_skills_for_toolkit``. User-placed skills with the same
-    name prefix are left alone.
-
-    Returns the list of skill slugs removed.
-    """
-    if skills_dir is None:
-        skills_dir = CLAUDE_SKILLS_DIR
-    if not skills_dir.exists():
-        return []
-    prefix = f"{toolkit_name}__"
-    removed: List[str] = []
-    for entry in skills_dir.iterdir():
-        if not entry.is_dir() or not entry.name.startswith(prefix):
-            continue
-        marker = entry / OWNED_MARKER
-        if not marker.exists():
-            continue
-        try:
-            shutil.rmtree(entry)
-            removed.append(entry.name)
-        except OSError:
-            # Leave it; user can clean up manually. Don't fail uninstall.
-            pass
-    return removed
+    """Back-compat wrapper: remove a toolkit's skills from the Claude Code
+    ``~/.claude/skills/`` dir layout. See :func:`unsurface_skills`."""
+    return unsurface_skills(toolkit_name, _claude_dir_target(skills_dir))
 
 
 def _first_line_summary(text: str, *, max_len: int = 120) -> Optional[str]:

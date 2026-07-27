@@ -6,10 +6,11 @@ them to your harness over the [Model Context Protocol](https://modelcontextproto
 span any domain, from web and data utilities to scientific categories
 like astro, hep, and quantum.
 
-A **toolkit** is the publishable unit; it bundles one or more **tools**
-an agent can call. Each toolkit installs into its own isolated Python
-environment, so dependency conflicts between toolkits are never a
-problem.
+A **toolkit** is the publishable unit. It bundles **tools** an agent can
+call and/or **skills** — short markdown how-to guides surfaced into your
+harness. Each toolkit installs into its own isolated Python environment,
+so dependency conflicts between toolkits are never a problem. A toolkit
+can even ship *only* skills (a **skill pack**).
 
 Full CLI reference: <https://toolbase-ai.com/docs>.
 
@@ -48,7 +49,8 @@ profile instead.
 Orchestral are all supported (`tb connect --harnesses` lists them);
 Claude Code and Codex are MCP clients (`tb connect` edits their config
 file), while Orchestral gets a runnable agent script you launch
-yourself.
+yourself. It also surfaces the activated toolkits' **skills** into the
+harness — see [Skills](#skills-guides-that-travel-with-the-toolkit).
 
 ## Inspect
 
@@ -60,19 +62,21 @@ tb logs              # tool calls, live (best diagnostic for "did it fire?")
 
 ## Curate what the agent sees
 
-`tb activate` / `deactivate` work at three granularities:
+`tb activate` / `deactivate` work at four granularities:
 
 ```bash
 tb activate calculator                # the whole toolkit
 tb activate calculator/scientific     # one bundle (group of related tools)
 tb activate calculator__add           # one specific tool
-tb deactivate calculator__add         # hide it again
+tb deactivate calculator__quickstart  # one specific skill (see Skills below)
 ```
 
-A **bundle** is a self-contained capability an author carves out of a
-toolkit, with its own deps and skills. `tb profile tools calculator`
-lists what's available. Power users can keep several named profiles
-(`tb profile create paper`,
+A `<toolkit>__<name>` item is a **skill** when it matches a surfaced
+skill and not a tool; otherwise it's a tool (a name that is both resolves
+to the tool). A **bundle** is a self-contained capability an author
+carves out of a toolkit, with its own deps and skills.
+`tb profile tools calculator` lists what's available. Power users can
+keep several named profiles (`tb profile create paper`,
 `tb connect claude-code --profile paper`) and switch between them; most
 users only ever touch the default profile.
 
@@ -83,6 +87,37 @@ vs `matrix__add`). When names do overlap, `tb serve`, `tb list -v`, and
 --bare` (or `default.bare: true` in `serve.yaml`) advertises the plain `<tool>`;
 a name shared by two toolkits stays qualified (both remain callable) with a
 warning, and the rest are served bare.
+
+## Skills: guides that travel with the toolkit
+
+A toolkit can ship **skills** — markdown how-to guides in `skills/` —
+alongside its tools or on their own. `tb connect` surfaces the activated
+toolkits' skills into the harness you connect, in that harness's native
+format:
+
+- **Claude Code** → `~/.claude/skills/<toolkit>__<skill>/` — auto-surfaced
+  to the model *and* available as a `/<toolkit>__<skill>` slash command.
+- **Codex** → `~/.codex/prompts/<toolkit>__<skill>.md` — a
+  `/<toolkit>__<skill>` slash-command prompt.
+
+Skills follow the same curation as tools: a guide is surfaced only when
+its toolkit is active, and you toggle a single one with the activation
+grammar.
+
+```bash
+tb deactivate calculator__advanced_guide   # stop surfacing this one guide
+tb activate   calculator__advanced_guide   # bring it back
+```
+
+`tb connect --no-skills` wires the MCP server without surfacing any
+skills; `tb disconnect` removes the surfaced skills too. Surfacing is a
+`connect`-time step, so `tb install` alone reports a toolkit's skills but
+doesn't surface them — connect (and the set you've activated) decides
+what lands in the harness.
+
+A toolkit that ships *only* skills is a **skill pack**: it declares no
+tools and serves nothing over MCP, but its guides surface through
+`tb connect` exactly like any other toolkit's.
 
 ## Share a project without sharing your machine
 
@@ -113,6 +148,7 @@ pins like editable installs.
 tb init my-toolkit             # scaffold from template
 cd my-toolkit
 # write tools in tools/ and skills in skills/
+# (a toolkit may ship only skills — a skill pack — and omit tools entirely)
 tb validate                    # check structure
 tb login                       # one-time browser-flow auth
 tb publish                     # ship it (auto-registers on first run)
@@ -145,10 +181,10 @@ Full reference with all flags: <https://toolbase-ai.com/docs/reference/commands>
 | `tb install NAME` | Install a toolkit (`-a` to also activate, `-e <path>` for editable, `NAME[a,b]` for selected bundles) |
 | `tb uninstall NAME` | Remove a toolkit |
 | `tb list` | Installed toolkits (`-v` for a per-tool view) |
-| `tb activate ITEM` | Expose a toolkit / `toolkit/bundle` / `toolkit__tool` (project-local; `-g` for user-wide) |
-| `tb deactivate ITEM` | Hide a toolkit / bundle / tool |
-| `tb connect HARNESS` | Wire toolbase into Claude Code, Codex, or scaffold an Orchestral agent script |
-| `tb disconnect HARNESS` | Remove toolbase from a harness |
+| `tb activate ITEM` | Expose a toolkit / `toolkit/bundle` / `toolkit__tool` / `toolkit__skill` (project-local; `-g` for user-wide) |
+| `tb deactivate ITEM` | Hide a toolkit / bundle / tool / skill |
+| `tb connect HARNESS` | Wire toolbase into Claude Code, Codex, or scaffold an Orchestral agent script (also surfaces skills; `--no-skills` to skip) |
+| `tb disconnect HARNESS` | Remove toolbase from a harness (and its surfaced skills) |
 | `tb logs` | Tail the serve log, live |
 | `tb profile …` | Manage named profiles: `list \| show \| create \| edit \| delete \| set-default \| path \| tools` |
 | `tb config …` | Manage per-toolkit config: `show \| init \| set \| unset \| edit \| path \| validate` (`--user` / `--project` / `--local` pick the layer) |

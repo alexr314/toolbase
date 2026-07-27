@@ -11,7 +11,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import TYPE_CHECKING, Dict, List, Optional
+
+if TYPE_CHECKING:
+    from ..skills import SkillTarget
 
 
 class HarnessConfigError(Exception):
@@ -99,4 +102,17 @@ class HarnessAdapter(ABC):
     def project_scope_note(self) -> Optional[str]:
         """A harness-specific caveat to print after a project-scope connect
         (e.g. a first-use trust prompt). ``None`` means nothing to add."""
+        return None
+
+    def skill_target(self) -> Optional["SkillTarget"]:
+        """Where this harness surfaces a toolkit's skills, or ``None`` if it
+        has no skill surface.
+
+        Skill surfacing is user-global for the harnesses that support it
+        (Claude Code watches ``~/.claude/skills``; Codex reads
+        ``~/.codex/prompts``), so this takes no scope — unlike the MCP
+        server entry, which is written per scope. ``tb connect`` surfaces
+        the activated toolkits' skills here after wiring the server;
+        ``tb disconnect`` clears them. Default ``None`` keeps skill-less
+        harnesses opt-out."""
         return None

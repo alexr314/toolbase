@@ -170,3 +170,74 @@ def test_cli_harnesses_lists_codex():
     res = CliRunner().invoke(cli.main, ["connect", "--harnesses"])
     assert res.exit_code == 0, res.output
     assert "codex" in res.output
+
+
+# ── skill surface ─────────────────────────────────────────────────────
+
+
+def test_skill_target_is_flat_prompts_dir():
+    target = _adapter().skill_target()
+    assert target is not None
+    assert target.harness == "codex"
+    assert target.root == Path.home() / ".codex" / "prompts"
+    assert target.layout == "flat"
+    assert target.keep_frontmatter is False
+
+
+def _patch_codex_skill_surface(monkeypatch, tmp_path):
+    """Patch connect's toolkit enumeration + Codex skill target so a
+    `tb connect codex` in an isolated fs surfaces into a tmp prompts dir.
+    Returns (toolkit_dir, prompts_dir)."""
+    from toolbase import skills as skills_mod
+    tk = tmp_path / "tk"
+    (tk / "skills").mkdir(parents=True)
+    (tk / "skills" / "howto.md").write_text(
+        "---\nname: Howto\ndescription: d.\n---\n\n# Howto\nSteps.\n"
+    )
+    prompts = tmp_path / "codex-prompts"
+    monkeypatch.setattr(cli, "_activated_toolkit_dirs", lambda: {"tk": tk})
+    monkeypatch.setattr(
+        cli, "_available_bundles_for_surface", lambda name, slot: None
+    )
+    monkeypatch.setattr(
+        CodexAdapter, "skill_target",
+        lambda self: skills_mod.SkillTarget(
+            "codex", prompts, layout="flat", keep_frontmatter=False,
+        ),
+    )
+    return tk, prompts
+
+
+def test_connect_surfaces_activated_toolkit_skills(tmp_path, monkeypatch):
+    """`tb connect codex` writes each activated toolkit's skills as flat
+    prompt files, and `--remove` clears them."""
+    _tk, prompts = _patch_codex_skill_surface(monkeypatch, tmp_path)
+    surfaced = prompts / "tk__howto.md"
+    runner = CliRunner()
+    with runner.isolated_filesystem():  # sandbox the .codex/config.toml write
+        res = runner.invoke(
+            cli.main, ["connect", "codex", "-l"], catch_exceptions=False,
+        )
+        assert res.exit_code == 0, res.output
+        assert surfaced.exists()
+        assert not surfaced.read_text().startswith("---")  # frontmatter stripped
+
+        # Removing the server also unsurfaces the prompts.
+        res = runner.invoke(
+            cli.main, ["connect", "codex", "-l", "--remove"],
+            catch_exceptions=False,
+        )
+        assert res.exit_code == 0, res.output
+        assert not surfaced.exists()
+
+
+def test_connect_no_skills_flag_skips_surfacing(tmp_path, monkeypatch):
+    _tk, prompts = _patch_codex_skill_surface(monkeypatch, tmp_path)
+    runner = CliRunner()
+    with runner.isolated_filesystem():
+        res = runner.invoke(
+            cli.main, ["connect", "codex", "-l", "--no-skills"],
+            catch_exceptions=False,
+        )
+        assert res.exit_code == 0, res.output
+        assert not (prompts / "tk__howto.md").exists()

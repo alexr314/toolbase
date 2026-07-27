@@ -142,6 +142,42 @@ def test_qualified_warn_flags_but_keeps_both():
     assert len(orch._runtimes) == 2
 
 
+# ── skill packs are skipped at serve time ────────────────────────────────────
+
+
+def _write_legacy_toolkit(base, name, *, skills_only):
+    """A legacy-layout toolkit dir the orchestrator can discover. When
+    ``skills_only`` it has no tools and no tools/ package (a skill pack)."""
+    from toolbase.envs.cache import LEGACY_META_FILE
+    tk = base / name
+    (tk / "skills").mkdir(parents=True)
+    (tk / LEGACY_META_FILE).write_text('{"environment": "venv", "name": "%s"}' % name)
+    body = (
+        f"name: {name}\nversion: 0.1.0\ndescription: x\nauthor: t\ncategory: other\n"
+    )
+    if not skills_only:
+        body += "tools:\n  - name: t1\n    function: tools.t1.t1\n    description: x\n"
+        (tk / "tools").mkdir()
+        (tk / "tools" / "__init__.py").write_text("")
+    (tk / "toolkit.yaml").write_text(body)
+    (tk / "skills" / "guide.md").write_text(
+        "---\nname: Guide\ndescription: d.\n---\nbody\n"
+    )
+    return tk
+
+
+def test_serve_only_skillpack_raises_clear_message(tmp_path):
+    _write_legacy_toolkit(tmp_path, "mypack", skills_only=True)
+    orch, _ = _orch(False)
+    orch.toolkits_dir = tmp_path
+    with pytest.raises(RuntimeError) as ei:
+        orch.start()
+    msg = str(ei.value)
+    assert "only skill packs are active" in msg
+    assert "mypack" in msg
+    assert "tb connect" in msg
+
+
 if __name__ == "__main__":
     import sys
     sys.exit(pytest.main([__file__, "-q"]))

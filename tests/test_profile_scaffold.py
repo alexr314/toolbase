@@ -16,7 +16,9 @@ import yaml
 from toolbase.serve.profile_scaffold import (
     ProfileItemError,
     activate,
+    activate_skill,
     deactivate,
+    deactivate_skill,
     default_profile_path,
     parse_item,
 )
@@ -164,6 +166,64 @@ def test_deactivate_tool_removes_from_enabled(tmp_path: Path):
     assert res.changed
     data = _read(tmp_path)
     assert data["toolkits"]["heptapod"]["tools"]["enabled"] == ["b"]
+
+
+def _deact_skill(base: Path, tk: str, slug: str):
+    return deactivate_skill(tk, slug, scope="user", user_base=base)
+
+
+def _act_skill(base: Path, tk: str, slug: str):
+    return activate_skill(tk, slug, scope="user", user_base=base)
+
+
+def test_deactivate_skill_requires_active_toolkit(tmp_path: Path):
+    res = _deact_skill(tmp_path, "heptapod", "debug_guide")
+    assert not res.changed
+    assert "not active" in res.message
+
+
+def test_deactivate_skill_adds_to_blocklist(tmp_path: Path):
+    _act(tmp_path, "heptapod")
+    res = _deact_skill(tmp_path, "heptapod", "debug_guide")
+    assert res.changed
+    data = _read(tmp_path)
+    assert data["toolkits"]["heptapod"]["skills"]["disabled"] == ["debug_guide"]
+
+
+def test_deactivate_skill_idempotent(tmp_path: Path):
+    _act(tmp_path, "heptapod")
+    _deact_skill(tmp_path, "heptapod", "debug_guide")
+    res = _deact_skill(tmp_path, "heptapod", "debug_guide")
+    assert not res.changed
+    assert "already deactivated" in res.message
+
+
+def test_activate_skill_clears_and_prunes(tmp_path: Path):
+    _act(tmp_path, "heptapod")
+    _deact_skill(tmp_path, "heptapod", "debug_guide")
+    res = _act_skill(tmp_path, "heptapod", "debug_guide")
+    assert res.changed
+    data = _read(tmp_path)
+    # Empty skills block is pruned; toolkit stays active.
+    assert "skills" not in data["toolkits"]["heptapod"]
+    assert "heptapod" in data["toolkits"]
+
+
+def test_activate_skill_noop_when_not_disabled(tmp_path: Path):
+    _act(tmp_path, "heptapod")
+    res = _act_skill(tmp_path, "heptapod", "debug_guide")
+    assert not res.changed
+    assert "already active" in res.message
+
+
+def test_skill_and_tool_disabled_coexist(tmp_path: Path):
+    _act(tmp_path, "heptapod")
+    _deact(tmp_path, "heptapod__some_tool")
+    _deact_skill(tmp_path, "heptapod", "debug_guide")
+    data = _read(tmp_path)
+    entry = data["toolkits"]["heptapod"]
+    assert entry["tools"]["disabled"] == ["some_tool"]
+    assert entry["skills"]["disabled"] == ["debug_guide"]
 
 
 def test_header_comment_survives_round_trip(tmp_path: Path):

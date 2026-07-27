@@ -10,6 +10,8 @@ no wrapping block. A profile body is a per-toolkit partitioned selection:
         tools:
           enabled: [extra_tool]      # additive per-tool allowlist
           disabled: [pythia_debug]   # final per-tool blocklist
+        skills:
+          disabled: [debug_guide]    # per-skill blocklist (skills default on)
       aster:
         bundles: [transit]
       arxiv-search: {}               # whole toolkit, uncurated
@@ -75,6 +77,11 @@ class ToolkitSelection:
     bundles: Optional[List[str]] = None
     enabled_tools: Optional[List[str]] = None
     disabled_tools: List[str] = field(default_factory=list)
+    # Per-toolkit skill blocklist (bare skill slugs, e.g. ``debug_guide``).
+    # Skills surface by default when the toolkit is active; this subtracts
+    # individual ones. Consumed by skill surfacing (``tb connect``), not by
+    # the tool orchestrator.
+    disabled_skills: List[str] = field(default_factory=list)
 
     @property
     def is_allowlist(self) -> bool:
@@ -227,11 +234,35 @@ def _parse_toolkit_selection(name: str, raw, path: Path) -> ToolkitSelection:
                 )
             sel.disabled_tools = list(disabled)
 
-    unknown = set(raw.keys()) - {"bundles", "tools"}
+    skills_raw = raw.get("skills")
+    if skills_raw is not None:
+        if not isinstance(skills_raw, dict):
+            raise ServeConfigError(
+                f"{path}: toolkit '{name}' skills: must be a mapping with a "
+                "'disabled' list"
+            )
+        disabled_skills = skills_raw.get("disabled")
+        if disabled_skills is not None:
+            if not isinstance(disabled_skills, list) or not all(
+                isinstance(s, str) for s in disabled_skills
+            ):
+                raise ServeConfigError(
+                    f"{path}: toolkit '{name}' skills.disabled must be a list "
+                    "of strings"
+                )
+            sel.disabled_skills = list(disabled_skills)
+        unknown_skill_keys = set(skills_raw.keys()) - {"disabled"}
+        if unknown_skill_keys:
+            raise ServeConfigError(
+                f"{path}: toolkit '{name}' skills has unknown key(s) "
+                f"{sorted(unknown_skill_keys)}. Recognized: 'disabled'."
+            )
+
+    unknown = set(raw.keys()) - {"bundles", "tools", "skills"}
     if unknown:
         raise ServeConfigError(
             f"{path}: toolkit '{name}' has unknown key(s) {sorted(unknown)}. "
-            "Recognized: 'bundles', 'tools'."
+            "Recognized: 'bundles', 'tools', 'skills'."
         )
 
     return sel
