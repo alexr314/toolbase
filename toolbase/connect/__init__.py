@@ -20,6 +20,7 @@ from typing import Dict, List
 from .base import HarnessAdapter, RegistrationEntry, AvailabilityStatus
 from .claude_code import ClaudeCodeAdapter
 from .codex import CodexAdapter
+from .opencode import OpenCodeAdapter
 
 
 # Registry of config-file harness adapters, keyed by the name the user types
@@ -27,6 +28,7 @@ from .codex import CodexAdapter
 _ADAPTERS: Dict[str, HarnessAdapter] = {
     "claude-code": ClaudeCodeAdapter(),
     "codex": CodexAdapter(),
+    "opencode": OpenCodeAdapter(),
 }
 
 
@@ -49,6 +51,7 @@ __all__ = [
     "AvailabilityStatus",
     "ClaudeCodeAdapter",
     "CodexAdapter",
+    "OpenCodeAdapter",
     "get_adapter",
     "available_adapter_names",
     "all_adapters",

@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **`tb connect opencode` — OpenCode is now a supported harness.** A new `OpenCodeAdapter` wires toolbase into OpenCode's `mcp` block (`opencode.json` / `opencode.jsonc`, user `~/.config/opencode/` honoring `$XDG_CONFIG_HOME`, or project root), writing a local stdio server in OpenCode's single-`command`-array form (`{"type":"local","command":["toolbase","serve"],"enabled":true}`) with a non-destructive, atomic merge that preserves `$schema` and other servers. An existing comment-free `.jsonc` is edited in place; a `.jsonc` that actually carries comments is refused with guidance rather than clobbered. Registering the adapter also lights up `tb disconnect opencode`, `--harnesses`, and `--list`. OpenCode skills surface as `~/.config/opencode/command/<toolkit>__<skill>.md` slash-command prompts (via the existing `SkillTarget` flat layout), keeping only the `description` frontmatter OpenCode shows in its TUI — enabled by a new `SkillTarget.frontmatter_keys` that narrows the emitted block to named keys.
+
 ## [0.7.0] — 2026-07-26
 
 ### Added

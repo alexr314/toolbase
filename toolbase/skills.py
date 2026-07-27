@@ -103,14 +103,24 @@ class SkillTarget:
       ``~/.codex/prompts/<name>.md`` as a ``/<name>`` slash-command prompt
       (user-invoked only; Codex has no model-facing skill concept), so
       frontmatter is stripped to the body — Codex would otherwise render the
-      YAML block as prose. A flat file has no dir to mark, so ownership is
+      YAML block as prose. OpenCode reads ``~/.config/opencode/command/<name>.md``
+      the same way but *does* honor a ``description`` frontmatter field (it
+      shows in the TUI), so its target keeps only that key via
+      ``frontmatter_keys``. A flat file has no dir to mark, so ownership is
       tracked by a JSON manifest at ``<root>/<MANIFEST_NAME>``.
+
+    ``frontmatter_keys`` (flat layout only) narrows the emitted frontmatter to
+    the listed keys when ``keep_frontmatter`` is False: ``None`` strips the
+    block entirely (Codex), a list rewrites it to just those keys pulled from
+    the source (OpenCode → ``["description"]``). Ignored when
+    ``keep_frontmatter`` is True.
     """
 
     harness: str
     root: Path
     layout: str  # "dir" | "flat"
     keep_frontmatter: bool
+    frontmatter_keys: Optional[List[str]] = None
 
 
 def _read_manifest(root: Path) -> Dict[str, str]:
@@ -257,6 +267,7 @@ def surface_skills(
             _surface_flat(
                 target.root, slug, text, body, fm,
                 keep_frontmatter=target.keep_frontmatter,
+                frontmatter_keys=target.frontmatter_keys,
                 manifest=manifest, toolkit_name=toolkit_name,
             )
         surfaced.append(slug)
@@ -316,22 +327,45 @@ def _surface_dir(
 def _surface_flat(
     root: Path, slug: str, text: str, body: str,
     fm: Optional[SkillFrontmatter], *, keep_frontmatter: bool,
+    frontmatter_keys: Optional[List[str]] = None,
     manifest: Dict[str, str], toolkit_name: str,
 ) -> None:
-    """Write one skill as ``<root>/<slug>.md`` (Codex prompt layout).
+    """Write one skill as ``<root>/<slug>.md`` (flat prompt/command layout).
 
-    Codex has no model-facing skill concept and no frontmatter support, so
-    by default we strip the YAML block and write only the guide body — it
-    becomes the text of a ``/<slug>`` slash-command prompt. We always
-    (re)write a copy (never symlink): the on-disk content differs from the
-    source once frontmatter is stripped, and Codex reads it once at
-    invocation rather than watching for edits.
+    The file becomes the text of a ``/<slug>`` slash-command prompt. What we
+    keep of the source frontmatter depends on the harness:
+
+    - ``keep_frontmatter`` True — keep the block verbatim.
+    - ``frontmatter_keys`` set — rewrite the block to just those keys pulled
+      from the source (OpenCode honors ``description`` in its command files).
+    - otherwise — strip the block, writing only the body (Codex renders a
+      YAML block as prose).
+
+    We always (re)write a copy (never symlink): the on-disk content differs
+    from the source once frontmatter is transformed, and the harness reads it
+    at invocation rather than watching for edits.
     """
-    dest = root / f"{slug}.md"
-    content = text if keep_frontmatter else body
+    if keep_frontmatter:
+        content = text
+    elif frontmatter_keys and fm is not None:
+        kept = {
+            k: fm.raw[k] for k in frontmatter_keys
+            if fm.raw.get(k) is not None
+        }
+        if kept:
+            fm_block = yaml.safe_dump(
+                kept, default_flow_style=False, allow_unicode=True,
+                sort_keys=False,
+            )
+            content = f"---\n{fm_block}---\n\n" + body.lstrip("\n")
+        else:
+            content = body
+    else:
+        content = body
     content = content.lstrip("\n")
     if not content.endswith("\n"):
         content += "\n"
+    dest = root / f"{slug}.md"
     dest.write_text(content, encoding="utf-8")
     manifest[dest.name] = toolkit_name
 

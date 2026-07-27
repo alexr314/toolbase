@@ -4123,7 +4123,7 @@ def _note_skills_available(name: str, slot: Path, no_skills: bool = False) -> No
     if not no_skills:
         console.print(
             "[dim]Surface them with [/dim][cyan]tb connect <harness>[/cyan]"
-            "[dim] (claude-code, codex); toggle one with [/dim]"
+            "[dim] (claude-code, codex, opencode); toggle one with [/dim]"
             "[cyan]tb deactivate <toolkit>__<skill>[/cyan][dim].[/dim]"
         )
 
@@ -6974,9 +6974,9 @@ def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
     """Wire toolbase into an agent harness.
 
     \b
-    Claude Code and Codex are MCP clients: this writes a server entry into the
-    harness's config. Orchestral is a Python library, not a config-file harness,
-    so it writes a runnable agent script you launch yourself.
+    Claude Code, Codex, and OpenCode are MCP clients: this writes a server entry
+    into the harness's config. Orchestral is a Python library, not a config-file
+    harness, so it writes a runnable agent script you launch yourself.
 
     \b
     Examples:
