@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.8.1] — 2026-07-27
+
 ### Fixed
 
 - **`tb connect --abspath` no longer silently falls back to a bare command.** It resolved the binary with `shutil.which("toolbase")`, which returns `None` exactly when toolbase isn't on PATH at connect time (a venv/conda install, or toolbase invoked by absolute path) — the very case `--abspath` exists for — so it quietly wrote a bare `toolbase` that the harness then couldn't launch. It now resolves the toolbase beside the running interpreter first (`sys.executable`'s dir), falling back to `which` then bare.
