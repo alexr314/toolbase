@@ -11,6 +11,14 @@ the **default** profile in the chosen scope. ``<item>`` is one of:
 - ``<toolkit>/<bundle>``   -> one bundle (slash = drill into the toolkit)
 - ``<toolkit>__<tool>``    -> one tool (double underscore = MCP tool name)
 
+The ``<toolkit>__<name>`` form also addresses a **skill** when ``<name>``
+matches a surfaced skill slug (and not a tool). The CLI does that
+tool-vs-skill resolution — it needs the toolkit's real tool/skill lists —
+and then calls :func:`activate_skill` / :func:`deactivate_skill` here.
+Skills surface by default when the toolkit is active, so the profile only
+records a per-toolkit *blocklist* (``skills.disabled``); deactivate adds a
+slug, activate removes it.
+
 Mutations are profile-file edits with documented, shallow semantics
 (they don't consult the toolkit's actual tool/bundle list). The
 orchestrator and ``tb list`` are where a selection is expanded against
@@ -299,3 +307,80 @@ def deactivate(
         tools_block["disabled"].append(sub)
     _save(path, data)
     return MutationResult(True, f"Deactivated {tk}__{sub} (added to disabled).", path)
+
+
+# ── skills (per-skill enable/disable) ─────────────────────────────────
+#
+# Skills surface by default when their toolkit is active, so the profile
+# stores a per-toolkit blocklist under ``skills.disabled`` (bare slugs).
+# ``deactivate_skill`` adds a slug; ``activate_skill`` removes it. The CLI
+# resolves whether a ``<tk>__<name>`` item is a skill before calling these.
+
+
+def deactivate_skill(
+    tk: str,
+    slug: str,
+    *,
+    scope: str,
+    project_root: Optional[Path] = None,
+    user_base: Optional[Path] = None,
+) -> MutationResult:
+    """Blocklist skill ``<tk>__<slug>`` in the scope's default profile.
+
+    Requires ``tk`` to already be active (in the profile) — an inactive
+    toolkit's skills aren't surfaced, so there's nothing to disable."""
+    path = default_profile_path(scope, project_root, user_base=user_base)
+    data = _load(path)
+    toolkits: CommentedMap = data["toolkits"]
+    if tk not in toolkits:
+        return MutationResult(
+            False,
+            f"{tk} is not active; its skills aren't surfaced. "
+            f"Activate it first with `tb activate {tk}`.",
+            path,
+        )
+    entry = toolkits[tk]
+    if entry is None:
+        entry = CommentedMap()
+        toolkits[tk] = entry
+    skills_block = entry.get("skills")
+    if skills_block is None:
+        skills_block = CommentedMap()
+        entry["skills"] = skills_block
+    disabled = skills_block.get("disabled")
+    if disabled is None:
+        skills_block["disabled"] = [slug]
+    elif slug in disabled:
+        return MutationResult(
+            False, f"{tk}__{slug} skill is already deactivated.", path,
+        )
+    else:
+        disabled.append(slug)
+    _save(path, data)
+    return MutationResult(True, f"Deactivated skill {tk}__{slug}.", path)
+
+
+def activate_skill(
+    tk: str,
+    slug: str,
+    *,
+    scope: str,
+    project_root: Optional[Path] = None,
+    user_base: Optional[Path] = None,
+) -> MutationResult:
+    """Un-blocklist skill ``<tk>__<slug>`` (skills are on unless disabled)."""
+    path = default_profile_path(scope, project_root, user_base=user_base)
+    data = _load(path)
+    toolkits: CommentedMap = data["toolkits"]
+    entry = toolkits.get(tk) if tk in toolkits else None
+    skills_block = entry.get("skills") if entry else None
+    disabled = skills_block.get("disabled") if skills_block else None
+    if not disabled or slug not in disabled:
+        return MutationResult(False, f"{tk}__{slug} skill is already active.", path)
+    disabled.remove(slug)
+    if not disabled:
+        del skills_block["disabled"]
+    if skills_block is not None and not skills_block:
+        del entry["skills"]
+    _save(path, data)
+    return MutationResult(True, f"Activated skill {tk}__{slug}.", path)

@@ -3917,9 +3917,10 @@ def _install_from_path(
             f"Environment: conda env '{env_name}' (Python {python_version})"
         )
 
-    # Skills surfacing (same as registry install). Reads from the slot,
-    # which for editable resolves through the symlink to live source.
-    _surface_skills_best_effort(name, slot, no_skills)
+    # Skills: report only. Surfacing is a per-harness `tb connect` concern.
+    # Reads from the slot, which for editable resolves through the symlink
+    # to live source.
+    _note_skills_available(name, slot, no_skills)
 
     # Pinning. Editable installs deliberately stay OUT of the committed
     # manifest — a machine-specific path won't resolve on a collaborator's
@@ -4103,34 +4104,27 @@ def _available_bundles_for_surface(name: str, toolkit_dir: Path):
     return set(evaluate_bundles(bundles_block, resolved).available_bundles)
 
 
-def _surface_skills_best_effort(name: str, slot: Path, no_skills: bool) -> None:
-    """Surface a toolkit's skills into ~/.claude/skills/ (best-effort)."""
-    skills_dir = slot / "skills"
-    if not skills_dir.exists() or no_skills:
-        return
-    skill_files = sorted(
-        p for p in skills_dir.glob("*.md") if not p.name.startswith("._")
-    )
+def _note_skills_available(name: str, slot: Path, no_skills: bool = False) -> None:
+    """Report that a toolkit ships skills and point at ``tb connect``.
+
+    Surfacing is a per-harness ``connect``-time concern (each harness has
+    its own skill/prompt location and format), so install only *reports*
+    that skills exist. ``tb connect <harness>`` does the surfacing. Each
+    guide is printed by its toggle name (``<toolkit>__<slug>``) so the user
+    can `tb deactivate` an individual one."""
+    from .skills import discover_skills, _slug
+    skill_files = discover_skills(slot)
     if not skill_files:
         return
-    console.print(
-        f"Skills: {len(skill_files)} "
-        f"guide{'s' if len(skill_files) != 1 else ''} available"
-    )
-    try:
-        from .skills import install_skills_for_toolkit, CLAUDE_SKILLS_DIR
-        surfaced = install_skills_for_toolkit(
-            name, slot, available_bundles=_available_bundles_for_surface(name, slot)
-        )
-        if surfaced:
-            console.print(
-                f"[dim]Surfaced to {CLAUDE_SKILLS_DIR}/ "
-                f"({len(surfaced)} entr"
-                f"{'ies' if len(surfaced) != 1 else 'y'})[/dim]"
-            )
-    except Exception as e:
+    n = len(skill_files)
+    console.print(f"Skills: {n} guide{'s' if n != 1 else ''} available")
+    for f in skill_files:
+        console.print(f"  [dim]•[/dim] {name}__{_slug(f.stem)}")
+    if not no_skills:
         console.print(
-            f"[yellow]Could not surface skills to ~/.claude/skills: {e}[/yellow]"
+            "[dim]Surface them with [/dim][cyan]tb connect <harness>[/cyan]"
+            "[dim] (claude-code, codex); toggle one with [/dim]"
+            "[cyan]tb deactivate <toolkit>__<skill>[/cyan][dim].[/dim]"
         )
 
 
@@ -4982,30 +4976,8 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
     if tools_count > 0:
         console.print(f"Tools: {tools_count} available")
 
-    if skill_files:
-        console.print(f"Skills: {len(skill_files)} guide{'s' if len(skill_files) != 1 else ''} available")
-        # List each skill (strip .md extension for readability)
-        for skill_file in skill_files:
-            console.print(f"  [dim]•[/dim] {skill_file.stem}")
-
-        # Surface skills into ~/.claude/skills/ so Claude Code picks them
-        # up automatically. Best-effort — failures here don't fail install.
-        if not no_skills:
-            try:
-                from .skills import install_skills_for_toolkit, CLAUDE_SKILLS_DIR
-                surfaced = install_skills_for_toolkit(
-                    name, toolkit_dir,
-                    available_bundles=_available_bundles_for_surface(name, toolkit_dir),
-                )
-                if surfaced:
-                    console.print(
-                        f"[dim]Surfaced to {CLAUDE_SKILLS_DIR}/ "
-                        f"({len(surfaced)} entr{'ies' if len(surfaced) != 1 else 'y'})[/dim]"
-                    )
-            except Exception as e:
-                console.print(
-                    f"[yellow]Could not surface skills to ~/.claude/skills: {e}[/yellow]"
-                )
+    # Skills: report only. Surfacing happens per-harness at `tb connect`.
+    _note_skills_available(name, toolkit_dir, no_skills)
 
     # Phase 3C-1: Tier-1 declarative setup. If toolkit.yaml has a
     # ``config:`` block, walk it and prompt the user (TTY) or fill
@@ -5836,17 +5808,26 @@ def uninstall(name, yes, no_, no_input):
 
     # Skills + default-profile cleanup — only when ALL versions are gone.
     if not _list_versions(name):
+        # Remove this toolkit's surfaced skills from every harness that has
+        # a skill surface (Claude Code's ~/.claude/skills, Codex's
+        # ~/.codex/prompts). connect surfaces them per-harness; uninstall
+        # reaps them everywhere so no dangling guide outlives its tools.
         try:
-            from .skills import uninstall_skills_for_toolkit
-            removed_skills = uninstall_skills_for_toolkit(name)
-            if removed_skills:
-                console.print(
-                    f"[green]✓[/green] Removed {len(removed_skills)} skill"
-                    f"{'s' if len(removed_skills) != 1 else ''} from ~/.claude/skills/"
-                )
+            from .skills import unsurface_skills
+            from .connect import all_adapters
+            for adapter in all_adapters():
+                target = adapter.skill_target()
+                if target is None:
+                    continue
+                removed_skills = unsurface_skills(name, target)
+                if removed_skills:
+                    console.print(
+                        f"[green]✓[/green] Removed {len(removed_skills)} skill"
+                        f"{'s' if len(removed_skills) != 1 else ''} from {target.root}/"
+                    )
         except Exception as e:
             console.print(
-                f"[yellow]Could not clean up ~/.claude/skills entries: {e}[/yellow]"
+                f"[yellow]Could not clean up surfaced skill entries: {e}[/yellow]"
             )
 
         # Drop the toolkit from the default profile(s) so an uninstalled
@@ -6408,19 +6389,44 @@ def _scope_flags(f):
     return f
 
 
+def _skill_route(tk: str, sub: str) -> bool:
+    """Whether ``<tk>__<sub>`` should be treated as a skill rather than a
+    tool. True only when ``sub`` matches a surfaced skill slug and is *not*
+    also a tool name (so existing tool references keep their meaning). On a
+    genuine name collision the tool wins and a note is printed."""
+    if sub not in _toolkit_skill_slugs(tk):
+        return False
+    if sub in _toolkit_declared_tool_names(tk):
+        console.print(
+            f"[yellow]Note: '{tk}__{sub}' names both a tool and a skill; "
+            "acting on the tool. Rename the skill file to toggle it "
+            "separately.[/yellow]"
+        )
+        return False
+    return True
+
+
 @main.command()
 @click.argument('item')
 @_scope_flags
 def activate(item, global_scope, local_scope):
-    """Activate a toolkit, bundle, or tool in the default profile.
+    """Activate a toolkit, bundle, tool, or skill in the default profile.
 
     \b
     ITEM is one of:
       <toolkit>            whole toolkit      (tb activate heptapod)
       <toolkit>/<bundle>   one bundle         (tb activate heptapod/pythia)
       <toolkit>__<tool>    one tool           (tb activate heptapod__run_pythia)
+      <toolkit>__<skill>   one skill          (tb activate heptapod__debug_guide)
+
+    A `<toolkit>__<name>` item is treated as a skill when it matches a
+    surfaced skill and not a tool. Skills are on by default; activating one
+    just clears a previous `tb deactivate`.
     """
-    from .serve.profile_scaffold import activate as _activate, ProfileItemError
+    from .serve.profile_scaffold import (
+        activate as _activate, activate_skill as _activate_skill,
+        parse_item, ProfileItemError,
+    )
 
     scope, project_root = _resolve_profile_scope(global_scope, local_scope)
     tk = item.split('/', 1)[0].split('__', 1)[0]
@@ -6429,7 +6435,13 @@ def activate(item, global_scope, local_scope):
         console.print(f"Run [cyan]toolbase install {tk}[/cyan] first.")
         sys.exit(1)
     try:
-        result = _activate(item, scope=scope, project_root=project_root)
+        kind, tk2, sub = parse_item(item)
+        if kind == "tool" and _skill_route(tk2, sub):
+            result = _activate_skill(
+                tk2, sub, scope=scope, project_root=project_root,
+            )
+        else:
+            result = _activate(item, scope=scope, project_root=project_root)
     except ProfileItemError as e:
         console.print(f"[red]✗ {e}[/red]")
         sys.exit(2)
@@ -6440,16 +6452,28 @@ def activate(item, global_scope, local_scope):
 @click.argument('item')
 @_scope_flags
 def deactivate(item, global_scope, local_scope):
-    """Deactivate a toolkit, bundle, or tool from the default profile.
+    """Deactivate a toolkit, bundle, tool, or skill from the default profile.
 
     \b
-    ITEM forms match `tb activate` (toolkit, toolkit/bundle, toolkit__tool).
+    ITEM forms match `tb activate` (toolkit, toolkit/bundle, toolkit__tool,
+    toolkit__skill). A `<toolkit>__<name>` item is treated as a skill when
+    it matches a surfaced skill and not a tool; deactivating it stops that
+    guide from surfacing on the next `tb connect`.
     """
-    from .serve.profile_scaffold import deactivate as _deactivate, ProfileItemError
+    from .serve.profile_scaffold import (
+        deactivate as _deactivate, deactivate_skill as _deactivate_skill,
+        parse_item, ProfileItemError,
+    )
 
     scope, project_root = _resolve_profile_scope(global_scope, local_scope)
     try:
-        result = _deactivate(item, scope=scope, project_root=project_root)
+        kind, tk2, sub = parse_item(item)
+        if kind == "tool" and _skill_route(tk2, sub):
+            result = _deactivate_skill(
+                tk2, sub, scope=scope, project_root=project_root,
+            )
+        else:
+            result = _deactivate(item, scope=scope, project_root=project_root)
     except ProfileItemError as e:
         console.print(f"[red]✗ {e}[/red]")
         sys.exit(2)
@@ -6820,6 +6844,108 @@ def _toolbase_command(abspath: bool) -> str:
     return resolved or "toolbase"
 
 
+def _activated_toolkit_dirs() -> "dict[str, Path]":
+    """``{name: slot_dir}`` for each activated, ready toolkit.
+
+    "Activated" means the active profile names it and serve.yaml doesn't
+    blocklist it — the same set whose tools get served over MCP. Skills
+    follow the tools: we surface a guide only for a toolkit whose tools the
+    agent can actually reach. Best-effort; returns ``{}`` on any error."""
+    try:
+        from .serve.orchestrator import discover_toolkits
+    except Exception:
+        return {}
+    _resolved, active = _list_resolve_active()
+    dirs: "dict[str, Path]" = {}
+    for d in discover_toolkits():
+        if d.name in active and d.skip_reason is None:
+            dirs[d.name] = d.path
+    return dirs
+
+
+def _toolkit_slot_dir(name: str):
+    """The installed slot directory for ``name``, or ``None`` if not found."""
+    try:
+        from .serve.orchestrator import discover_toolkits
+    except Exception:
+        return None
+    for d in discover_toolkits():
+        if d.name == name and d.skip_reason is None:
+            return d.path
+    return None
+
+
+def _toolkit_skill_slugs(name: str) -> set:
+    """Bare surfaced-skill slugs a toolkit ships (``debug_guide`` etc.)."""
+    slot = _toolkit_slot_dir(name)
+    if slot is None:
+        return set()
+    from .skills import discover_skills, _slug
+    return {_slug(p.stem) for p in discover_skills(slot)}
+
+
+def _resolve_disabled_skills(name: str) -> set:
+    """Bare skill slugs the active profile blocklists for ``name``."""
+    _resolved, _active = _list_resolve_active()
+    if _resolved is None:
+        return set()
+    sel = _resolved.toolkits.get(name)
+    if sel is None:
+        return set()
+    return set(getattr(sel, "disabled_skills", []) or [])
+
+
+def _surface_skills_for_connect(adapter, *, no_skills: bool = False) -> None:
+    """Surface every activated toolkit's skills into ``adapter``'s skill
+    surface (``~/.claude/skills`` or ``~/.codex/prompts``). Best-effort:
+    a failure never fails the connect."""
+    if no_skills:
+        return
+    target = adapter.skill_target()
+    if target is None:
+        return  # this harness has no skill surface (e.g. nothing to do)
+    from .skills import surface_skills
+    dirs = _activated_toolkit_dirs()
+    surfaced = 0
+    for name, slot in sorted(dirs.items()):
+        try:
+            surfaced += len(surface_skills(
+                name, slot, target,
+                available_bundles=_available_bundles_for_surface(name, slot),
+                disabled_slugs=_resolve_disabled_skills(name),
+            ))
+        except Exception as e:
+            console.print(
+                f"[yellow]Could not surface {name} skills to {target.root}: {e}[/yellow]"
+            )
+    if surfaced:
+        console.print(
+            f"[dim]Surfaced {surfaced} skill guide"
+            f"{'s' if surfaced != 1 else ''} to {target.root}/[/dim]"
+        )
+
+
+def _unsurface_skills_for_connect(adapter) -> None:
+    """Remove every toolbase-owned skill from ``adapter``'s skill surface
+    (called on ``connect --remove`` / ``disconnect``). Best-effort."""
+    target = adapter.skill_target()
+    if target is None:
+        return
+    from .skills import unsurface_all
+    try:
+        removed = unsurface_all(target)
+    except Exception as e:
+        console.print(
+            f"[yellow]Could not remove skills from {target.root}: {e}[/yellow]"
+        )
+        return
+    if removed:
+        console.print(
+            f"[dim]Removed {len(removed)} surfaced skill"
+            f"{'s' if len(removed) != 1 else ''} from {target.root}/[/dim]"
+        )
+
+
 @main.command()
 @click.argument('harness', required=False)
 @_scope_flags
@@ -6840,8 +6966,11 @@ def _toolbase_command(abspath: bool) -> str:
                    '(default: .toolbase/orchestral.py).')
 @click.option('--force', 'force', is_flag=True, default=False,
               help='(orchestral) Overwrite an existing generated script.')
+@click.option('--no-skills', 'no_skills', is_flag=True, default=False,
+              help="Don't surface the activated toolkits' skills into the "
+                   "harness (wire the MCP server only).")
 def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
-            abspath, do_list, do_harnesses, out_path, force):
+            abspath, do_list, do_harnesses, out_path, force, no_skills):
     """Wire toolbase into an agent harness.
 
     \b
@@ -6931,6 +7060,7 @@ def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
             console.print(f"[green]✓[/green] Removed toolbase from {path}.")
         else:
             console.print(f"[dim]No toolbase entry in {path}; nothing to remove.[/dim]")
+        _unsurface_skills_for_connect(adapter)
         return
 
     command = _toolbase_command(abspath)
@@ -6955,6 +7085,9 @@ def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
     # --profile: set the active profile in the matching serve.yaml scope.
     if profile_name is not None:
         _connect_set_profile(profile_name, scope, project_root)
+
+    # Surface the activated toolkits' skills into this harness (best-effort).
+    _surface_skills_for_connect(adapter, no_skills=no_skills)
 
     if scope == "project":
         note = adapter.project_scope_note()
@@ -7165,6 +7298,8 @@ def disconnect(harness, global_scope, local_scope, all_scopes):
             console.print(
                 f"[dim]No toolbase entry in {path}; nothing to remove.[/dim]"
             )
+
+    _unsurface_skills_for_connect(adapter)
 
 
 @main.command()

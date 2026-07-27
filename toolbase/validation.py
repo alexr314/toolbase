@@ -343,7 +343,14 @@ class ToolkitMetadata(BaseModel):
             "top of the always-installed base ``requirements.txt``."
         ),
     )
-    tools: List[ToolDefinition] = Field(..., description="List of tools in this toolkit")
+    tools: List[ToolDefinition] = Field(
+        default_factory=list,
+        description=(
+            "List of tools in this toolkit. May be empty (or omitted) for a "
+            "skills-only toolkit ('skill pack') that ships only skills/*.md "
+            "guides and serves no callable tools."
+        ),
+    )
 
     @field_validator('name')
     @classmethod
@@ -787,8 +794,14 @@ def validate_toolkit(toolkit_path: Path) -> ValidationResult:
             if not requirements.strip():
                 result.warnings.append("requirements.txt is empty")
 
-            # Check for orchestral-ai dependency (required for Orchestral tools)
-            if 'orchestral-ai' not in requirements.lower() and 'orchestral' not in requirements.lower():
+            # Check for orchestral-ai dependency (required for Orchestral
+            # tools). A skills-only toolkit ("skill pack") serves no tools,
+            # so it doesn't run the Orchestral tool framework and needn't
+            # depend on it.
+            if metadata.tools and (
+                'orchestral-ai' not in requirements.lower()
+                and 'orchestral' not in requirements.lower()
+            ):
                 result.is_valid = False
                 result.errors.append(
                     "requirements.txt must include 'orchestral-ai>=1.0.0' "

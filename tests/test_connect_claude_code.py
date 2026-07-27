@@ -173,3 +173,13 @@ def test_cli_disconnect_all_conflicts_with_scope_flags(
     r = CliRunner().invoke(cli.main, ["disconnect", "claude-code", "--all", "-g"])
     assert r.exit_code != 0
     assert "--all" in r.output
+
+
+def test_skill_target_is_claude_skills_dir():
+    from toolbase.skills import CLAUDE_SKILLS_DIR
+    target = _adapter().skill_target()
+    assert target is not None
+    assert target.harness == "claude-code"
+    assert target.root == CLAUDE_SKILLS_DIR
+    assert target.layout == "dir"
+    assert target.keep_frontmatter is True

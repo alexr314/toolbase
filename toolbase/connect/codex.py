@@ -61,6 +61,17 @@ class CodexAdapter(HarnessAdapter):
     def supported_scopes(self) -> Dict[str, str]:
         return {"user": "user", "project": "project"}
 
+    def skill_target(self):
+        # ~/.codex/prompts/<toolkit>__<skill>.md — one flat file per skill,
+        # frontmatter stripped. Codex has no model-facing skill concept;
+        # each file becomes a `/<toolkit>__<skill>` slash-command prompt the
+        # user invokes. Prompts are user-global (no project scope).
+        from ..skills import SkillTarget
+        return SkillTarget(
+            harness=self.name, root=Path.home() / ".codex" / "prompts",
+            layout="flat", keep_frontmatter=False,
+        )
+
     # ── paths ────────────────────────────────────────────────────────
 
     def config_path(self, scope: str, project_root: Optional[Path]) -> Path:

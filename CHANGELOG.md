@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-07-26
+
+### Added
+
+- **`tb connect` now surfaces skills per-harness, and Codex is supported natively.** A toolkit's `skills/*.md` guides are surfaced into the harness you connect, not at install time against a hardcoded path. `tb connect <harness>` surfaces the *activated* toolkits' skills (the same set whose tools are served) into that harness's location; `tb disconnect` / `tb connect --remove` clears them; `--no-skills` wires the MCP server only. Two layouts, one per adapter: **Claude Code** → `~/.claude/skills/<toolkit>__<skill>/SKILL.md` (frontmatter preserved; auto-surfaced to the model and exposed as a `/<name>` slash command), **Codex** → `~/.codex/prompts/<toolkit>__<skill>.md` (frontmatter stripped to the body; a user-invoked `/<name>` slash-command prompt). Adapters declare their surface via a new `HarnessAdapter.skill_target()` returning a `SkillTarget`; `skills.surface_skills` / `unsurface_skills` / `unsurface_all` generalize the copy/gate/ownership logic across layouts. Flat-layout ownership is tracked by a `.toolbase-managed.json` manifest (a flat file has no dir for the `OWNED_MARKER`), so user-authored prompts with the same prefix are never removed.
+- **Skill packs (skills-only toolkits) are now first-class.** A toolkit may ship only `skills/*.md` guides and declare no tools. `tools:` in `toolkit.yaml` is now optional (defaults to empty), and the `orchestral-ai` requirement is waived when a toolkit has no tools (a skill pack runs no Orchestral tool framework). Such a toolkit validates, installs, activates, and surfaces its skills through `tb connect` like any other; the serve orchestrator recognizes it (`_toolkit_is_skills_only`: no declared tools *and* no implicit `tools/__init__.py`) and skips launching a host for it — while keeping it fully discoverable so `tb activate` / `tb connect` still surface its guides. When the *only* active toolkits are skill packs, `tb serve` explains there is nothing to serve over MCP and points at `tb connect`, rather than failing with an opaque error. This pairs with per-skill toggling to make a curated pack of standalone skills a supported unit.
+- **Per-skill enable/disable, via the existing activation grammar.** `tb deactivate <toolkit>__<skill>` blocklists a single guide; `tb activate <toolkit>__<skill>` restores it. A `<toolkit>__<name>` item is resolved to a **skill** when it matches a surfaced skill slug and *not* a tool (on a genuine name collision the tool wins and a note is printed, preserving existing tool references). Skills are on by default when the toolkit is active, so a profile records only a per-toolkit blocklist — a new `skills: { disabled: [...] }` block under each toolkit entry (`ToolkitSelection.disabled_skills`). Skill surfacing (`surface_skills`, and hence `tb connect`) subtracts these slugs, the per-skill analog of bundle gating. Install/connect now print each guide by its `<toolkit>__<slug>` toggle name so the slug is discoverable. This makes it practical to ship a toolkit as a bundle of individually toggleable skills.
+
+### Changed
+
+- **Skill surfacing moved off `tb install`.** Installing a toolkit now only *reports* that it ships skills and points at `tb connect`; it no longer writes into `~/.claude/skills/`. Skills follow the harness you connect (and the toolkits you've activated), symmetric with how MCP tools are wired. Uninstalling a toolkit reaps its surfaced skills from every harness target (Claude Code and Codex), not just Claude. Back-compat: `install_skills_for_toolkit` / `uninstall_skills_for_toolkit` remain as Claude-dir wrappers over the new `SkillTarget` API.
+
 ## [0.6.1] — 2026-07-24
 
 ### Fixed

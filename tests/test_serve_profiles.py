@@ -63,6 +63,43 @@ def test_parse_bundles_and_tools(tmp_path: Path):
     assert sel.is_allowlist
 
 
+def test_parse_disabled_skills(tmp_path: Path):
+    body = {
+        "toolkits": {
+            "heptapod": {
+                "bundles": ["pythia"],
+                "skills": {"disabled": ["debug_guide", "old_guide"]},
+            }
+        }
+    }
+    prof = parse_profile(body, "p", tmp_path / "p.yaml", "user")
+    sel = prof.toolkits["heptapod"]
+    assert sel.disabled_skills == ["debug_guide", "old_guide"]
+
+
+def test_parse_disabled_skills_defaults_empty(tmp_path: Path):
+    prof = parse_profile(
+        {"toolkits": {"heptapod": {}}}, "p", tmp_path / "p.yaml", "user",
+    )
+    assert prof.toolkits["heptapod"].disabled_skills == []
+
+
+def test_parse_skills_must_be_string_list(tmp_path: Path):
+    with pytest.raises(ServeConfigError):
+        parse_profile(
+            {"toolkits": {"heptapod": {"skills": {"disabled": [1]}}}},
+            "p", tmp_path / "p.yaml", "user",
+        )
+
+
+def test_parse_unknown_skills_key_rejected(tmp_path: Path):
+    with pytest.raises(ServeConfigError):
+        parse_profile(
+            {"toolkits": {"heptapod": {"skills": {"enabled": ["x"]}}}},
+            "p", tmp_path / "p.yaml", "user",
+        )
+
+
 def test_parse_unknown_toolkit_key_rejected(tmp_path: Path):
     with pytest.raises(ServeConfigError):
         parse_profile(
