@@ -26,7 +26,7 @@ convenience over them.
 ├── config/<toolkit>.local.yaml  machine paths etc. (project-local layer, gitignored)
 ├── profiles/<name>.yaml      project profiles
 ├── serve.yaml                project default.profile + default.disabled
-└── orchestral.py             Orchestral launcher (tb connect orchestral)
+└── agent.py                  Orchestral launcher (tb connect orchestral)
 <repo>/.mcp.json              Claude Code wiring (tb connect claude-code)
 <repo>/.codex/config.toml     Codex wiring (tb connect codex)
 ```
@@ -46,7 +46,7 @@ manifest layer auto-gitignores itself. Keep secrets in the user-layer
 |---|---|---|
 | Claude Code | `<repo>/.mcp.json` | `~/.claude.json` |
 | Codex | `<repo>/.codex/config.toml` | `~/.codex/config.toml` |
-| Orchestral | `<repo>/.toolbase/orchestral.py` | none |
+| Orchestral | `<repo>/.toolbase/agent.py` | none |
 
 Claude Code and Codex are MCP clients (each spawns `tb serve`). Orchestral is a
 library: `tb connect orchestral` scaffolds the script, `tb orchestral` runs it.

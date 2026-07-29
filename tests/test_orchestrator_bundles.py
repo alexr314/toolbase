@@ -300,3 +300,46 @@ class TestResolveBundleAvailability:
         availability, _ = _resolve_bundle_availability(disc)
         assert "feynrules" in availability.dropped_bundles
         assert availability.dropped_bundles["feynrules"] == ["feynrules_path"]
+
+    def test_config_override_unlocks_bundle(self, isolated):
+        """An embedder's ``config_overrides`` key satisfies ``requires:``.
+
+        The override reaches the host, so gating on the stored file alone
+        would hide tools the caller just configured."""
+        disc = _make_toolkit(
+            isolated,
+            name="heptapod",
+            config_block=[
+                {"name": "mg5_path", "type": "path", "required": False},
+            ],
+            bundles={"mg5": {"requires": ["mg5_path"]}},
+        )
+        # Nothing stored: dropped without the override.
+        assert "mg5" in _resolve_bundle_availability(disc)[0].dropped_bundles
+
+        availability, _ = _resolve_bundle_availability(
+            disc, {"mg5_path": "/opt/mg5"},
+        )
+        assert "mg5" in availability.available_bundles
+        assert availability.dropped_bundles == {}
+
+    def test_config_override_does_not_unlock_a_bundle_it_half_satisfies(
+        self, isolated,
+    ):
+        disc = _make_toolkit(
+            isolated,
+            name="heptapod",
+            config_block=[
+                {"name": "wolframscript_path", "type": "path", "required": False},
+                {"name": "feynrules_path", "type": "path", "required": False},
+            ],
+            bundles={
+                "feynrules": {
+                    "requires": ["wolframscript_path", "feynrules_path"],
+                },
+            },
+        )
+        availability, _ = _resolve_bundle_availability(
+            disc, {"wolframscript_path": "/usr/bin/wolframscript"},
+        )
+        assert availability.dropped_bundles["feynrules"] == ["feynrules_path"]

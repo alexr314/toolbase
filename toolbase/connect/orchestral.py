@@ -43,8 +43,16 @@ from ..serve.orchestrator import DEFAULT_CALL_TIMEOUT_S, Orchestrator
 # The scaffold ``tb connect orchestral`` writes, relative to a project root.
 # It lives under ``.toolbase/`` (alongside manifest.yaml / serve.yaml) and is
 # launched by ``tb orchestral``.
-DEFAULT_SCRIPT_NAME = "orchestral.py"
-DEFAULT_SCRIPT_RELPATH = ".toolbase/orchestral.py"
+#
+# NOT named ``orchestral.py``: Python puts a script's own directory at the
+# head of ``sys.path``, so a file by that name shadows the ``orchestral``
+# package it imports and every launch dies with "cannot import name 'Agent'
+# from partially initialized module 'orchestral'". That was the 0.8.1 and
+# earlier default; ``LEGACY_SCRIPT_NAME`` exists so the runner and
+# ``--remove`` still find those files.
+DEFAULT_SCRIPT_NAME = "agent.py"
+DEFAULT_SCRIPT_RELPATH = ".toolbase/agent.py"
+LEGACY_SCRIPT_NAME = "orchestral.py"
 
 # First line of every generated scaffold. ``tb connect orchestral --remove``
 # only deletes a file carrying this marker, so it never removes a script the
@@ -183,10 +191,23 @@ def agent_script(profile: Optional[str] = None) -> str:
     launch modalities -- terminal UI, headless, web GUI -- with the terminal
     UI active and the other two commented out. The user edits to switch.
 
+    Two things the scaffold does deliberately, because getting them wrong is
+    the difference between a working agent and a confusing one:
+
+    - **One workspace.** A single ``WORKSPACE`` dir is passed to
+      ``toolbase_tools(config_overrides=...)`` *and* to orchestral's own file
+      tools, so every tool resolves relative paths against the same root.
+      Without it, toolbase-served tools write wherever
+      ``~/.toolbase/config/<toolkit>.yaml`` points and the agent cannot read
+      back its own output.
+    - **File tools.** Served toolkits are domain tools; on their own the agent
+      has no way to open the files they produce. The scaffold pairs them with
+      orchestral's read/write/edit/search/run tools, all scoped to WORKSPACE.
+
     Configuring orchestral (the LLM, API keys) is the user's job; the scaffold
     just shows where their LLM plugs in.
     """
-    profile_arg = f'profile="{profile}"' if profile else ""
+    profile_arg = f'profile="{profile}", ' if profile else ""
     profile_note = (
         f'serving the "{profile}" profile'
         if profile
@@ -201,16 +222,57 @@ def agent_script(profile: Optional[str] = None) -> str:
 # Run it:   tb orchestral          (or: python {DEFAULT_SCRIPT_RELPATH})
 """Launch an orchestral agent wired with your toolbase tools."""
 
-from toolbase.connect.orchestral import toolbase_tools
+import os
+import sys
+from pathlib import Path
+
+# Python puts this script's own directory at the head of `sys.path`, so a
+# sibling module named after a package we import (`orchestral.py`, say) would
+# shadow the real package. Demote our directory to the end: site-packages wins,
+# but local imports still resolve. Drop these lines if you move this script
+# somewhere its directory must take import priority.
+_here = os.path.dirname(os.path.abspath(__file__))
+if sys.path and os.path.abspath(sys.path[0] or ".") == _here:
+    sys.path.append(sys.path.pop(0))
+
 from orchestral import Agent
 from orchestral.llm import Claude  # swap for GPT, Gemini, ... as you like
+from orchestral.tools import (
+    EditFileTool, FileSearchTool, FindFilesTool, ReadFileTool,
+    RunCommandTool, RunPythonTool, WriteFileTool,
+)
+
+from toolbase.connect.orchestral import toolbase_tools
+
+# The one directory every tool works in -- both the toolbase-served toolkits
+# and the orchestral file tools below. Keeping them on the same root is what
+# lets the agent read back the files its own tools write. Point it anywhere.
+WORKSPACE = Path(__file__).resolve().parent.parent / "workspace"
 
 
 def main():
+    WORKSPACE.mkdir(parents=True, exist_ok=True)
+
     # `toolbase_tools` spins up one subprocess per served toolkit ({profile_note})
     # and yields the tools as orchestral BaseTool instances. They are torn
-    # down when the `with` block exits.
-    with toolbase_tools({profile_arg}) as tools:
+    # down when the `with` block exits. `config_overrides` scopes every served
+    # toolkit to WORKSPACE, overriding the `base_directory` in
+    # ~/.toolbase/config/<toolkit>.yaml for this run only.
+    with toolbase_tools(
+        {profile_arg}config_overrides={{"base_directory": str(WORKSPACE)}},
+    ) as served:
+        tools = [
+            # General-purpose tools, scoped to the same workspace.
+            ReadFileTool(base_directory=str(WORKSPACE), show_line_numbers=True),
+            WriteFileTool(base_directory=str(WORKSPACE)),
+            EditFileTool(base_directory=str(WORKSPACE)),
+            FindFilesTool(base_directory=str(WORKSPACE)),
+            FileSearchTool(base_directory=str(WORKSPACE)),
+            RunCommandTool(base_directory=str(WORKSPACE)),
+            RunPythonTool(base_directory=str(WORKSPACE)),
+            # Your toolbase toolkits.
+            *served,
+        ]
         agent = Agent(llm=Claude(), tools=tools)
 
         # -- Pick a launch modality: one is active, the others are commented. --
@@ -238,5 +300,6 @@ __all__ = [
     "is_orchestral_available",
     "DEFAULT_SCRIPT_NAME",
     "DEFAULT_SCRIPT_RELPATH",
+    "LEGACY_SCRIPT_NAME",
     "GENERATED_MARKER",
 ]

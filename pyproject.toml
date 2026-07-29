@@ -39,7 +39,14 @@ dependencies = [
     # 1.4 introduced the `state=[...]` decorator argument that the
     # Phase 3C-1 setup system relies on for state-field declaration.
     "orchestral-ai>=1.4",
-    "mcp>=1.0",
+    # Upper-bounded on purpose. orchestral-ai declares no mcp constraint of
+    # its own, and mcp 2.0 removed the decorator API (`Server.list_tools` /
+    # `Server.call_tool`) that orchestral 1.x's MCPServer is built on. Left
+    # open, a fresh install resolves mcp 2.x and every per-toolkit host dies
+    # at startup with `'Server' object has no attribute 'list_tools'`.
+    # Keep in sync with HOST_RUNTIME_REQUIREMENTS in cli.py, which is the
+    # same pin applied to each toolkit's venv.
+    "mcp>=1.0,<2",
     # Round-trips ~/.codex/config.toml for `tb connect codex` while preserving
     # the user's comments + formatting. The stdlib only reads TOML (tomllib);
     # tomlkit is the writer (same role ruamel.yaml plays for our YAML).
