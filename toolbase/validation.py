@@ -804,8 +804,10 @@ def validate_toolkit(toolkit_path: Path) -> ValidationResult:
             ):
                 result.is_valid = False
                 result.errors.append(
-                    "requirements.txt must include 'orchestral-ai>=1.0.0' "
-                    "(required for Orchestral tool framework)"
+                    "requirements.txt must include 'orchestral-ai>=1.10.0' "
+                    "(required for Orchestral tool framework; 1.10 is the "
+                    "first release built on MCP SDK 2.x, which is what the "
+                    "toolkit host speaks)"
                 )
 
         except Exception as e:

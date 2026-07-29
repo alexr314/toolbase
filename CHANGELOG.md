@@ -8,6 +8,16 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-07-29
+
+### Changed
+
+- **Toolkit hosts now run on MCP SDK 2.x.** The `mcp` dependency moved from `>=1.0,<2` to `>=2` and `orchestral-ai` from `>=1.4` to `>=1.10`, in both toolbase's own dependencies and the `HOST_RUNTIME_REQUIREMENTS` installed into every toolkit venv. toolbase never imports the SDK itself — it reaches it only through `orchestral.mcp` — so the major orchestral targets is the major toolbase needs, and the two bounds only make sense as a pair. orchestral 1.10 is a clean port to the 2.x API with no 1.x compatibility path and refuses to start against an older SDK; conversely orchestral <1.10 is built on the decorator API (`Server.list_tools` / `Server.call_tool`) that 2.0 removed. Since orchestral-ai declares no `mcp` constraint of its own, pinning both ends is what keeps pip off a mismatched pair.
+
+  **Existing toolkit venvs were built against mcp 1.x and need `tb install <toolkit> --rebuild`** to pick up the new pair; until then their hosts fail at startup with `'Server' object has no attribute 'list_tools'`, surfacing as `mcp connect failed: unhandled errors in a TaskGroup`.
+
+- Toolkit validation now names `orchestral-ai>=1.10.0` as the floor a toolkit's `requirements.txt` should declare. The check itself is unchanged (still presence-only, not a version comparison).
+
 ## [0.8.1] — 2026-07-27
 
 ### Fixed

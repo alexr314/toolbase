@@ -29,16 +29,23 @@ console = Console()
 # start inside it: orchestral supplies ``@define_tool`` and the tool plumbing,
 # mcp is the wire the host speaks to the orchestrator.
 #
-# The mcp bound is load-bearing, not cosmetic. ``orchestral-ai`` declares no
-# mcp constraint of its own, and mcp 2.0 removed the decorator API
-# (``Server.list_tools`` / ``Server.call_tool``) that orchestral 1.x's
-# ``MCPServer`` is built on. Installed unpinned, pip resolves mcp 2.x and the
-# venv is born broken: the host dies at startup with `'Server' object has no
-# attribute 'list_tools'`, which the orchestrator can only report as the
-# opaque `mcp connect failed: unhandled errors in a TaskGroup`.
+# Both bounds are load-bearing, not cosmetic, and they have to move as a pair.
+# ``orchestral-ai`` declares no mcp constraint of its own, so pip is free to
+# pick a combination neither side supports:
 #
-# Keep in sync with the ``mcp`` pin in pyproject.toml.
-HOST_RUNTIME_REQUIREMENTS = ["orchestral-ai", "mcp>=1.0,<2"]
+#   * orchestral <1.10 is written against MCP SDK 1.x. With mcp 2.x resolved,
+#     the host dies at startup with `'Server' object has no attribute
+#     'list_tools'` (2.0 dropped the decorator API), which the orchestrator can
+#     only report as the opaque `mcp connect failed: unhandled errors in a
+#     TaskGroup`.
+#   * orchestral >=1.10 is a clean port to 2.x with no 1.x compatibility path.
+#     Paired with mcp 1.x its ``_check_mcp_installed`` refuses to start.
+#
+# Either way the venv is born broken and the failure has nothing to do with
+# what the user was doing. Pinning both ends is what keeps that from happening.
+#
+# Keep in sync with the ``orchestral-ai`` and ``mcp`` pins in pyproject.toml.
+HOST_RUNTIME_REQUIREMENTS = ["orchestral-ai>=1.10", "mcp>=2"]
 
 
 # ── Agent-friendliness: --yes / --no / --no-input across all commands ──────
