@@ -34,12 +34,80 @@ def test_agent_script_carries_marker():
 
 
 def test_agent_script_bakes_profile_when_given():
-    assert 'toolbase_tools(profile="paper")' in oc.agent_script("paper")
+    assert 'profile="paper"' in oc.agent_script("paper")
 
 
 def test_agent_script_no_profile_arg_when_none():
-    assert "toolbase_tools()" in oc.agent_script(None)
     assert "profile=" not in oc.agent_script(None)
+
+
+# ── the scaffold must not shadow the package it imports ───────────────
+#
+# `.toolbase/` heads sys.path when the script is run directly, so a module
+# in there named `orchestral.py` makes `from orchestral import Agent` import
+# itself -- "cannot import name 'Agent' from partially initialized module".
+# That was the default name in 0.8.1 and earlier and it broke every launch.
+
+
+def test_default_script_name_does_not_shadow_orchestral():
+    assert oc.DEFAULT_SCRIPT_NAME != "orchestral.py"
+    assert oc.DEFAULT_SCRIPT_RELPATH.endswith(oc.DEFAULT_SCRIPT_NAME)
+
+
+def test_agent_script_demotes_its_own_directory_on_sys_path():
+    body = oc.agent_script(None)
+    # The guard must run before the first `from orchestral ...` import.
+    assert body.index("sys.path.pop(0)") < body.index("from orchestral import")
+
+
+def test_generated_script_imports_real_orchestral_despite_shadow(tmp_path):
+    """End-to-end: a hostile `orchestral.py` next to the scaffold must lose."""
+    import subprocess
+    import sys as _sys
+
+    d = tmp_path / ".toolbase"
+    d.mkdir()
+    (d / "orchestral.py").write_text("raise RuntimeError('shadowed')\n")
+    # Keep only the prologue + imports; drop main() so nothing spawns.
+    body = oc.agent_script(None).split("def main():")[0]
+    script = d / oc.DEFAULT_SCRIPT_NAME
+    script.write_text(body + "print('IMPORTS_OK', Agent.__name__)\n")
+
+    p = subprocess.run(
+        [_sys.executable, str(script)], capture_output=True, text=True,
+    )
+    assert p.returncode == 0, p.stderr
+    assert "IMPORTS_OK" in p.stdout
+
+
+# ── workspace scoping ─────────────────────────────────────────────────
+#
+# Served tools resolve relative paths against the `base_directory` in
+# ~/.toolbase/config/<toolkit>.yaml, which has nothing to do with where the
+# agent is working. Unless the scaffold overrides it *and* points its own
+# file tools at the same root, the agent cannot read back what its tools
+# write.
+
+
+def test_agent_script_scopes_served_tools_to_the_workspace():
+    body = oc.agent_script(None)
+    assert 'config_overrides={"base_directory": str(WORKSPACE)}' in body
+
+
+def test_agent_script_gives_file_tools_the_same_workspace():
+    body = oc.agent_script(None)
+    for tool in ("ReadFileTool", "WriteFileTool", "EditFileTool",
+                 "FindFilesTool", "FileSearchTool", "RunCommandTool",
+                 "RunPythonTool"):
+        assert f"{tool}(base_directory=str(WORKSPACE)" in body, tool
+
+
+def test_agent_script_file_tools_are_importable():
+    # The scaffold's import line has to match orchestral's actual exports.
+    from orchestral.tools import (  # noqa: F401
+        EditFileTool, FileSearchTool, FindFilesTool, ReadFileTool,
+        RunCommandTool, RunPythonTool, WriteFileTool,
+    )
 
 
 def test_agent_script_tui_active_others_commented():
@@ -192,7 +260,7 @@ def test_cli_out_overrides_path(tmp_path):
 def test_cli_bakes_profile(tmp_path):
     out = tmp_path / "agent.py"
     _run(["connect", "orchestral", "--profile", "paper", "--out", str(out)])
-    assert 'toolbase_tools(profile="paper")' in out.read_text()
+    assert 'profile="paper"' in out.read_text()
 
 
 def test_cli_refuses_overwrite_without_force(tmp_path):
@@ -271,7 +339,7 @@ def test_orchestral_runner_errors_without_script(tmp_path, monkeypatch):
 
 def test_orchestral_runner_invokes_script(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    _run(["connect", "orchestral"])  # writes .toolbase/orchestral.py
+    _run(["connect", "orchestral"])  # writes .toolbase/agent.py
     script = _default_script(tmp_path)
 
     captured = {}
@@ -290,3 +358,57 @@ def test_orchestral_runner_invokes_script(tmp_path, monkeypatch):
     # Ran the generated script with the toolbase interpreter, cwd = project root.
     assert captured["argv"][1] == str(script)
     assert captured["cwd"] == str(tmp_path)
+
+
+# ── migrating off the 0.8.1-and-earlier `.toolbase/orchestral.py` ─────────────
+
+
+def _legacy_script(root):
+    return root / ".toolbase" / oc.LEGACY_SCRIPT_NAME
+
+
+def test_connect_retires_generated_legacy_script(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    legacy = _legacy_script(tmp_path)
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(oc.GENERATED_MARKER + " old\n")
+
+    res = _run(["connect", "orchestral"])
+    assert res.exit_code == 0, res.output
+    # The shadowing file is gone; the new one is in its place.
+    assert not legacy.exists()
+    assert _default_script(tmp_path).exists()
+
+
+def test_connect_keeps_but_warns_about_hand_written_legacy_script(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    legacy = _legacy_script(tmp_path)
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text("# mine, not toolbase's\n")
+
+    res = _run(["connect", "orchestral"])
+    assert res.exit_code == 0, res.output
+    assert legacy.read_text() == "# mine, not toolbase's\n"  # untouched
+    assert "shadows" in " ".join(res.output.split())
+
+
+def test_orchestral_runner_refuses_legacy_script_with_migration_hint(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    legacy = _legacy_script(tmp_path)
+    legacy.parent.mkdir(parents=True)
+    legacy.write_text(oc.GENERATED_MARKER + " old\n")
+
+    # Would otherwise be launched -- fail loudly if it ever is.
+    monkeypatch.setattr(
+        "subprocess.run",
+        lambda *a, **k: pytest.fail("must not launch a shadowing script"),
+    )
+    res = _run(["orchestral"])
+    assert res.exit_code == 1
+    flat = " ".join(res.output.split())
+    assert "shadows" in flat
+    assert "tb connect orchestral --force" in flat

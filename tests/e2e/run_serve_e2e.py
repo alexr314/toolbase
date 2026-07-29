@@ -107,15 +107,21 @@ def main() -> int:
     for d in client.get_tool_definitions():
         print(f"  - {d['name']}: {d.get('description', '')[:60]}")
 
-    print(f"\nCalling {TOOLKIT_NAME}__hello(name='alex')...")
-    r = client.call_tool(f"{TOOLKIT_NAME}__hello", {"name": "alex"})
+    # Served names are PascalCase with any trailing ``Tool`` stripped -- the
+    # ``mcp_tool_name`` rule (pinned by test_orchestrator_bundles.py's
+    # TestToolYamlNameToMcpName). This harness used to call ``__hello`` /
+    # ``__add``, which predates that rule; the mismatch stayed hidden while an
+    # earlier failure (an mcp 2.x venv killing the host before it could
+    # advertise anything) masked it.
+    print(f"\nCalling {TOOLKIT_NAME}__Hello(name='alex')...")
+    r = client.call_tool(f"{TOOLKIT_NAME}__Hello", {"name": "alex"})
     print(f"  result: {r}")
     if "hello, alex" not in r:
         print("!!! hello tool returned unexpected payload")
         return 2
 
-    print(f"\nCalling {TOOLKIT_NAME}__add(a=2, b=3)...")
-    r = client.call_tool(f"{TOOLKIT_NAME}__add", {"a": 2, "b": 3})
+    print(f"\nCalling {TOOLKIT_NAME}__Add(a=2, b=3)...")
+    r = client.call_tool(f"{TOOLKIT_NAME}__Add", {"a": 2, "b": 3})
     print(f"  result: {r}")
     if json.loads(r).get("sum") != 5.0:
         print("!!! add tool returned unexpected payload")

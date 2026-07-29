@@ -67,7 +67,7 @@ Orchestral is a library, not an MCP client, so there's no config to write. `tb
 connect orchestral` scaffolds a launcher script instead:
 
 ```bash
-tb connect orchestral   # writes ./.toolbase/orchestral.py
+tb connect orchestral   # writes ./.toolbase/agent.py
 tb orchestral           # run it
 ```
 
@@ -76,13 +76,28 @@ The generated script (safe to edit) is roughly:
 ```python
 """Launch an orchestral agent wired with your toolbase tools."""
 
-from toolbase.connect.orchestral import toolbase_tools
+from pathlib import Path
+
 from orchestral import Agent
 from orchestral.llm import Claude   # swap for GPT, Gemini, ...
+from orchestral.tools import ReadFileTool, WriteFileTool, RunPythonTool
+
+from toolbase.connect.orchestral import toolbase_tools
+
+WORKSPACE = Path(__file__).resolve().parent.parent / "workspace"
 
 def main():
-    with toolbase_tools() as tools:        # one subprocess per served toolkit
-        agent = Agent(llm=Claude(), tools=tools)
+    WORKSPACE.mkdir(parents=True, exist_ok=True)
+    # One subprocess per served toolkit, all scoped to WORKSPACE.
+    with toolbase_tools(
+        config_overrides={"base_directory": str(WORKSPACE)},
+    ) as served:
+        agent = Agent(llm=Claude(), tools=[
+            ReadFileTool(base_directory=str(WORKSPACE)),
+            WriteFileTool(base_directory=str(WORKSPACE)),
+            RunPythonTool(base_directory=str(WORKSPACE)),
+            *served,
+        ])
         from orchestral.ui import run_interactive_session
         run_interactive_session(agent, streaming=True)
 
@@ -94,6 +109,20 @@ It loads your active profile's tools and hands them to an Orchestral `Agent`.
 You supply the LLM and its API key. Tools load in-process, so there's no
 `tb serve`. The scaffold also ships commented-out headless and web-GUI launch
 modes.
+
+Two details the scaffold gets right, worth keeping if you rewrite it:
+
+- **One workspace.** `config_overrides` points every served toolkit at
+  `WORKSPACE`, and the file tools take the same root. Otherwise the toolkits
+  write wherever `~/.toolbase/config/<toolkit>.yaml` says and the agent can't
+  read back its own output.
+- **File tools.** Served toolkits are domain tools; without read/write/run
+  tools the agent has no way to open the files they produce.
+
+> Don't name this script `orchestral.py`. Python puts its directory at the head
+> of `sys.path`, so that name shadows the `orchestral` package it imports and
+> the run dies on `from orchestral import Agent`. Scaffolds from toolbase 0.8.1
+> and earlier used that name; re-run `tb connect orchestral` to migrate.
 
 `toolbase_tools()` takes keyword-only arguments, all optional:
 
@@ -107,6 +136,11 @@ modes.
 
 Pass `project_root` when the script runs from somewhere other than the project
 directory — otherwise resolution follows the same chain `tb serve` uses.
+
+Keys in `config_overrides` behave exactly as if they were in the toolkit's
+config file: they satisfy required fields and unlock bundles whose `requires:`
+names them. Keys a toolkit doesn't declare are ignored, so one
+`{"base_directory": ...}` can scope every served toolkit at once.
 
 ## Common operations
 

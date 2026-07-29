@@ -25,6 +25,22 @@ from .config import _api_url
 console = Console()
 
 
+# The runtime every per-toolkit venv needs so ``toolbase._toolkit_host`` can
+# start inside it: orchestral supplies ``@define_tool`` and the tool plumbing,
+# mcp is the wire the host speaks to the orchestrator.
+#
+# The mcp bound is load-bearing, not cosmetic. ``orchestral-ai`` declares no
+# mcp constraint of its own, and mcp 2.0 removed the decorator API
+# (``Server.list_tools`` / ``Server.call_tool``) that orchestral 1.x's
+# ``MCPServer`` is built on. Installed unpinned, pip resolves mcp 2.x and the
+# venv is born broken: the host dies at startup with `'Server' object has no
+# attribute 'list_tools'`, which the orchestrator can only report as the
+# opaque `mcp connect failed: unhandled errors in a TaskGroup`.
+#
+# Keep in sync with the ``mcp`` pin in pyproject.toml.
+HOST_RUNTIME_REQUIREMENTS = ["orchestral-ai", "mcp>=1.0,<2"]
+
+
 # ── Agent-friendliness: --yes / --no / --no-input across all commands ──────
 #
 # Per STATUS.md §"Named principles" (flag-equivalence) and the Tier-1 polish
@@ -3221,11 +3237,10 @@ def setup_venv_environment(
         )
         console.print("[green]✓ Bundle dependencies installed[/green]")
 
-    # Install orchestral-ai + mcp SDK. Both are required: orchestral provides
-    # the @define_tool decorator and tool plumbing; mcp is what the per-toolkit
-    # subprocess (toolbase serve's host) uses to expose tools over HTTP.
+    # Install the host runtime (orchestral + a compatible mcp) into the venv.
+    # See HOST_RUNTIME_REQUIREMENTS for why the mcp bound matters.
     _run_pip_with_progress(
-        [str(pip_path), 'install', 'orchestral-ai', 'mcp'],
+        [str(pip_path), 'install', *HOST_RUNTIME_REQUIREMENTS],
         console,
         "Installing orchestral-ai and mcp",
     )
@@ -3351,7 +3366,7 @@ def setup_conda_environment(
     try:
         _run_pip_with_progress(
             [conda_cmd, 'run', '-n', env_name, 'pip', 'install',
-             'orchestral-ai', 'mcp'],
+             *HOST_RUNTIME_REQUIREMENTS],
             console,
             f"Installing orchestral + mcp in '{env_name}'",
         )
@@ -7015,7 +7030,7 @@ def _unsurface_skills_for_connect(adapter) -> None:
               help='List supported harnesses and detection status, then exit.')
 @click.option('--out', 'out_path', default=None, metavar='PATH',
               help='(orchestral) Path for the generated agent script '
-                   '(default: .toolbase/orchestral.py).')
+                   '(default: .toolbase/agent.py).')
 @click.option('--force', 'force', is_flag=True, default=False,
               help='(orchestral) Overwrite an existing generated script.')
 @click.option('--no-skills', 'no_skills', is_flag=True, default=False,
@@ -7036,8 +7051,8 @@ def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
         tb connect claude-code -g           # user: ~/.claude.json (every session)
         tb connect claude-code --profile paper
         tb connect claude-code --remove
-        tb connect orchestral               # write .toolbase/orchestral.py
-        tb connect orchestral --profile paper --out agent.py
+        tb connect orchestral               # write .toolbase/agent.py
+        tb connect orchestral --profile paper --out my_agent.py
         tb connect --list                   # where is toolbase wired?
         tb connect --harnesses              # which harnesses are supported?
     """
@@ -7218,32 +7233,75 @@ def _connect_print_status(adapters, project_root) -> None:
     )
 
 
-def _orchestral_script_path(out=None):
+def _orchestral_script_path(out=None, *, accept_legacy=False):
     """Resolve the orchestral launcher path: ``--out`` if given, else
-    ``<project-root>/.toolbase/orchestral.py`` (project discovered by walking
-    up from the cwd; falls back to the cwd when not in a project)."""
+    ``<project-root>/.toolbase/agent.py`` (project discovered by walking
+    up from the cwd; falls back to the cwd when not in a project).
+
+    ``accept_legacy`` is for the read side (``tb orchestral``, ``--remove``):
+    when the current default doesn't exist but an older
+    ``.toolbase/orchestral.py`` does, return that instead so an existing
+    checkout keeps working. The write side never uses it -- new scaffolds
+    always take the current name (the legacy one shadows the ``orchestral``
+    package; see ``connect/orchestral.py``).
+    """
     from pathlib import Path as _Path
-    from .connect.orchestral import DEFAULT_SCRIPT_NAME
+    from .connect.orchestral import DEFAULT_SCRIPT_NAME, LEGACY_SCRIPT_NAME
     from .envs import find_project_root
 
     if out:
         return _Path(out)
     root = find_project_root() or _Path.cwd()
-    return root / ".toolbase" / DEFAULT_SCRIPT_NAME
+    path = root / ".toolbase" / DEFAULT_SCRIPT_NAME
+    if accept_legacy and not path.exists():
+        legacy = root / ".toolbase" / LEGACY_SCRIPT_NAME
+        if legacy.exists():
+            return legacy
+    return path
+
+
+def _warn_if_profile_selects_nothing(profile_name) -> None:
+    """Warn at connect time if the profile the scaffold will serve is empty.
+
+    Without this the user only finds out at launch, as a bare
+    ``RuntimeError: no toolkits could be started`` from deep inside the
+    orchestrator. Best-effort: an unresolvable profile is not a reason to
+    refuse to write the scaffold, so any failure here is silent.
+    """
+    from pathlib import Path as _Path
+    from .envs import find_project_root
+    from .serve.profiles import resolve_profile
+
+    try:
+        root = find_project_root() or _Path.cwd()
+        profile = resolve_profile(root, cli_profile=profile_name)
+    except Exception:
+        return
+    if profile.toolkits:
+        return
+    console.print(
+        f"[yellow]Note: profile '{profile.name}' currently serves no "
+        "toolkits[/yellow] — the agent would start with zero tools."
+    )
+    console.print(
+        "  [dim]Activate one with[/dim] [cyan]tb activate <toolkit>[/cyan]"
+        "[dim], then check with[/dim] [cyan]tb serve --dry-run[/cyan][dim].[/dim]"
+    )
 
 
 def _connect_orchestral(*, profile_name, out, force, dry_run, remove) -> None:
     """Handle `tb connect orchestral`: write (or remove) a runnable agent
-    script at ``<project>/.toolbase/orchestral.py``. Orchestral is a library
+    script at ``<project>/.toolbase/agent.py``. Orchestral is a library
     harness, not a config-file one, so "connecting" means scaffolding the code
     that hands toolbase's tools to an orchestral Agent -- the user owns the
     agent (LLM, prompt, launch modality). Launch it with `tb orchestral`.
     """
     from .connect.orchestral import (
         agent_script, is_orchestral_available, GENERATED_MARKER,
+        LEGACY_SCRIPT_NAME,
     )
 
-    path = _orchestral_script_path(out)
+    path = _orchestral_script_path(out, accept_legacy=remove)
 
     if remove:
         if not path.exists():
@@ -7280,11 +7338,37 @@ def _connect_orchestral(*, profile_name, out, force, dry_run, remove) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
     console.print(f"[green]✓[/green] Wrote orchestral agent scaffold to {path}.")
+
+    # A scaffold from 0.8.1 or earlier next to the new one is not just
+    # clutter: it is named `orchestral.py`, sits in the same directory, and
+    # that directory heads `sys.path` at launch -- so it shadows the
+    # `orchestral` package the new script imports. Retire it (marker-checked,
+    # same rule as --remove).
+    legacy = path.parent / LEGACY_SCRIPT_NAME
+    if legacy.exists() and legacy != path:
+        try:
+            first = legacy.read_text(encoding="utf-8").split("\n", 1)[0]
+        except OSError:
+            first = ""
+        if first.startswith(GENERATED_MARKER):
+            legacy.unlink()
+            console.print(
+                f"  [dim]Removed the superseded {legacy.name} (it shadowed "
+                "the orchestral package).[/dim]"
+            )
+        else:
+            console.print(
+                f"[yellow]Warning: {legacy} is not toolbase-generated, so it "
+                "was left alone — but it shadows the orchestral package and "
+                "will break this script. Rename it.[/yellow]"
+            )
+
     if not is_orchestral_available():
         console.print(
             "[yellow]Note: the orchestral package isn't importable here; "
             "the script needs it (and an LLM API key) at runtime.[/yellow]"
         )
+    _warn_if_profile_selects_nothing(profile_name)
     console.print(
         "[dim]Configure orchestral (LLM + API key), then launch with "
         "[cyan]tb orchestral[/cyan].[/dim]"
@@ -7356,26 +7440,42 @@ def disconnect(harness, global_scope, local_scope, all_scopes):
 
 @main.command()
 @click.option('--script', 'script', default=None, metavar='PATH',
-              help='Path to the agent script (default: .toolbase/orchestral.py).')
+              help='Path to the agent script (default: .toolbase/agent.py).')
 def orchestral(script):
     """Launch your orchestral agent script (the one `tb connect orchestral`
-    wrote). This just runs `python .toolbase/orchestral.py` -- the script owns
+    wrote). This just runs `python .toolbase/agent.py` -- the script owns
     the agent (LLM, prompt, launch modality); toolbase only runs it.
 
     \b
     Examples:
-        tb connect orchestral        # scaffold .toolbase/orchestral.py
+        tb connect orchestral        # scaffold .toolbase/agent.py
         tb orchestral                # run it
     """
     import subprocess
     from pathlib import Path as _Path
     from .envs import find_project_root
 
-    path = _orchestral_script_path(script)
+    from .connect.orchestral import LEGACY_SCRIPT_NAME
+
+    path = _orchestral_script_path(script, accept_legacy=True)
     if not path.exists():
         console.print(
             f"[red]No agent script at {path}.[/red] Create one with "
             "[cyan]tb connect orchestral[/cyan] first."
+        )
+        sys.exit(1)
+    if path.name == LEGACY_SCRIPT_NAME:
+        # Older scaffold: its own directory heads sys.path at launch, so the
+        # file shadows the `orchestral` package it imports and the run dies
+        # on `from orchestral import Agent`. Say so before it happens.
+        console.print(
+            f"[yellow]{path} is an older scaffold whose filename shadows the "
+            "orchestral package; it cannot import it.[/yellow]"
+        )
+        console.print(
+            "  [dim]Re-scaffold with[/dim] [cyan]tb connect orchestral "
+            "--force[/cyan][dim] (your old file is removed) or copy your "
+            "edits into .toolbase/agent.py.[/dim]"
         )
         sys.exit(1)
     # Run with the interpreter toolbase runs under (toolbase + orchestral live

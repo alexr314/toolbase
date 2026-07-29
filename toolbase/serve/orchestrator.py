@@ -50,7 +50,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from rich.console import Console
 
-from ..config import LOGS_DIR, TOOLKITS_DIR
+from ..config import CONFIG_DIR, LOGS_DIR, TOOLKITS_DIR
 from ..envs.cache import LEGACY_META_FILE
 from ..logging.logger import ToolLogger, get_logger
 
@@ -326,6 +326,7 @@ def _legacy_discover_toolkits(toolkits_dir: Path) -> List[ToolkitDiscovery]:
 
 def _resolve_state_config(
     disc: ToolkitDiscovery,
+    overrides: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
     """Validate the toolkit's stored config against its declared schema.
 
@@ -338,6 +339,13 @@ def _resolve_state_config(
     - ``(None, reason)`` — the toolkit declared required fields the
       user hasn't filled in, or stored values fail validation. The
       orchestrator skips this toolkit with ``reason`` in the banner.
+
+    ``overrides`` is the embedder's ``config_overrides`` (see
+    ``Orchestrator.__init__``). A field the embedder supplies counts as
+    filled in: it satisfies a required field and clears a stored-but-
+    invalid one, because the override is what the host will actually
+    receive. Without this a caller could pass the exact value a toolkit
+    demands and still watch it get skipped for lacking that value.
 
     Imports the setup module lazily so a malformed ``config:`` block
     in some other toolkit can't take down the whole orchestrator
@@ -388,6 +396,17 @@ def _resolve_state_config(
         resolution = load_state_config(
             disc.name, schema, project_root=project_root,
         )
+        if overrides:
+            # Anything the embedder supplies is going to reach the host, so
+            # it can't also be "missing" or "invalid". Drop those complaints
+            # before the go/no-go check.
+            supplied = set(overrides)
+            resolution.missing_required = [
+                n for n in resolution.missing_required if n not in supplied
+            ]
+            resolution.invalid = [
+                (n, e) for (n, e) in resolution.invalid if n not in supplied
+            ]
         if not resolution.ok:
             return None, "config incomplete — " + (resolution.skip_reason() or "unknown")
         state_config = dict(resolution.state_config)
@@ -584,6 +603,7 @@ def _tool_yaml_name_to_mcp_name(class_name: str) -> str:
 
 def _resolve_bundle_availability(
     disc: "ToolkitDiscovery",
+    overrides: Optional[Dict[str, Any]] = None,
 ) -> Tuple[Any, Dict[str, List[str]]]:
     """Evaluate this toolkit's ``bundles:`` against its resolved config.
 
@@ -598,6 +618,12 @@ def _resolve_bundle_availability(
     user layer key-by-key (see ``envs/config.py``). The ``<NEEDS
     VALUE>`` sentinel counts as unset, matching the existing
     state-config gate semantics one level up.
+
+    ``overrides`` (the embedder's ``config_overrides``) is merged last,
+    for the same reason the state-config gate honors it: a bundle whose
+    ``requires:`` key the embedder supplies in-process is satisfied, so
+    gating it on the stored file alone would hide tools the caller just
+    configured.
 
     On any read failure (no toolkit.yaml, malformed file, etc.),
     returns an empty availability that gates nothing — pass-through
@@ -631,6 +657,9 @@ def _resolve_bundle_availability(
         # Pass-through on any error — better to over-serve than block
         # startup over a config-resolution glitch.
         resolved_config = {}
+
+    if overrides:
+        resolved_config = {**resolved_config, **overrides}
 
     availability = evaluate_bundles(bundles_block, resolved_config)
     return availability, name_to_bundles
@@ -738,6 +767,73 @@ def _strip_caller_env_activation(env: Dict[str, str]) -> Dict[str, str]:
     return env
 
 
+def _toolbase_package_dir() -> Path:
+    """Absolute path of the running ``toolbase`` package directory."""
+    import toolbase as _tb
+    _tb_file = getattr(_tb, "__file__", None)
+    if _tb_file:
+        return Path(_tb_file).resolve().parent
+    # Namespace-package / some editable layouts leave ``__file__`` None;
+    # ``__path__`` still points at the package dir.
+    return Path(next(iter(_tb.__path__))).resolve()
+
+
+def _staged_toolbase_path() -> Optional[Path]:
+    """Return a directory whose ONLY importable entry is ``toolbase``.
+
+    This is what the per-toolkit host gets on ``PYTHONPATH``, and the
+    "only" is the entire point. ``PYTHONPATH`` entries land ahead of the
+    toolkit venv's ``site-packages``, so handing over the directory that
+    merely *contains* toolbase means the whole serving environment
+    shadows the toolkit's own: under a normal (non-editable) install
+    that directory is ``site-packages``, and ``mcp``, ``numpy``,
+    ``pydantic`` and ``orchestral`` all resolve to the orchestrator's
+    copies instead of the venv's. The per-toolkit venv then supplies only
+    what the serving env happens to lack and never wins a conflict --
+    which defeats the isolation the subprocess design exists to provide,
+    and makes a toolkit's behavior depend on whichever machine serves it.
+
+    A directory holding a single ``toolbase`` symlink gives the host what
+    it needs and nothing more. That is affordable because the host's
+    dependency footprint on the toolbase side is pure-Python and tiny:
+    ``_toolkit_host`` imports the stdlib, ``orchestral``, and
+    ``toolbase.naming`` (via ``toolbase/__init__``) -- no third-party
+    package. ``orchestral`` and ``mcp`` come from the venv, where
+    ``tb install`` puts them on purpose.
+
+    Staged under ``~/.toolbase/hostpath/<hash of the package path>`` so
+    two toolbase installs (an editable checkout and a released one, say)
+    never collide. The symlink is revalidated on every call and replaced
+    atomically, so an upgraded or moved install self-heals.
+
+    Returns ``None`` if the staging directory can't be created (a
+    filesystem without symlinks, a read-only home); the caller then falls
+    back to the historical leaky-but-working behavior rather than failing
+    to serve.
+    """
+    import hashlib
+
+    pkg_dir = _toolbase_package_dir()
+    key = hashlib.sha256(str(pkg_dir).encode("utf-8")).hexdigest()[:12]
+    stage = CONFIG_DIR / "hostpath" / key
+    link = stage / "toolbase"
+    try:
+        # Fast path: already staged and still pointing where we think.
+        if link.is_symlink() and Path(os.readlink(link)) == pkg_dir:
+            return stage
+        stage.mkdir(parents=True, exist_ok=True)
+        # Build beside the target and rename over it, so a concurrent serve
+        # either sees the old link or the new one -- never a missing one.
+        tmp = stage / f".toolbase.{os.getpid()}"
+        if tmp.is_symlink() or tmp.exists():
+            tmp.unlink()
+        tmp.symlink_to(pkg_dir, target_is_directory=True)
+        os.replace(tmp, link)
+        return stage
+    except (OSError, NotImplementedError):
+        return None
+
+
 def _build_host_env(toolkit_path: Path, toolkit_name: str,
                     *, venv_bin: Optional[str] = None) -> Dict[str, str]:
     """Compose the subprocess environment for the per-toolkit host.
@@ -748,8 +844,10 @@ def _build_host_env(toolkit_path: Path, toolkit_name: str,
 
     The toolkit's interpreter doesn't have ``toolbase`` installed, only
     ``orchestral-ai`` and ``mcp``. We need ``toolbase._toolkit_host`` to
-    be importable, so we point ``PYTHONPATH`` at the parent package
-    location of the running orchestrator.
+    be importable, so ``PYTHONPATH`` carries a staged directory holding
+    nothing but a ``toolbase`` symlink -- see ``_staged_toolbase_path``
+    for why exposing the package's real parent directory instead leaks
+    the entire serving environment into the toolkit's venv.
 
     The caller's activated-conda/venv pollution is first stripped (see
     ``_strip_caller_env_activation``) so the toolkit's isolated env is
@@ -764,16 +862,11 @@ def _build_host_env(toolkit_path: Path, toolkit_name: str,
     plumbing.
     """
     env = _strip_caller_env_activation(os.environ.copy())
-    # Find the directory that contains the ``toolbase`` package.
-    import toolbase as _tb
-    _tb_file = getattr(_tb, "__file__", None)
-    if _tb_file:
-        pkg_parent = str(Path(_tb_file).resolve().parent.parent)
-    else:
-        # Namespace-package / some editable layouts leave ``__file__`` None;
-        # ``__path__`` still points at the package dir, so its parent is the
-        # directory that contains the ``toolbase`` package.
-        pkg_parent = str(Path(next(iter(_tb.__path__))).resolve().parent)
+    staged = _staged_toolbase_path()
+    # Fall back to the package's real parent when staging is unavailable.
+    # That re-leaks the serving env, but a leaky serve beats no serve.
+    pkg_parent = str(staged if staged is not None
+                     else _toolbase_package_dir().parent)
     existing = env.get("PYTHONPATH", "")
     env["PYTHONPATH"] = (
         pkg_parent + (os.pathsep + existing if existing else "")
@@ -1235,7 +1328,9 @@ class Orchestrator:
         """
         # Resolve declarative state-config first. A missing-required-
         # field condition means we never spawn.
-        state_config, config_err = _resolve_state_config(disc)
+        state_config, config_err = _resolve_state_config(
+            disc, self._config_overrides,
+        )
         if config_err is not None:
             self.console.print(
                 f"  [red]✗[/red] [dim]{disc.name:<18}[/dim] "
@@ -1314,7 +1409,9 @@ class Orchestrator:
                 message=note, level="warn",
             )
 
-        availability, name_to_bundles = _resolve_bundle_availability(disc)
+        availability, name_to_bundles = _resolve_bundle_availability(
+            disc, self._config_overrides,
+        )
         if availability.dropped_bundles:
             for bname, missing in availability.dropped_bundles.items():
                 line = format_skip_log_line(disc.name, bname, missing)
@@ -1609,7 +1706,9 @@ class Orchestrator:
         # config file between sessions (the file is canonical; we always
         # read fresh). Same shape as initial launch: a config error here
         # marks the toolkit failed for this restart attempt.
-        state_config, config_err = _resolve_state_config(rt.discovery)
+        state_config, config_err = _resolve_state_config(
+            rt.discovery, self._config_overrides,
+        )
         if config_err is not None:
             rt.restart_attempts = attempt
             rt.last_error = config_err

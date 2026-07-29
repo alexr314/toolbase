@@ -42,7 +42,7 @@ def _stub_state_config(monkeypatch):
     via their own ``monkeypatch.setattr`` later.
     """
     monkeypatch.setattr(
-        orchestrator, "_resolve_state_config", lambda d: ({}, None),
+        orchestrator, "_resolve_state_config", lambda d, o=None: ({}, None),
     )
 
 

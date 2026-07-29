@@ -119,6 +119,50 @@ def test_malformed_config_block_returns_skip_reason(isolated: Path):
     assert "schema" in err.lower() or "config" in err.lower()
 
 
+# ── overrides count as configuration ─────────────────────────────────
+#
+# An embedder passing ``config_overrides`` supplies the value the host will
+# actually receive, so gating the toolkit on the stored file alone would
+# refuse to serve a toolkit for lacking a value the caller just handed over.
+
+
+def test_override_satisfies_missing_required_field(isolated: Path):
+    disc = _make_discovery(isolated, config_block=[
+        {"name": "base_directory", "type": "path", "required": True},
+    ])
+    # Nothing stored: without an override this is a hard skip.
+    assert orchestrator._resolve_state_config(disc)[1] is not None
+
+    state_config, err = orchestrator._resolve_state_config(
+        disc, {"base_directory": "/sandbox"},
+    )
+    assert err is None
+    # The override itself is merged in later, by the caller.
+    assert state_config == {}
+
+
+def test_override_clears_invalid_stored_value(isolated: Path):
+    disc = _make_discovery(isolated, config_block=[
+        {"name": "n", "type": "integer", "min": 1, "max": 10},
+    ])
+    save_config("demo", {"n": 9999})
+    assert orchestrator._resolve_state_config(disc)[1] is not None
+
+    _, err = orchestrator._resolve_state_config(disc, {"n": 5})
+    assert err is None
+
+
+def test_override_of_one_field_does_not_excuse_another(isolated: Path):
+    disc = _make_discovery(isolated, config_block=[
+        {"name": "a", "type": "string", "required": True},
+        {"name": "b", "type": "string", "required": True},
+    ])
+    _, err = orchestrator._resolve_state_config(disc, {"a": "x"})
+    assert err is not None
+    assert "b" in err
+    assert "a" not in err.replace("config incomplete", "")
+
+
 def test_state_config_is_json_serializable(isolated: Path):
     """The orchestrator hands the state-config dict to the host
     subprocess via ``--state-config <json>``. Verify nothing in the

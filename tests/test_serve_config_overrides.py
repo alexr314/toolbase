@@ -52,7 +52,9 @@ def quiet_orch(monkeypatch: pytest.MonkeyPatch):
         monkeypatch.setattr(orch, "_spawn_and_connect", capture)
         monkeypatch.setattr(
             orchestrator, "_resolve_state_config",
-            lambda disc: (dict(resolved) if resolved is not None else {}, None),
+            lambda disc, ov=None: (
+                dict(resolved) if resolved is not None else {}, None
+            ),
         )
         return orch, capture
 

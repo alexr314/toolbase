@@ -164,3 +164,89 @@ def test_build_host_env_no_venv_bin_leaves_path(tmp_path: Path, monkeypatch):
     monkeypatch.setenv("PATH", "/usr/bin:/bin")
     env = _build_host_env(tmp_path, "demo")   # venv_bin defaults to None
     assert env["PATH"] == "/usr/bin:/bin"
+
+
+# ── PYTHONPATH must expose toolbase and NOTHING else ──────────────────
+#
+# PYTHONPATH entries land ahead of the toolkit venv's site-packages. Handing
+# over the directory that merely *contains* toolbase therefore lets the whole
+# serving environment shadow the toolkit's own: under a normal install that
+# directory is site-packages, so mcp / numpy / pydantic / orchestral all
+# resolve to the orchestrator's copies. The venv then supplies only what the
+# serving env lacks and never wins a conflict -- which defeats the isolation
+# the per-toolkit venv exists to provide and makes a toolkit's behavior depend
+# on which machine serves it. We stage a directory holding one `toolbase`
+# symlink instead.
+
+
+def env_first(env) -> str:
+    """The PYTHONPATH entry the host actually resolves imports from first."""
+    return env["PYTHONPATH"].split(os.pathsep)[0]
+
+
+def test_pythonpath_entry_exposes_only_toolbase(tmp_path: Path):
+    env = _build_host_env(tmp_path, "demo")
+    first = Path(env_first(env))
+    # Ignore dotfiles: a concurrent serve may be mid-rename on its temp link.
+    visible = sorted(
+        p.name for p in first.iterdir() if not p.name.startswith(".")
+    )
+    assert visible == ["toolbase"]
+
+
+def test_pythonpath_entry_is_not_site_packages(tmp_path: Path):
+    """The regression itself: never hand over toolbase's real parent dir."""
+    import toolbase as _tb
+
+    pkg_parent = Path(_tb.__file__).resolve().parent.parent
+    assert Path(env_first(_build_host_env(tmp_path, "demo"))) != pkg_parent
+
+
+def test_staged_path_resolves_to_the_running_toolbase(tmp_path: Path):
+    from toolbase.serve.orchestrator import (
+        _staged_toolbase_path, _toolbase_package_dir,
+    )
+
+    stage = _staged_toolbase_path()
+    assert stage is not None
+    assert Path(os.readlink(stage / "toolbase")) == _toolbase_package_dir()
+
+
+def test_staged_path_is_stable_and_self_heals(tmp_path: Path):
+    from toolbase.serve.orchestrator import _staged_toolbase_path
+
+    first = _staged_toolbase_path()
+    assert _staged_toolbase_path() == first          # idempotent
+    # A stale link (toolbase moved/upgraded) is replaced, not trusted.
+    link = first / "toolbase"
+    link.unlink()
+    link.symlink_to(tmp_path, target_is_directory=True)
+    again = _staged_toolbase_path()
+    assert again == first
+    assert Path(os.readlink(link)) != tmp_path
+
+
+def test_falls_back_to_package_parent_when_staging_fails(tmp_path: Path, monkeypatch):
+    """A filesystem without symlinks must still serve -- leakily, but serve."""
+    from toolbase.serve import orchestrator as orch
+
+    monkeypatch.setattr(orch, "_staged_toolbase_path", lambda: None)
+    env = _build_host_env(tmp_path, "demo")
+    assert Path(env_first(env)) == orch._toolbase_package_dir().parent
+
+
+def test_host_imports_toolbase_through_the_staged_path(tmp_path: Path):
+    """End-to-end: a bare interpreter with only this PYTHONPATH can import
+    toolbase and the host module, with no toolbase on its normal path."""
+    env = _build_host_env(tmp_path, "demo")
+    probe = (
+        "import toolbase, toolbase._toolkit_host as h, sys;"
+        "print(toolbase.__file__)"
+    )
+    r = subprocess.run(
+        [sys.executable, "-P", "-c", probe],
+        env={**env, "PYTHONPATH": env["PYTHONPATH"].split(os.pathsep)[0]},
+        capture_output=True, text=True, cwd=str(tmp_path),
+    )
+    assert r.returncode == 0, r.stderr
+    assert "hostpath" in r.stdout
