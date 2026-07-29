@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "toolbase"
-version = "0.8.1"
+version = "0.9.0"
 description = "The community registry and CLI for AI agent toolkits - discover, share, and serve tools to AI agents over MCP"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -36,17 +36,23 @@ dependencies = [
     "pydantic>=2.0",
     # Required by Pydantic's EmailStr at runtime; not imported directly.
     "email-validator>=2.0",
-    # 1.4 introduced the `state=[...]` decorator argument that the
-    # Phase 3C-1 setup system relies on for state-field declaration.
-    "orchestral-ai>=1.4",
-    # Upper-bounded on purpose. orchestral-ai declares no mcp constraint of
-    # its own, and mcp 2.0 removed the decorator API (`Server.list_tools` /
-    # `Server.call_tool`) that orchestral 1.x's MCPServer is built on. Left
-    # open, a fresh install resolves mcp 2.x and every per-toolkit host dies
-    # at startup with `'Server' object has no attribute 'list_tools'`.
-    # Keep in sync with HOST_RUNTIME_REQUIREMENTS in cli.py, which is the
-    # same pin applied to each toolkit's venv.
-    "mcp>=1.0,<2",
+    # 1.4 introduced the `state=[...]` decorator argument that the Phase 3C-1
+    # setup system relies on for state-field declaration; 1.10 is the first
+    # release whose orchestral.mcp is built on MCP SDK 2.x.
+    "orchestral-ai>=1.10",
+    # We never import the SDK ourselves — the host reaches it only through
+    # `orchestral.mcp` — so the major orchestral targets is the major we need,
+    # and these two bounds only make sense as a pair. orchestral >=1.10 ported
+    # to 2.x with no 1.x compatibility path and refuses to start against an
+    # older SDK; orchestral <1.10 is built on the decorator API
+    # (`Server.list_tools` / `Server.call_tool`) that 2.0 removed, and dies at
+    # startup with `'Server' object has no attribute 'list_tools'` — which
+    # reaches the user only as `mcp connect failed: unhandled errors in a
+    # TaskGroup`. orchestral-ai declares no mcp constraint of its own, so
+    # nothing but this pin keeps pip off a mismatched pair.
+    # Keep in sync with HOST_RUNTIME_REQUIREMENTS in cli.py, which applies the
+    # same pair to each toolkit's venv.
+    "mcp>=2",
     # Round-trips ~/.codex/config.toml for `tb connect codex` while preserving
     # the user's comments + formatting. The stdlib only reads TOML (tomllib);
     # tomlkit is the writer (same role ruamel.yaml plays for our YAML).
