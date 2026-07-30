@@ -194,7 +194,7 @@ def agent_script(profile: Optional[str] = None) -> str:
     Two things the scaffold does deliberately, because getting them wrong is
     the difference between a working agent and a confusing one:
 
-    - **One workspace.** A single ``WORKSPACE`` dir is passed to
+    - **One sandbox.** A single ``SANDBOX`` dir is passed to
       ``toolbase_tools(config_overrides=...)`` *and* to orchestral's own file
       tools, so every tool resolves relative paths against the same root.
       Without it, toolbase-served tools write wherever
@@ -202,7 +202,7 @@ def agent_script(profile: Optional[str] = None) -> str:
       back its own output.
     - **File tools.** Served toolkits are domain tools; on their own the agent
       has no way to open the files they produce. The scaffold pairs them with
-      orchestral's read/write/edit/search/run tools, all scoped to WORKSPACE.
+      orchestral's read/write/edit/search/run tools, all scoped to SANDBOX.
 
     Configuring orchestral (the LLM, API keys) is the user's job; the scaffold
     just shows where their LLM plugs in.
@@ -247,29 +247,29 @@ from toolbase.connect.orchestral import toolbase_tools
 # The one directory every tool works in -- both the toolbase-served toolkits
 # and the orchestral file tools below. Keeping them on the same root is what
 # lets the agent read back the files its own tools write. Point it anywhere.
-WORKSPACE = Path(__file__).resolve().parent.parent / "workspace"
+SANDBOX = Path(__file__).resolve().parent.parent / "sandbox"
 
 
 def main():
-    WORKSPACE.mkdir(parents=True, exist_ok=True)
+    SANDBOX.mkdir(parents=True, exist_ok=True)
 
     # `toolbase_tools` spins up one subprocess per served toolkit ({profile_note})
     # and yields the tools as orchestral BaseTool instances. They are torn
     # down when the `with` block exits. `config_overrides` scopes every served
-    # toolkit to WORKSPACE, overriding the `base_directory` in
+    # toolkit to SANDBOX, overriding the `base_directory` in
     # ~/.toolbase/config/<toolkit>.yaml for this run only.
     with toolbase_tools(
-        {profile_arg}config_overrides={{"base_directory": str(WORKSPACE)}},
+        {profile_arg}config_overrides={{"base_directory": str(SANDBOX)}},
     ) as served:
         tools = [
-            # General-purpose tools, scoped to the same workspace.
-            ReadFileTool(base_directory=str(WORKSPACE), show_line_numbers=True),
-            WriteFileTool(base_directory=str(WORKSPACE)),
-            EditFileTool(base_directory=str(WORKSPACE)),
-            FindFilesTool(base_directory=str(WORKSPACE)),
-            FileSearchTool(base_directory=str(WORKSPACE)),
-            RunCommandTool(base_directory=str(WORKSPACE)),
-            RunPythonTool(base_directory=str(WORKSPACE)),
+            # General-purpose tools, scoped to the same sandbox.
+            ReadFileTool(base_directory=str(SANDBOX), show_line_numbers=True),
+            WriteFileTool(base_directory=str(SANDBOX)),
+            EditFileTool(base_directory=str(SANDBOX)),
+            FindFilesTool(base_directory=str(SANDBOX)),
+            FileSearchTool(base_directory=str(SANDBOX)),
+            RunCommandTool(base_directory=str(SANDBOX)),
+            RunPythonTool(base_directory=str(SANDBOX)),
             # Your toolbase toolkits.
             *served,
         ]

@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed
+
+- **The `tb connect orchestral` scaffold now works in `sandbox/` rather than `workspace/`.** Same directory, new name — it sits beside `.toolbase/` and is where both the served toolkits and the scaffold's own file tools resolve relative paths. `sandbox` is the more common convention among toolkits that ship demo agents, and reads as "scratch space the agent owns" rather than "the project". Re-run `tb connect orchestral --force` to pick it up; an existing `workspace/` is left alone, so move or delete it yourself.
+
 ### Fixed
 
 - **`tb connect` now wires the exact toolbase binary by default.** A bare `toolbase` command is resolved against the `PATH` the harness inherits, and that PATH can differ from the shell that ran `connect`: activating an environment, sourcing an rc file, opening a new tab, or launching a GUI app can change it. The result was a clean connection followed by a failed MCP server, fixable only by reconnecting with `--abspath`.

@@ -80,7 +80,7 @@ def test_generated_script_imports_real_orchestral_despite_shadow(tmp_path):
     assert "IMPORTS_OK" in p.stdout
 
 
-# ── workspace scoping ─────────────────────────────────────────────────
+# ── sandbox scoping ─────────────────────────────────────────────────
 #
 # Served tools resolve relative paths against the `base_directory` in
 # ~/.toolbase/config/<toolkit>.yaml, which has nothing to do with where the
@@ -89,17 +89,17 @@ def test_generated_script_imports_real_orchestral_despite_shadow(tmp_path):
 # write.
 
 
-def test_agent_script_scopes_served_tools_to_the_workspace():
+def test_agent_script_scopes_served_tools_to_the_sandbox():
     body = oc.agent_script(None)
-    assert 'config_overrides={"base_directory": str(WORKSPACE)}' in body
+    assert 'config_overrides={"base_directory": str(SANDBOX)}' in body
 
 
-def test_agent_script_gives_file_tools_the_same_workspace():
+def test_agent_script_gives_file_tools_the_same_sandbox():
     body = oc.agent_script(None)
     for tool in ("ReadFileTool", "WriteFileTool", "EditFileTool",
                  "FindFilesTool", "FileSearchTool", "RunCommandTool",
                  "RunPythonTool"):
-        assert f"{tool}(base_directory=str(WORKSPACE)" in body, tool
+        assert f"{tool}(base_directory=str(SANDBOX)" in body, tool
 
 
 def test_agent_script_file_tools_are_importable():
