@@ -6874,44 +6874,20 @@ def _toolbase_abspath() -> str:
     return shutil.which("toolbase") or "toolbase"
 
 
-def _toolbase_is_env_installed() -> bool:
-    """True when toolbase runs from an isolated env whose ``bin`` a harness
-    process likely won't have on PATH — a venv/virtualenv, or a *named*
-    (non-base) conda env. Used to warn before writing a bare command that
-    may not resolve for the harness."""
-    if sys.prefix != getattr(sys, "base_prefix", sys.prefix):
-        return True  # venv / virtualenv
-    conda_env = os.environ.get("CONDA_DEFAULT_ENV")
-    return bool(conda_env) and conda_env != "base"  # named conda env
-
-
 def _resolve_connect_command(*, abspath: bool, portable: bool, scope: str) -> str:
-    """The command string to write into the harness's config, scope-aware.
+    """The command string to write into the harness's config.
 
-    Default optimizes for the config's shareability: ``user`` scope (``-g``,
-    a machine-local config that is never committed) writes the absolute path
-    so the harness always finds it; ``project`` scope (git-committed, shared)
-    stays bare ``toolbase`` for portability across machines. ``--abspath``
-    forces the absolute path in any scope; ``--portable`` forces bare. On a
-    project-scope bare write from an isolated env, warn that the harness may
-    not resolve a bare command."""
+    The absolute path is the default: a bare ``toolbase`` depends on the PATH
+    inherited by the harness, which can differ from the shell that ran
+    ``connect``. ``--portable`` is the explicit choice for a committed config
+    that each teammate's PATH should resolve; ``--abspath`` remains an
+    explicit spelling of the default. Scope does not affect this choice.
+    """
     if abspath and portable:
         raise click.UsageError("--abspath and --portable are mutually exclusive.")
-    use_abspath = abspath or (not portable and scope == "user")
-    if use_abspath:
-        return _toolbase_abspath()
-    if scope != "user" and _toolbase_is_env_installed():
-        console.print(
-            "[yellow]Note:[/yellow] wrote a bare [cyan]toolbase[/cyan] (portable). "
-            "The harness resolves it against its own PATH, and toolbase lives in "
-            "an isolated env — so a harness launched outside that env (a desktop "
-            "app, or a terminal without the env active) won't find it and the MCP "
-            "server will show as failed. Fixes: reconnect with [cyan]--abspath[/cyan] "
-            "(machine-specific path), use [cyan]-g[/cyan] (user scope uses the "
-            "absolute path by default), or put toolbase on your login PATH "
-            "(e.g. [cyan]pipx install toolbase[/cyan]) to keep it bare and portable."
-        )
-    return "toolbase"
+    if portable:
+        return "toolbase"
+    return _toolbase_abspath()
 
 
 def _activated_toolkit_dirs() -> "dict[str, Path]":
@@ -7027,10 +7003,11 @@ def _unsurface_skills_for_connect(adapter) -> None:
               help='Print the intended write without changing anything.')
 @click.option('--abspath', 'abspath', is_flag=True, default=False,
               help='Force the absolute toolbase binary path (PATH-independent). '
-                   'Default for user scope (-g); project scope stays bare.')
+                   'This is the default.')
 @click.option('--portable', 'portable', is_flag=True, default=False,
-              help='Force the bare `toolbase` command (portable across machines) '
-                   'even for user scope.')
+              help='Force the bare `toolbase` command, resolved via the '
+                   "harness's PATH — use for a committed config shared "
+                   'across machines.')
 @click.option('--list', 'do_list', is_flag=True, default=False,
               help='Show where toolbase is wired across harnesses, then exit.')
 @click.option('--harnesses', 'do_harnesses', is_flag=True, default=False,

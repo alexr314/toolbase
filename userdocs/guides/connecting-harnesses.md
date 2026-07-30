@@ -177,12 +177,17 @@ tb disconnect claude-code --all    # both at once
 
 (`tb connect claude-code --remove` is the equivalent of the project form.)
 
-**Pinning the binary.** Use `--abspath` when the `toolbase` you want isn't on
-the `PATH` your harness inherits — e.g. it lives in a conda env or venv, or the
-harness is launched from a GUI (Dock/Spotlight) that doesn't see your shell
-`PATH`. It writes the absolute binary path so the harness finds it regardless of
-how it's launched. Keep the bare `toolbase` command in a *committed* config so
-each teammate's `PATH` resolves their own install.
+**Pinning the binary.** The wired command has to launch from whatever `PATH`
+your harness inherits — and `PATH` is per-shell state, so activating an env,
+sourcing an rc file, or opening a new tab can change it between connecting and
+launching. `tb connect` therefore writes the **absolute** binary path by
+default, in every scope and for every installation. That path launches
+regardless of which shell, or GUI app, starts the harness.
+
+Use `--portable` to force the bare command — right for a *committed* config,
+where each teammate's `PATH` should resolve their own install. `--abspath`
+forces the absolute path. This choice is independent of scope: pinning the
+binary doesn't change which sessions get the tools.
 
 ## How it fits together
 
