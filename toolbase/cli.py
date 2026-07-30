@@ -1250,6 +1250,14 @@ def validate(path):
             table.add_row("Tools", str(len(result.metadata.tools)))
 
             console.print(table)
+
+            # Warnings are hints, not failures -- but a valid toolkit is
+            # exactly when the author can still act on them, so print them
+            # here too rather than only on the failure path.
+            if result.warnings:
+                console.print()
+                for warning in result.warnings:
+                    console.print(f"  [yellow]hint:[/yellow] {warning}")
         else:
             console.print("\n[bold red]✗ Validation failed[/bold red]")
             for error in result.errors:
@@ -4037,13 +4045,9 @@ def _write_path_install_meta(
         compute_and_write_disk_size as _compute_and_write_disk_size,
     )
 
-    skills_dir = slot / "skills"
-    if skills_dir.exists():
-        skill_files = sorted(
-            p for p in skills_dir.glob("*.md") if not p.name.startswith("._")
-        )
-    else:
-        skill_files = []
+    from .skills import discover_skills as _discover_skills
+
+    skill_files = _discover_skills(slot)
     tools_count = len(config.get("tools", []) or [])
     has_setup_script = (slot / "setup.py").exists()
 
@@ -4134,14 +4138,14 @@ def _note_skills_available(name: str, slot: Path, no_skills: bool = False) -> No
     that skills exist. ``tb connect <harness>`` does the surfacing. Each
     guide is printed by its toggle name (``<toolkit>__<slug>``) so the user
     can `tb deactivate` an individual one."""
-    from .skills import discover_skills, _slug
+    from .skills import discover_skills
     skill_files = discover_skills(slot)
     if not skill_files:
         return
     n = len(skill_files)
     console.print(f"Skills: {n} guide{'s' if n != 1 else ''} available")
-    for f in skill_files:
-        console.print(f"  [dim]•[/dim] {name}__{_slug(f.stem)}")
+    for s in skill_files:
+        console.print(f"  [dim]•[/dim] {name}__{s.slug}")
     if not no_skills:
         console.print(
             "[dim]Surface them with [/dim][cyan]tb connect <harness>[/cyan]"
@@ -4897,14 +4901,9 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
         raise click.ClickException("Installation failed")
 
     # Step 8: Save metadata with everything serve will need
-    skills_dir = toolkit_dir / 'skills'
-    if skills_dir.exists():
-        # Filter out macOS AppleDouble metadata files ("._foo.md")
-        skill_files = sorted(
-            p for p in skills_dir.glob('*.md') if not p.name.startswith('._')
-        )
-    else:
-        skill_files = []
+    from .skills import discover_skills as _discover_skills
+
+    skill_files = _discover_skills(toolkit_dir)
     tools_count = len(toolkit_config.get('tools', []) or [])
 
     meta = {
@@ -6926,8 +6925,8 @@ def _toolkit_skill_slugs(name: str) -> set:
     slot = _toolkit_slot_dir(name)
     if slot is None:
         return set()
-    from .skills import discover_skills, _slug
-    return {_slug(p.stem) for p in discover_skills(slot)}
+    from .skills import discover_skills
+    return {s.slug for s in discover_skills(slot)}
 
 
 def _resolve_disabled_skills(name: str) -> set:
