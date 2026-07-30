@@ -26,9 +26,11 @@ Two Antigravity-specific wrinkles:
 - The IDE creates ``~/.gemini/config/mcp_config.json`` as a **zero-byte file**.
   An empty (or whitespace-only) file is read as ``{}`` rather than refused, so
   a first connect on a fresh install just works.
-- Workspace scope is honored by the IDE and the SDK, but the CLI currently
-  discovers and then *ignores* a workspace ``mcp_config.json``
-  (google-antigravity/antigravity-cli#60), hence ``project_scope_note``.
+- Workspace scope does nothing on the ``agy`` CLI: it starts no server from
+  ``.agents/mcp_config.json`` (measured — the same entry in the global root
+  starts one at boot). Google documents workspace config for the IDE and the
+  SDK, which we haven't verified; antigravity-cli#60 is a related report
+  against a different path. Hence ``project_scope_note``.
 
 Writes are a non-destructive merge (only the toolbase entry under
 ``mcpServers`` is touched) and atomic (tmp file + rename). Malformed existing
@@ -66,8 +68,8 @@ class AntigravityAdapter(HarnessAdapter):
 
     def project_scope_note(self) -> str:
         return (
-            "the Antigravity IDE and SDK read a workspace .agents/mcp_config.json, "
-            "but the agy CLI currently ignores it (upstream bug) — use "
+            "the agy CLI does not load a workspace .agents/mcp_config.json — "
+            "only the IDE and SDK are documented to. Use "
             "`tb connect antigravity -g` if you're on the CLI."
         )
 
