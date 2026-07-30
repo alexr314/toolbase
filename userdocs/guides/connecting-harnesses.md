@@ -84,18 +84,18 @@ from orchestral.tools import ReadFileTool, WriteFileTool, RunPythonTool
 
 from toolbase.connect.orchestral import toolbase_tools
 
-WORKSPACE = Path(__file__).resolve().parent.parent / "workspace"
+SANDBOX = Path(__file__).resolve().parent.parent / "sandbox"
 
 def main():
-    WORKSPACE.mkdir(parents=True, exist_ok=True)
-    # One subprocess per served toolkit, all scoped to WORKSPACE.
+    SANDBOX.mkdir(parents=True, exist_ok=True)
+    # One subprocess per served toolkit, all scoped to SANDBOX.
     with toolbase_tools(
-        config_overrides={"base_directory": str(WORKSPACE)},
+        config_overrides={"base_directory": str(SANDBOX)},
     ) as served:
         agent = Agent(llm=Claude(), tools=[
-            ReadFileTool(base_directory=str(WORKSPACE)),
-            WriteFileTool(base_directory=str(WORKSPACE)),
-            RunPythonTool(base_directory=str(WORKSPACE)),
+            ReadFileTool(base_directory=str(SANDBOX)),
+            WriteFileTool(base_directory=str(SANDBOX)),
+            RunPythonTool(base_directory=str(SANDBOX)),
             *served,
         ])
         from orchestral.ui import run_interactive_session
@@ -112,8 +112,8 @@ modes.
 
 Two details the scaffold gets right, worth keeping if you rewrite it:
 
-- **One workspace.** `config_overrides` points every served toolkit at
-  `WORKSPACE`, and the file tools take the same root. Otherwise the toolkits
+- **One sandbox.** `config_overrides` points every served toolkit at
+  `SANDBOX`, and the file tools take the same root. Otherwise the toolkits
   write wherever `~/.toolbase/config/<toolkit>.yaml` says and the agent can't
   read back its own output.
 - **File tools.** Served toolkits are domain tools; without read/write/run
