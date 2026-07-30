@@ -69,14 +69,19 @@ tb config validate <toolkit>
 
 ## Harness launches the wrong toolbase (or none)
 
-The wired command resolves via `PATH`. Check what's wired vs. what's current:
+If the wired command is a bare `toolbase`, it resolves via the `PATH` your
+harness inherits — which is whatever the shell that launched it had. A conda
+env's or venv's `bin` is on `PATH` only in a shell that activated it, so the
+server shows as failed when the harness is launched from anywhere else (a new
+tab, a shell back on `base`, a GUI app). Check what's wired vs. what's current:
 
 ```bash
 tb connect --list      # shows the toolbase on your PATH
 ```
 
-If you switched virtualenvs, re-run `tb connect` (optionally `--abspath` to pin
-the exact binary).
+Re-run `tb connect` to fix it — toolbase is pinned by absolute path
+automatically, and `--abspath` explicitly requests the same behavior. Do the
+same after switching envs if the wired path points at the old one.
 
 ## A toolkit works in my shell but fails under toolbase
 

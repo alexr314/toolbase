@@ -8,6 +8,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Fixed
+
+- **`tb connect` now wires the exact toolbase binary by default.** A bare `toolbase` command is resolved against the `PATH` the harness inherits, and that PATH can differ from the shell that ran `connect`: activating an environment, sourcing an rc file, opening a new tab, or launching a GUI app can change it. The result was a clean connection followed by a failed MCP server, fixable only by reconnecting with `--abspath`.
+
+  The absolute path is now the default in **every** scope and for every installation, so the harness launches the same toolbase the user connected. `--portable` explicitly writes bare `toolbase` for a committed config that each teammate's PATH should resolve; `--abspath` remains an explicit spelling of the default. This is orthogonal to scope — the command string says how to find the binary, not which sessions get the tools — so project-scoped wiring and per-project curation are unchanged.
+
 ## [0.9.0] — 2026-07-29
 
 ### Changed
