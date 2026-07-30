@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.9.1] — 2026-07-29
+
 ### Changed
 
 - **The `tb connect orchestral` scaffold now works in `sandbox/` rather than `workspace/`.** Same directory, new name — it sits beside `.toolbase/` and is where both the served toolkits and the scaffold's own file tools resolve relative paths. `sandbox` is the more common convention among toolkits that ship demo agents, and reads as "scratch space the agent owns" rather than "the project". Re-run `tb connect orchestral --force` to pick it up; an existing `workspace/` is left alone, so move or delete it yourself.
