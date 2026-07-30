@@ -85,7 +85,9 @@ def get_allowed_categories() -> List[str]:
         return _categories_cache
 
 
-def _check_skill_frontmatter(skill_path: Path) -> Optional[str]:
+def _check_skill_frontmatter(
+    skill_path: Path, *, label: Optional[str] = None,
+) -> Optional[str]:
     """Return a human-readable warning if a skill's frontmatter is missing
     or incomplete; ``None`` if it's fine.
 
@@ -107,10 +109,13 @@ def _check_skill_frontmatter(skill_path: Path) -> Optional[str]:
     except OSError:
         return None
     fm, _body = parse_frontmatter(text)
+    # ``label`` names the skill the way it sits on disk; for a dir-form skill
+    # that's "guide/SKILL.md", not the bare "SKILL.md" every one of them shares.
+    label = label or skill_path.name
     docs_url = "https://toolbase-ai.com/docs/authoring#skills"
     if fm is None:
         return (
-            f"skills/{skill_path.name}: missing YAML frontmatter. "
+            f"skills/{label}: missing YAML frontmatter. "
             f"Add a `---`-delimited block at the top with `name:` and "
             f"`description:` fields. See {docs_url} for the format."
         )
@@ -120,7 +125,7 @@ def _check_skill_frontmatter(skill_path: Path) -> Optional[str]:
             if not getattr(fm, k)
         ]
         return (
-            f"skills/{skill_path.name}: frontmatter missing required "
+            f"skills/{label}: frontmatter missing required "
             f"field{'s' if len(missing) != 1 else ''}: "
             f"{', '.join(missing)}. See {docs_url} for the format."
         )
@@ -820,13 +825,18 @@ def validate_toolkit(toolkit_path: Path) -> ValidationResult:
             result.errors.append("skills/ exists but is not a directory")
             result.is_valid = False
         else:
-            # Check for markdown files. Filter out macOS AppleDouble files.
-            skill_files = [
-                p for p in skills_dir.glob('*.md')
-                if not p.name.startswith('._')
-            ]
+            # Both shapes: skills/<name>.md and skills/<name>/SKILL.md.
+            from .skills import discover_skills, skill_dirs_without_doc
+            skill_files = discover_skills(toolkit_path)
             if not skill_files:
                 result.warnings.append("skills/ directory exists but is empty (consider adding skill guides)")
+            # A directory with no SKILL.md is invisible to discovery, which
+            # is easier to fix before publishing than after.
+            for d in skill_dirs_without_doc(toolkit_path):
+                result.warnings.append(
+                    f"skills/{d.name}/ has no SKILL.md, so it ships without "
+                    "being surfaced as a skill."
+                )
 
             # Frontmatter check: each skill should carry name + description
             # at the top so Claude Code (when surfaced into ~/.claude/skills/)
@@ -835,7 +845,12 @@ def validate_toolkit(toolkit_path: Path) -> ValidationResult:
             # synthesizes frontmatter when missing.
             declared_bundles = set((metadata.bundles or {}).keys()) if metadata else set()
             for sf in skill_files:
-                fm_problem = _check_skill_frontmatter(sf)
+                # Name the skill as the author sees it on disk: "guide.md"
+                # for the flat form, "guide/SKILL.md" for the dir form.
+                label = (
+                    f"{sf.root.name}/{sf.doc.name}" if sf.is_dir else sf.doc.name
+                )
+                fm_problem = _check_skill_frontmatter(sf.doc, label=label)
                 if fm_problem:
                     result.warnings.append(fm_problem)
 
@@ -843,13 +858,13 @@ def validate_toolkit(toolkit_path: Path) -> ValidationResult:
                 # frontmatter must name a bundle declared in `bundles:`.
                 try:
                     from .skills import parse_frontmatter
-                    fm, _body = parse_frontmatter(sf.read_text(encoding="utf-8"))
+                    fm, _body = parse_frontmatter(sf.doc.read_text(encoding="utf-8"))
                 except Exception:
                     fm = None
                 skill_bundle = fm.bundle if fm else None
                 if skill_bundle is not None and skill_bundle not in declared_bundles:
                     result.errors.append(
-                        f"skills/{sf.name}: bundle: '{skill_bundle}' is not "
+                        f"skills/{label}: bundle: '{skill_bundle}' is not "
                         f"declared in bundles. Declared bundles: "
                         f"{sorted(declared_bundles) or '(none)'}."
                     )

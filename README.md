@@ -92,9 +92,11 @@ warning, and the rest are served bare.
 ## Skills: guides that travel with the toolkit
 
 A toolkit can ship **skills** — markdown how-to guides in `skills/` —
-alongside its tools or on their own. `tb connect` surfaces the activated
-toolkits' skills into the harness you connect, in that harness's native
-format:
+alongside its tools or on their own. Each is either a file
+(`skills/exact_math.md`) or a directory (`skills/exact_math/SKILL.md`) that
+carries reference files and scripts beside the guide. `tb connect` surfaces
+the activated toolkits' skills into the harness you connect, in that
+harness's native format:
 
 - **Claude Code** → `~/.claude/skills/<toolkit>__<skill>/` — auto-surfaced
   to the model *and* available as a `/<toolkit>__<skill>` slash command.

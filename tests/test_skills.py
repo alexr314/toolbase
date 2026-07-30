@@ -74,11 +74,121 @@ def test_discover_skills_filters_appledouble(tmp_path: Path):
     (skills_dir / "real.md").write_text("ok")
     (skills_dir / "._real.md").write_text("appledouble")
     found = skills.discover_skills(tmp_path)
-    assert [p.name for p in found] == ["real.md"]
+    assert [s.doc.name for s in found] == ["real.md"]
 
 
 def test_discover_skills_no_dir(tmp_path: Path):
     assert skills.discover_skills(tmp_path) == []
+
+
+# ── directory-form skills ───────────────────────────────────────────────────
+
+
+def _mk_dir_skill(tmp_path: Path, name: str = "deep_dive") -> Path:
+    """A dir-form skill with a reference file beside the guide."""
+    d = tmp_path / "skills" / name
+    (d / "references").mkdir(parents=True)
+    (d / "SKILL.md").write_text(
+        "---\nname: Deep Dive\ndescription: The long version.\n---\n\n"
+        "See [the tables](references/tables.csv).\n"
+    )
+    (d / "references" / "tables.csv").write_text("a,b\n1,2\n")
+    return d
+
+
+def test_discover_finds_both_shapes(tmp_path: Path):
+    (tmp_path / "skills").mkdir()
+    (tmp_path / "skills" / "quickstart.md").write_text("---\nname: Q\ndescription: d\n---\n")
+    _mk_dir_skill(tmp_path)
+    found = skills.discover_skills(tmp_path)
+    assert sorted(s.slug for s in found) == ["deep_dive", "quickstart"]
+    by_slug = {s.slug: s for s in found}
+    assert by_slug["deep_dive"].is_dir is True
+    assert by_slug["deep_dive"].doc.name == "SKILL.md"
+    assert by_slug["quickstart"].is_dir is False
+
+
+def test_dir_without_skill_md_is_ignored_and_reported(tmp_path: Path):
+    d = tmp_path / "skills" / "notaskill"
+    d.mkdir(parents=True)
+    (d / "notes.md").write_text("stray")
+    assert skills.discover_skills(tmp_path) == []
+    assert [p.name for p in skills.skill_dirs_without_doc(tmp_path)] == ["notaskill"]
+
+
+def test_surface_dir_form_brings_supporting_files(tmp_path: Path):
+    _mk_dir_skill(tmp_path)
+    target = skills.SkillTarget(
+        "claude-code", tmp_path / "out", layout="dir", keep_frontmatter=True,
+    )
+    assert skills.surface_skills("tk", tmp_path, target) == ["tk__deep_dive"]
+    dest = target.root / "tk__deep_dive"
+    assert (dest / "SKILL.md").read_text().startswith("---")
+    # The reference travels, and at the path the guide's relative link uses.
+    assert (dest / "references" / "tables.csv").read_text() == "a,b\n1,2\n"
+
+
+def test_surface_dir_form_tracks_source_edits(tmp_path: Path):
+    d = _mk_dir_skill(tmp_path)
+    target = skills.SkillTarget(
+        "claude-code", tmp_path / "out", layout="dir", keep_frontmatter=True,
+    )
+    skills.surface_skills("tk", tmp_path, target)
+    (d / "references" / "tables.csv").write_text("changed\n")
+    dest = target.root / "tk__deep_dive" / "references" / "tables.csv"
+    assert dest.read_text() == "changed\n"  # symlinked, not snapshotted
+
+
+def test_resurface_drops_removed_supporting_files(tmp_path: Path):
+    d = _mk_dir_skill(tmp_path)
+    target = skills.SkillTarget(
+        "claude-code", tmp_path / "out", layout="dir", keep_frontmatter=True,
+    )
+    skills.surface_skills("tk", tmp_path, target)
+    import shutil as _shutil
+    _shutil.rmtree(d / "references")
+    skills.surface_skills("tk", tmp_path, target)
+    assert not (target.root / "tk__deep_dive" / "references").exists()
+    assert (target.root / "tk__deep_dive" / "SKILL.md").exists()
+
+
+def test_unsurface_removes_dir_form_without_touching_source(tmp_path: Path):
+    d = _mk_dir_skill(tmp_path)
+    target = skills.SkillTarget(
+        "claude-code", tmp_path / "out", layout="dir", keep_frontmatter=True,
+    )
+    skills.surface_skills("tk", tmp_path, target)
+    assert skills.unsurface_skills("tk", target) == ["tk__deep_dive"]
+    assert not (target.root / "tk__deep_dive").exists()
+    # The author's toolkit is untouched — no marker written into it, and the
+    # supporting files survive.
+    assert (d / "SKILL.md").exists()
+    assert (d / "references" / "tables.csv").exists()
+    assert not (d / skills.OWNED_MARKER).exists()
+
+
+def test_flat_target_surfaces_the_guide_from_a_dir_skill(tmp_path: Path):
+    _mk_dir_skill(tmp_path)
+    target = skills.SkillTarget(
+        "codex", tmp_path / "prompts", layout="flat", keep_frontmatter=False,
+    )
+    assert skills.surface_skills("tk", tmp_path, target) == ["tk__deep_dive"]
+    # Supporting files can't travel into a flat prompt dir; the guide still does.
+    text = (target.root / "tk__deep_dive.md").read_text()
+    assert "See [the tables]" in text
+    assert not (target.root / "references").exists()
+
+
+def test_dir_form_frontmatter_synthesized_from_dir_name(tmp_path: Path):
+    d = tmp_path / "skills" / "deep_dive"
+    d.mkdir(parents=True)
+    (d / "SKILL.md").write_text("Just a body, no frontmatter.\n")
+    target = skills.SkillTarget(
+        "claude-code", tmp_path / "out", layout="dir", keep_frontmatter=True,
+    )
+    skills.surface_skills("tk", tmp_path, target)
+    text = (target.root / "tk__deep_dive" / "SKILL.md").read_text()
+    assert "name: Deep Dive" in text  # from the directory, not "Skill"
 
 
 # ── install_skills_for_toolkit ──────────────────────────────────────────────

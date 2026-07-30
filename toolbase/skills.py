@@ -1,6 +1,9 @@
 """Skills surfacing.
 
-A toolkit's ``skills/*.md`` files are agent-facing how-to guides. Surfacing
+A toolkit's ``skills/`` entries are agent-facing how-to guides, shipped either
+as a flat ``skills/<name>.md`` or as ``skills/<name>/SKILL.md`` — a directory
+that can carry ``references/``, ``scripts/`` and assets beside the guide (see
+:class:`SkillSource`). Surfacing
 is a per-harness ``tb connect`` concern (each harness has its own skill
 location and format), driven through a :class:`SkillTarget` an adapter
 returns. ``tb connect <harness>`` surfaces the activated toolkits' skills
@@ -183,17 +186,69 @@ def parse_frontmatter(text: str) -> Tuple[Optional[SkillFrontmatter], str]:
     ), body
 
 
-def discover_skills(toolkit_dir: Path) -> List[Path]:
-    """Return the list of skill markdown files in a toolkit directory.
+SKILL_DOC = "SKILL.md"
 
-    Filters out macOS AppleDouble companions ("._foo.md").
+
+@dataclass
+class SkillSource:
+    """One skill as an author ships it, in either of two shapes.
+
+    - **file** — ``skills/<name>.md``. The guide is the whole skill.
+    - **directory** — ``skills/<name>/SKILL.md``, which can carry
+      ``references/``, ``scripts/`` and assets beside the guide. This is the
+      layout Claude Code and Antigravity use natively, so a skill written for
+      either drops into a toolkit unchanged.
+
+    ``doc`` is the markdown to read in both shapes; ``root`` is what the
+    author named the skill (the file, or the directory), and is what the
+    slug comes from.
+    """
+
+    doc: Path
+    root: Path
+    slug: str  # bare slug, no ``<toolkit>__`` prefix
+
+    @property
+    def is_dir(self) -> bool:
+        return self.root != self.doc
+
+
+def discover_skills(toolkit_dir: Path) -> List[SkillSource]:
+    """Return a toolkit's skills, both file- and directory-form.
+
+    A directory only counts as a skill if it holds a ``SKILL.md``; one that
+    doesn't is ignored here and warned about at publish time. Dotfiles and
+    macOS AppleDouble companions ("._foo.md") are filtered out.
+    """
+    skills_dir = toolkit_dir / "skills"
+    if not skills_dir.exists():
+        return []
+    found: List[SkillSource] = []
+    for p in sorted(skills_dir.iterdir()):
+        if p.name.startswith("."):
+            continue
+        if p.is_dir():
+            doc = p / SKILL_DOC
+            if doc.is_file():
+                found.append(SkillSource(doc=doc, root=p, slug=_slug(p.name)))
+        elif p.suffix == ".md":
+            found.append(SkillSource(doc=p, root=p, slug=_slug(p.stem)))
+    return found
+
+
+def skill_dirs_without_doc(toolkit_dir: Path) -> List[Path]:
+    """Directories under ``skills/`` that hold no ``SKILL.md``.
+
+    These are silently invisible to discovery, which is the kind of thing an
+    author should hear about before publishing rather than after.
     """
     skills_dir = toolkit_dir / "skills"
     if not skills_dir.exists():
         return []
     return sorted(
-        p for p in skills_dir.glob("*.md")
-        if not p.name.startswith("._")
+        p for p in skills_dir.iterdir()
+        if p.is_dir() and not p.name.startswith(".")
+        and not (p / SKILL_DOC).is_file()
     )
 
 
@@ -243,12 +298,12 @@ def surface_skills(
     manifest = _read_manifest(target.root) if target.layout == "flat" else None
     surfaced: List[str] = []
     for src in sources:
-        bare_slug = _slug(src.stem)
+        bare_slug = src.slug
         if disabled_slugs is not None and bare_slug in disabled_slugs:
             # Individually deactivated in the active profile.
             continue
 
-        text = src.read_text(encoding="utf-8")
+        text = src.doc.read_text(encoding="utf-8")
         fm, body = parse_frontmatter(text)
         bundle = fm.bundle if fm else None
         if (
@@ -279,10 +334,15 @@ def surface_skills(
 
 
 def _surface_dir(
-    root: Path, toolkit_name: str, slug: str, src: Path, text: str,
+    root: Path, toolkit_name: str, slug: str, src: "SkillSource", text: str,
     fm: Optional[SkillFrontmatter],
 ) -> None:
-    """Write one skill as ``<root>/<slug>/SKILL.md`` (Claude Code layout)."""
+    """Write one skill as ``<root>/<slug>/SKILL.md`` (Claude Code layout).
+
+    A directory-form source also gets its supporting files mirrored beside
+    the guide, so ``references/`` and friends resolve as the author wrote
+    them.
+    """
     dest_dir = root / slug
     dest_dir.mkdir(parents=True, exist_ok=True)
     # Drop the marker so we know we own this directory.
@@ -300,7 +360,9 @@ def _surface_dir(
         # source file. Using the file stem as `name` and the first
         # descriptive line as `description` is a backward-compat fallback
         # for toolkits that predate the requirement.
-        synthesized_name = src.stem.replace("_", " ").replace("-", " ").strip().title()
+        synthesized_name = (
+            src.root.stem.replace("_", " ").replace("-", " ").strip().title()
+        )
         description = _first_line_summary(text) or f"Guidance for {toolkit_name}."
         text = (
             "---\n"
@@ -315,7 +377,7 @@ def _surface_dir(
         # time Claude Code re-reads, which matters for editable / dev
         # installs where the toolkit dir is the author's working copy.
         try:
-            skill_path.symlink_to(src.resolve())
+            skill_path.symlink_to(src.doc.resolve())
         except OSError:
             # Fall back to a copy (filesystem doesn't support symlinks,
             # e.g. some FUSE mounts).
@@ -323,6 +385,44 @@ def _surface_dir(
     else:
         # Windows or non-symlinkable filesystem: write a copy.
         skill_path.write_text(text, encoding="utf-8")
+
+    if src.is_dir:
+        _mirror_supporting_files(dest_dir, src.root)
+
+
+def _mirror_supporting_files(dest_dir: Path, src_dir: Path) -> None:
+    """Mirror a dir-form skill's non-SKILL.md contents into ``dest_dir``.
+
+    Per-child symlinks rather than a symlink to the whole directory: the
+    surfaced dir has to stay ours to write ``OWNED_MARKER`` into, and
+    linking the top level would mean writing that marker into the author's
+    toolkit. Copies where symlinks aren't available. Stale children from an
+    earlier surface are cleared first, so a removed reference file doesn't
+    linger.
+    """
+    keep = {OWNED_MARKER, SKILL_DOC}
+    for child in dest_dir.iterdir():
+        if child.name in keep:
+            continue
+        if child.is_symlink() or child.is_file():
+            child.unlink()
+        else:
+            shutil.rmtree(child, ignore_errors=True)
+
+    for child in sorted(src_dir.iterdir()):
+        if child.name == SKILL_DOC or child.name.startswith("."):
+            continue
+        dest = dest_dir / child.name
+        if _can_symlink():
+            try:
+                dest.symlink_to(child.resolve())
+                continue
+            except OSError:
+                pass
+        if child.is_dir():
+            shutil.copytree(child, dest)
+        else:
+            shutil.copy2(child, dest)
 
 
 def _surface_flat(

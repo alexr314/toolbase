@@ -127,8 +127,23 @@ clear message.
 ## Skills
 
 A skill is an agent-facing how-to guide: markdown that teaches the model
-when and how to use your tools. Each is a `.md` file in `skills/` with
-frontmatter:
+when and how to use your tools. Ship one in either shape:
+
+```
+skills/exact_math.md          # a file — the guide is the whole skill
+skills/exact_math/            # a directory, for guides with attachments
+    SKILL.md
+    references/identities.md
+    scripts/check_precision.py
+```
+
+Reach for the directory when the guide needs supporting files — reference
+tables, example scripts, sample data. They travel with the skill when it's
+surfaced, so relative links like `references/identities.md` keep resolving.
+A directory without a `SKILL.md` isn't a skill; `tb validate` warns that it
+ships unsurfaced.
+
+Either shape carries frontmatter at the top of the guide:
 
 ```markdown
 ---
@@ -139,9 +154,10 @@ description: When to reach for these tools, with usage tips.
 # ...guidance for the agent...
 ```
 
-On `tb install`, each skill is surfaced to
-`~/.claude/skills/<toolkit>__<skill>/SKILL.md`, where Claude Code reads it.
-`tb uninstall` removes it.
+`tb connect <harness>` surfaces the activated toolkits' skills in that
+harness's own format; `tb disconnect` removes them. Harnesses that take a
+skill as a directory (Claude Code, Antigravity) get the attachments too;
+those that take a single prompt file (Codex, OpenCode) get the guide alone.
 
 ### Scope a skill to a bundle
 
