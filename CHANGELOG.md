@@ -8,7 +8,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
-## [0.10.0] — 2026-07-30
+## [0.11.0] — 2026-07-30
 
 ### Added
 
@@ -16,13 +16,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
   Attachments travel to harnesses that take a skill as a directory (Claude Code, Antigravity), symlinked per file so edits to an editable install show up live and toolbase never writes into the author's toolkit. Harnesses that take a single prompt file (Codex, OpenCode) get the guide alone. A directory with no `SKILL.md` isn't a skill; `tb validate` now says so rather than ignoring it.
 
-- **`tb connect antigravity` wires Google Antigravity.** One adapter covers the `agy` CLI, the Antigravity IDE, and the SDK, because all three read the same MCP config. Scopes follow Antigravity's two customization roots: `-g` writes the global `~/.gemini/config/mcp_config.json`, project scope writes the workspace `.agents/mcp_config.json`. Skills surface natively — `~/.gemini/config/skills/<toolkit>__<skill>/SKILL.md`, the same directory-plus-frontmatter layout Claude Code uses, so a toolkit's guides are loaded on demand rather than reduced to slash commands.
+### Changed
 
-  Two Antigravity quirks are handled. A zero-byte `mcp_config.json` (which the IDE creates on first launch) is read as an empty config rather than refused as malformed. And project scope prints a warning as it writes, because **the `agy` CLI does not load a workspace config**: with `.agents/mcp_config.json` wired and the CLI launched in that workspace, no server is started, while the identical entry in the global root starts one at boot. Google documents workspace config for the IDE and SDK, which this release doesn't verify; [antigravity-cli#60](https://github.com/google-antigravity/antigravity-cli/issues/60) is a related report against a different path. On the CLI, connect with `-g`.
+- **The Antigravity project-scope warning now says what the CLI actually does.** 0.10.0 shipped a note claiming the IDE and SDK honor a workspace `.agents/mcp_config.json` while the CLI "discovers and then ignores" it, citing [antigravity-cli#60](https://github.com/google-antigravity/antigravity-cli/issues/60) — a report against `.antigravitycli/mcp_config.json`, a different path. Tested directly: with `.agents/mcp_config.json` wired and the `agy` CLI launched in that workspace, no server starts and its log never mentions MCP; the identical entry in the global root starts one at boot. The printed note, the adapter docs, and this changelog now state that, and attribute the IDE/SDK half to Google's documentation rather than to verification. Guidance is unchanged: on the CLI, connect with `-g`.
 
 ### Fixed
 
 - **`tb validate` prints its hints on success.** Warnings — missing README, incomplete skill frontmatter, a skill directory with no `SKILL.md` — were only shown when validation *failed*, so a valid toolkit's hints were computed and discarded. That is exactly when the author can still act on them.
+
+## [0.10.0] — 2026-07-30
+
+### Added
+
+- **`tb connect antigravity` wires Google Antigravity.** One adapter covers the `agy` CLI, the Antigravity IDE, and the SDK, because all three read the same MCP config. Scopes follow Antigravity's two customization roots: `-g` writes the global `~/.gemini/config/mcp_config.json`, project scope writes the workspace `.agents/mcp_config.json`. Skills surface natively — `~/.gemini/config/skills/<toolkit>__<skill>/SKILL.md`, the same directory-plus-frontmatter layout Claude Code uses, so a toolkit's guides are loaded on demand rather than reduced to slash commands.
+
+  Two Antigravity quirks are handled: a zero-byte `mcp_config.json` (which the IDE creates on first launch) is read as an empty config rather than refused as malformed, and project scope prints a warning about workspace configs — see the 0.11.0 entry above, which corrects what that warning claims.
 
 ## [0.9.1] — 2026-07-29
 
