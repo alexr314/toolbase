@@ -4145,7 +4145,7 @@ def _note_skills_available(name: str, slot: Path, no_skills: bool = False) -> No
     if not no_skills:
         console.print(
             "[dim]Surface them with [/dim][cyan]tb connect <harness>[/cyan]"
-            "[dim] (claude-code, codex, opencode); toggle one with [/dim]"
+            "[dim] (claude-code, codex, opencode, antigravity); toggle one with [/dim]"
             "[cyan]tb deactivate <toolkit>__<skill>[/cyan][dim].[/dim]"
         )
 
@@ -7025,14 +7025,15 @@ def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
     """Wire toolbase into an agent harness.
 
     \b
-    Claude Code, Codex, and OpenCode are MCP clients: this writes a server entry
-    into the harness's config. Orchestral is a Python library, not a config-file
-    harness, so it writes a runnable agent script you launch yourself.
+    Claude Code, Codex, OpenCode, and Antigravity are MCP clients: this writes a
+    server entry into the harness's config. Orchestral is a Python library, not a
+    config-file harness, so it writes a runnable agent script you launch yourself.
 
     \b
     Examples:
         tb connect claude-code              # project: .mcp.json here (default)
         tb connect claude-code -g           # user: ~/.claude.json (every session)
+        tb connect antigravity -g           # agy CLI + IDE: ~/.gemini/config/
         tb connect claude-code --profile paper
         tb connect claude-code --remove
         tb connect orchestral               # write .toolbase/agent.py
@@ -7618,10 +7619,10 @@ def create_tarball(source_dir: Path, output_path: Path, toolkit_name: str):
 
     Excludes build/VCS/editor cruft AND consumer-side state that a dir
     accumulates when it doubles as a place you install/serve the toolkit
-    from: .toolbase/ (manifest, profiles, project config), .mcp.json and
-    .codex/ (harness wiring with machine-specific paths), and .claude/
-    (local agent settings). Publishing those would leak local state and
-    absolute paths into the public package.
+    from: .toolbase/ (manifest, profiles, project config), .mcp.json,
+    .codex/ and .agents/ (harness wiring with machine-specific paths), and
+    .claude/ (local agent settings). Publishing those would leak local
+    state and absolute paths into the public package.
 
     Args:
         source_dir: Source directory to package
@@ -7634,7 +7635,8 @@ def create_tarball(source_dir: Path, output_path: Path, toolkit_name: str):
         '.egg-info', 'dist', 'build', '.tox', 'htmlcov',
         '.coverage', '.env', '.vscode', '.idea',
         # Consumer/harness state — never part of the published toolkit.
-        '.toolbase', '.mcp.json', '.claude', '.codex', 'node_modules',
+        '.toolbase', '.mcp.json', '.claude', '.codex', '.agents',
+        'node_modules',
     }
 
     def should_exclude(path: Path) -> bool:

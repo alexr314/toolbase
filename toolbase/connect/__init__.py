@@ -3,7 +3,8 @@ agent harness so the user never copy-pastes config by hand.
 
 Two shapes of harness:
 
-- **Config-file harnesses** (Claude Code writes JSON; Codex writes TOML) connect
+- **Config-file harnesses** (Claude Code and Antigravity write JSON; Codex
+  writes TOML) connect
   as MCP clients and get a ``HarnessAdapter`` (see ``base.py``). The adapter
   knows the harness's config-file location, format, scope vocabulary, and merge
   rules; the CLI surface is shared.
@@ -18,14 +19,17 @@ from __future__ import annotations
 from typing import Dict, List
 
 from .base import HarnessAdapter, RegistrationEntry, AvailabilityStatus
+from .antigravity import AntigravityAdapter
 from .claude_code import ClaudeCodeAdapter
 from .codex import CodexAdapter
 from .opencode import OpenCodeAdapter
 
 
 # Registry of config-file harness adapters, keyed by the name the user types
-# (``tb connect <name>``).
+# (``tb connect <name>``). One Antigravity entry covers the agy CLI, the IDE,
+# and the SDK -- they share a config file.
 _ADAPTERS: Dict[str, HarnessAdapter] = {
+    "antigravity": AntigravityAdapter(),
     "claude-code": ClaudeCodeAdapter(),
     "codex": CodexAdapter(),
     "opencode": OpenCodeAdapter(),
@@ -49,6 +53,7 @@ __all__ = [
     "HarnessAdapter",
     "RegistrationEntry",
     "AvailabilityStatus",
+    "AntigravityAdapter",
     "ClaudeCodeAdapter",
     "CodexAdapter",
     "OpenCodeAdapter",

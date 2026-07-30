@@ -11,6 +11,7 @@ expects.
 Two layouts, one per supported harness:
 
     Claude Code  (dir)   ~/.claude/skills/<toolkit>__<skill>/SKILL.md
+    Antigravity  (dir)   ~/.gemini/config/skills/<toolkit>__<skill>/SKILL.md
     Codex        (flat)  ~/.codex/prompts/<toolkit>__<skill>.md
 
 Claude Code watches its dir and both auto-surfaces each skill to the model

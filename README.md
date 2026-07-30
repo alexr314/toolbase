@@ -46,9 +46,9 @@ directory's `.toolbase/` by default, `-g` writes to the user-wide
 profile instead.
 
 **`tb connect` writes the MCP config for you.** Claude Code, Codex,
-OpenCode, and Orchestral are all supported (`tb connect --harnesses`
-lists them); Claude Code, Codex, and OpenCode are MCP clients (`tb
-connect` edits their config file), while Orchestral gets a runnable agent
+OpenCode, Antigravity, and Orchestral are all supported (`tb connect
+--harnesses` lists them); the first four are MCP clients (`tb connect`
+edits their config file), while Orchestral gets a runnable agent
 script you launch yourself. It also surfaces the activated toolkits'
 **skills** into the harness — see
 [Skills](#skills-guides-that-travel-with-the-toolkit).
@@ -103,6 +103,9 @@ format:
 - **OpenCode** → `~/.config/opencode/command/<toolkit>__<skill>.md` — a
   `/<toolkit>__<skill>` slash-command prompt (its `description` shows in
   the TUI).
+- **Antigravity** → `~/.gemini/config/skills/<toolkit>__<skill>/` — a
+  native skill in the global customization root, loaded on demand by the
+  `agy` CLI and the IDE alike.
 
 Skills follow the same curation as tools: a guide is surfaced only when
 its toolkit is active, and you toggle a single one with the activation
@@ -187,7 +190,7 @@ Full reference with all flags: <https://toolbase-ai.com/docs/reference/commands>
 | `tb list` | Installed toolkits (`-v` for a per-tool view) |
 | `tb activate ITEM` | Expose a toolkit / `toolkit/bundle` / `toolkit__tool` / `toolkit__skill` (project-local; `-g` for user-wide) |
 | `tb deactivate ITEM` | Hide a toolkit / bundle / tool / skill |
-| `tb connect HARNESS` | Wire toolbase into Claude Code, Codex, OpenCode, or scaffold an Orchestral agent script (also surfaces skills; `--no-skills` to skip) |
+| `tb connect HARNESS` | Wire toolbase into Claude Code, Codex, OpenCode, Antigravity, or scaffold an Orchestral agent script (also surfaces skills; `--no-skills` to skip) |
 | `tb disconnect HARNESS` | Remove toolbase from a harness (and its surfaced skills) |
 | `tb logs` | Tail the serve log, live |
 | `tb profile …` | Manage named profiles: `list \| show \| create \| edit \| delete \| set-default \| path \| tools` |

@@ -1,7 +1,7 @@
 """create_tarball must not leak consumer/harness/local state into a package.
 
 A toolkit dir often doubles as a place you install + serve from, so it
-accumulates .toolbase/, .mcp.json, .codex/, .claude/. None of that
+accumulates .toolbase/, .mcp.json, .codex/, .agents/, .claude/. None of that
 belongs in the published tarball (it carries machine-specific paths).
 """
 
@@ -32,6 +32,8 @@ def test_create_tarball_excludes_consumer_state(tmp_path: Path):
     (src / ".claude" / "settings.local.json").write_text("{}")
     (src / ".codex").mkdir()
     (src / ".codex" / "config.toml").write_text("")
+    (src / ".agents").mkdir()
+    (src / ".agents" / "mcp_config.json").write_text('{"mcpServers": {}}')
     (src / "__pycache__").mkdir()
     (src / "__pycache__" / "x.pyc").write_text("")
 
@@ -50,6 +52,8 @@ def test_create_tarball_excludes_consumer_state(tmp_path: Path):
     leaked = [
         n for n in names
         if n == ".mcp.json"
-        or n.split("/", 1)[0] in {".toolbase", ".claude", ".codex", "__pycache__"}
+        or n.split("/", 1)[0] in {
+            ".toolbase", ".claude", ".codex", ".agents", "__pycache__",
+        }
     ]
     assert not leaked, f"leaked consumer/local state into package: {leaked}"
