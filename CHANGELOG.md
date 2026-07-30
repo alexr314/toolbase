@@ -8,6 +8,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-07-30
+
 ### Added
 
 - **`tb connect antigravity` wires Google Antigravity.** One adapter covers the `agy` CLI, the Antigravity IDE, and the SDK, because all three read the same MCP config. Scopes follow Antigravity's two customization roots: `-g` writes the global `~/.gemini/config/mcp_config.json`, project scope writes the workspace `.agents/mcp_config.json`. Skills surface natively — `~/.gemini/config/skills/<toolkit>__<skill>/SKILL.md`, the same directory-plus-frontmatter layout Claude Code uses, so a toolkit's guides are loaded on demand rather than reduced to slash commands.
