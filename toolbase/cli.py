@@ -361,7 +361,7 @@ class _SectionedGroup(click.Group):
         ),
         (
             "Installing & serving",
-            ["search", "install", "uninstall", "list", "activate",
+            ["search", "install", "uninstall", "use", "list", "activate",
              "deactivate", "serve", "connect", "disconnect", "logs"],
         ),
         (
@@ -3470,6 +3470,37 @@ def _resolve_install_source_path(arg: str) -> Optional[Path]:
     return None
 
 
+def _manifest_scope_root(local_scope: bool) -> Path:
+    """The project root whose manifest a pin should be written to.
+
+    ``local_scope=False`` (the -g default) is the global default-project.
+    ``local_scope=True`` (-l) is THIS project: ``--project-dir`` if given,
+    else the nearest ``.toolbase/`` above cwd, else a new one in cwd.
+    """
+    from .envs import default_project_root as _default_project_root
+
+    if not local_scope:
+        return _default_project_root()
+    from .envs import project_manifest_path as _project_manifest_path
+
+    project_root, source = _resolve_active_project_root()
+    if source == "fallback":
+        # No project anywhere above cwd. -l asked for a local pin, so
+        # make cwd the project rather than silently writing the global
+        # manifest the flag exists to avoid. Materializing writes the
+        # empty manifest.yaml that makes the dir discoverable at all —
+        # find_project_root keys on that file, not on .toolbase/.
+        project_root = Path.cwd().resolve()
+        _materialize_project_dir(project_root)
+    else:
+        # An existing project just needs the directory; don't create a
+        # committed manifest, since an editable pin writes only the
+        # gitignored local layer and would leave a stray empty file.
+        _project_manifest_path(project_root).parent.mkdir(
+            parents=True, exist_ok=True)
+    return project_root
+
+
 def _pin_after_install(
     name: str, version: str, *,
     local_scope: bool,
@@ -3492,31 +3523,16 @@ def _pin_after_install(
         from .envs import (
             project_manifest_path as _project_manifest_path,
             add_pin as _add_pin,
-            default_project_root as _default_project_root,
         )
+        manifest_path = _project_manifest_path(_manifest_scope_root(local_scope))
+        _add_pin(manifest_path, name, version, bundles=bundles)
         if local_scope:
-            # -l: pin into THIS project. find_project_root walks up for
-            # an existing .toolbase/; if none, create one in cwd.
-            from .envs import find_project_root as _find_project_root
-            found = _find_project_root(cwd=Path.cwd())
-            if found is None:
-                project_root = Path.cwd().resolve()
-                _materialize_project_dir(project_root)
-            else:
-                project_root = found
-            manifest_path = _project_manifest_path(project_root)
-            _add_pin(manifest_path, name, version, bundles=bundles)
             try:
                 rel = manifest_path.relative_to(Path.cwd())
                 display = f"./{rel}"
             except ValueError:
                 display = str(manifest_path)
             console.print(f"[dim]Pinned to this project: {display}[/dim]")
-        else:
-            # -g (default): pin into the global default-project.
-            project_root = _default_project_root()
-            manifest_path = _project_manifest_path(project_root)
-            _add_pin(manifest_path, name, version, bundles=bundles)
     except Exception as e:
         console.print(
             f"[dim]Note: could not pin {name} to the manifest: {e}[/dim]"
@@ -3548,19 +3564,10 @@ def _pin_editable_local(name: str, *, local_scope: bool) -> None:
             project_manifest_path as _project_manifest_path,
             local_manifest_path as _local_manifest_path,
             add_pin as _add_pin,
-            default_project_root as _default_project_root,
         )
-        if local_scope:
-            from .envs import find_project_root as _find_project_root
-            found = _find_project_root(cwd=Path.cwd())
-            if found is None:
-                project_root = Path.cwd().resolve()
-                _materialize_project_dir(project_root)
-            else:
-                project_root = found
-        else:
-            project_root = _default_project_root()
-        local_path = _local_manifest_path(_project_manifest_path(project_root))
+        local_path = _local_manifest_path(
+            _project_manifest_path(_manifest_scope_root(local_scope))
+        )
         _add_pin(local_path, name, "editable")
         _ensure_toolbase_gitignore(local_path.parent)
         console.print(
@@ -5748,6 +5755,155 @@ def _format_disk_size(size_bytes: Optional[int]) -> str:
             return f"{n:.1f} {unit}"
         n /= 1024
     return f"{n:.1f} PB"
+
+
+@main.command(name="use")
+@click.argument("target")
+@click.option(
+    '--global', '-g', 'global_scope', is_flag=True, default=False,
+    help=(
+        'Choose for the global default-project (the default) — applies '
+        'anywhere outside a project with its own manifest.'
+    ),
+)
+@click.option(
+    '--local', '-l', 'local_scope', is_flag=True, default=False,
+    help=(
+        "Choose for THIS project (<project>/.toolbase/manifest.yaml), "
+        "creating the project if needed."
+    ),
+)
+def use_cmd(target, global_scope, local_scope):
+    """Choose which installed version of a toolkit serves.
+
+    \b
+    Writes the pin and nothing else — no download, no environment
+    rebuild. Both versions stay in the cache; this only decides which
+    one `tb serve` spawns.
+
+    \b
+        tb use calculator@1.4.0     serve 1.4.0
+        tb use calculator@editable  serve your local checkout
+        tb use calculator           clear the pin (highest installed wins)
+
+    \b
+    Scope mirrors `tb install`: -g (the default) writes the global
+    default-project manifest, -l writes this project's. An `editable`
+    choice always goes to the gitignored machine-local layer instead —
+    it points at a checkout no other machine has.
+
+    The change takes effect the next time `tb serve` starts, so restart
+    your agent session to pick it up.
+    """
+    from .envs import (
+        list_versions as _list_versions,
+        find_slot as _find_slot,
+        project_manifest_path as _project_manifest_path,
+        local_manifest_path as _local_manifest_path,
+        load_manifest as _load_manifest,
+        add_pin as _add_pin,
+        remove_pin as _remove_pin,
+        resolve_version as _resolve_version,
+        sort_versions as _sort_versions,
+        active_pins as _active_pins,
+    )
+    from .envs.cache import installed_bundles as _installed_bundles
+
+    if global_scope and local_scope:
+        raise click.UsageError("-g and -l are mutually exclusive.")
+
+    name, _, version = target.partition("@")
+    version = version or None
+    if not name:
+        raise click.UsageError(
+            f"Bad target {target!r} — expected <toolkit> or "
+            "<toolkit>@<version>."
+        )
+
+    versions = _list_versions(name)
+    if not versions:
+        console.print(f"[red]✗ Toolkit '{name}' is not installed.[/red]")
+        console.print(f"\nInstall it: [cyan]toolbase install {name}[/cyan]")
+        sys.exit(1)
+
+    if version is not None and version not in versions:
+        console.print(f"[red]✗ {name} v{version} is not installed.[/red]")
+        console.print(
+            f"Installed versions: {', '.join(_sort_versions(versions))}"
+        )
+        console.print(
+            f"\nInstall it first: "
+            f"[cyan]toolbase install {name}@{version}[/cyan]"
+        )
+        sys.exit(1)
+
+    scope_root = _manifest_scope_root(local_scope)
+    manifest_path = _project_manifest_path(scope_root)
+    local_path = _local_manifest_path(manifest_path)
+
+    if version is None:
+        removed = [
+            layer.name for layer in (manifest_path, local_path)
+            if _remove_pin(layer, name)
+        ]
+        if not removed:
+            console.print(f"[dim]{name} was not pinned here.[/dim]")
+        else:
+            console.print(
+                f"[green]✓[/green] Cleared the {name} pin "
+                f"({', '.join(removed)})."
+            )
+    elif version == EDITABLE_VERSION:
+        # An editable slot points at this machine's checkout, so the pin
+        # can't be shared — same rule as `tb install -e`.
+        _add_pin(local_path, name, version)
+        _ensure_toolbase_gitignore(local_path.parent)
+        console.print(
+            f"[green]✓[/green] {name} now serves your local checkout "
+            f"[dim](pinned in {local_path.name}, gitignored)[/dim]"
+        )
+    else:
+        # Carry the target slot's installed-bundle subset onto the pin so
+        # the manifest keeps describing what's actually in that slot.
+        slot = _find_slot(name, version)
+        bundles = _installed_bundles(slot.path) if slot is not None else None
+        _add_pin(manifest_path, name, version, bundles=bundles)
+        # A local pin outranks the layer we just wrote, so leaving one in
+        # place would make this command look like it did nothing.
+        shadowing = _load_manifest(local_path).find(name)
+        if shadowing is not None and shadowing.version != version:
+            _remove_pin(local_path, name)
+            console.print(
+                f"[yellow]⚠ Removed the {name}@{shadowing.version} pin from "
+                f"{local_path.name} — it would have overridden this "
+                f"choice.[/yellow]"
+            )
+        console.print(f"[green]✓[/green] {name} now serves {version}")
+
+    try:
+        display = str(manifest_path.relative_to(Path.cwd()))
+        display = f"./{display}"
+    except ValueError:
+        display = str(manifest_path)
+    console.print(f"[dim]Manifest: {display}[/dim]")
+
+    # Report the effect on the scope we just wrote, not on cwd's project
+    # — `-g` from inside a project changes a manifest that doesn't apply
+    # here, and saying otherwise would be a lie.
+    resolution = _resolve_version(
+        _list_versions(name), pin=_active_pins(scope_root).get(name),
+    )
+    if not resolution.ok:
+        console.print(f"[yellow]⚠ {resolution.describe()}[/yellow]")
+    elif version is None:
+        console.print(
+            f"[dim]{name} now resolves to {resolution.version} "
+            f"({resolution.describe()}).[/dim]"
+        )
+    console.print(
+        "[dim]Restart `tb serve` (or your agent session) to pick this "
+        "up.[/dim]"
+    )
 
 
 @main.command()
