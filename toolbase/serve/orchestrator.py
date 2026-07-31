@@ -170,33 +170,16 @@ def discover_toolkits(toolkits_dir: Optional[Path] = None) -> List[ToolkitDiscov
     if toolkits_dir is not None:
         return _legacy_discover_toolkits(toolkits_dir)
 
-    from ..envs import (
-        walk_cache,
-        project_manifest_path,
-        load_manifest,
-    )
-    from ..versioning import parse_version
+    from ..envs import walk_cache, active_pins, resolve_version
 
     entries = walk_cache()
     if not entries:
         return []
 
-    # Read the active project's manifest. Phase 3 wires real discovery
-    # via ``_resolve_active_project_root`` (in cli.py); we import it
-    # lazily to avoid a circular dependency at module load.
-    pin_by_name: Dict[str, str] = {}
-    try:
-        from ..cli import _resolve_active_project_root
-        from ..envs import load_merged_pins
-        project_root, _source = _resolve_active_project_root()
-        manifest_path = project_manifest_path(project_root)
-        # Committed manifest merged with the machine-local layer
-        # (manifest.local.yaml) — local pins win per name. Editable
-        # pins belong in the local layer; they describe THIS machine's
-        # source checkout, not the project.
-        pin_by_name = load_merged_pins(manifest_path)
-    except Exception:
-        pin_by_name = {}
+    # Pins from the active project, both layers merged (local wins per
+    # name). ``active_pins`` imports cli lazily to avoid a circular
+    # dependency at module load, and yields {} on any read failure.
+    pin_by_name: Dict[str, str] = active_pins()
 
     # Group cache entries by name.
     by_name: Dict[str, List] = {}
@@ -206,34 +189,21 @@ def discover_toolkits(toolkits_dir: Optional[Path] = None) -> List[ToolkitDiscov
     found: List[ToolkitDiscovery] = []
     for name in sorted(by_name):
         candidates = by_name[name]
-        pin = pin_by_name.get(name)
-        chosen = None
+        resolution = resolve_version(
+            [c.version for c in candidates], pin=pin_by_name.get(name),
+        )
         skip_extra = None
 
-        if pin is not None:
-            for c in candidates:
-                if c.version == pin:
-                    chosen = c
-                    break
-            if chosen is None:
-                # Pin exists but no matching slot — install was deleted
-                # outside our knowledge. Skip with a clear reason.
-                # Use the first candidate's path for the discovery
-                # record so the banner still shows the name.
-                chosen = candidates[0]
-                skip_extra = (
-                    f"pinned version {pin} not in cache "
-                    f"(available: {', '.join(c.version for c in candidates)})"
-                )
-        elif len(candidates) == 1:
-            chosen = candidates[0]
+        if resolution.ok:
+            chosen = next(
+                c for c in candidates if c.version == resolution.version)
         else:
-            # No pin, multiple versions. Pick the highest; log it.
-            chosen = sorted(
-                candidates,
-                key=lambda c: parse_version(c.version) or (0, 0, 0),
-                reverse=True,
-            )[0]
+            # Pin exists but no matching slot — the install was deleted
+            # outside our knowledge. Skip with a clear reason. Use the
+            # first candidate's path for the discovery record so the
+            # banner still shows the name.
+            chosen = candidates[0]
+            skip_extra = resolution.describe()
 
         # An editable slot that lost selection is a likely surprise:
         # the developer linked a source checkout, but a numbered slot

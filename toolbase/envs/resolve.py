@@ -1,0 +1,149 @@
+"""
+Which installed version of a toolkit is the one that serves.
+
+Three callers need that answer and must not disagree: the serve
+orchestrator (spawns the slot), ``tb setup`` (configures the slot), and
+``tb list`` (tells the user which slot it is). Each had grown its own
+copy of the rule, and they had already drifted — ``tb setup`` read only
+the committed manifest while serve read the merged view, so an editable
+pin in ``manifest.local.yaml`` sent the two commands at different slots.
+This module is the one implementation.
+
+The rule, in order:
+
+1. The version pinned for this toolkit in the active project's manifest
+   (committed ``manifest.yaml`` with ``manifest.local.yaml`` merged over
+   it, local winning per name).
+2. A pin naming a version that isn't in the cache resolves to *nothing*
+   — we refuse rather than quietly serving a version nobody asked for.
+3. No pin and one installed version: that one.
+4. No pin and several: the highest. Nobody chose it, so the reason is
+   reported as such and callers surface it.
+
+Ordering is ``versioning.parse_version``, which yields ``(0, 0, 0)`` for
+non-numeric slot names — so an ``editable`` slot sorts below every
+numbered one and loses rule 4. That is deliberate and long-standing: an
+editable checkout only wins when a pin names it.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Sequence
+
+from ..versioning import parse_version
+
+
+# Why a version was (or wasn't) chosen. Callers branch on these, so they
+# are constants rather than inline strings.
+PINNED = "pinned"
+ONLY = "only"
+HIGHEST = "highest"
+PIN_MISSING = "pin-missing"
+NOT_INSTALLED = "not-installed"
+
+
+@dataclass
+class Resolution:
+    """The outcome of picking a version for one toolkit.
+
+    ``version`` is None exactly when the toolkit can't be served:
+    nothing installed, or a pin pointing at a slot that isn't there.
+    """
+
+    version: Optional[str]
+    reason: str
+    pin: Optional[str] = None
+    available: List[str] = field(default_factory=list)
+
+    @property
+    def ok(self) -> bool:
+        return self.version is not None
+
+    @property
+    def is_ambiguous(self) -> bool:
+        """Several installed, nothing said which — we guessed the highest."""
+        return self.reason == HIGHEST
+
+    def describe(self) -> str:
+        """One clause explaining the choice, for user-facing output."""
+        if self.reason == PINNED:
+            return f"pinned to {self.version}"
+        if self.reason == ONLY:
+            return "only version installed"
+        if self.reason == HIGHEST:
+            return "highest installed, no pin"
+        if self.reason == PIN_MISSING:
+            return (
+                f"pinned version {self.pin} is not installed "
+                f"(have: {', '.join(self.available)})"
+            )
+        return "not installed"
+
+
+def sort_versions(versions: Sequence[str]) -> List[str]:
+    """Installed versions, highest first. Unparseable names sort last."""
+    return sorted(
+        versions,
+        key=lambda v: parse_version(v) or (0, 0, 0),
+        reverse=True,
+    )
+
+
+def resolve_version(
+    available: Sequence[str],
+    *,
+    pin: Optional[str] = None,
+) -> Resolution:
+    """Pick the serving version from ``available`` given an optional ``pin``.
+
+    Pure: callers supply the installed version list and the pin, so this
+    is testable without a cache or a manifest on disk.
+    """
+    versions = list(available)
+    if not versions:
+        return Resolution(
+            version=None, reason=NOT_INSTALLED, pin=pin, available=[],
+        )
+
+    ordered = sort_versions(versions)
+
+    if pin is not None:
+        if pin in versions:
+            return Resolution(
+                version=pin, reason=PINNED, pin=pin, available=ordered,
+            )
+        return Resolution(
+            version=None, reason=PIN_MISSING, pin=pin, available=ordered,
+        )
+
+    if len(versions) == 1:
+        return Resolution(
+            version=versions[0], reason=ONLY, pin=None, available=ordered,
+        )
+
+    return Resolution(
+        version=ordered[0], reason=HIGHEST, pin=None, available=ordered,
+    )
+
+
+def active_pins(project_root=None) -> Dict[str, str]:
+    """``{name: version}`` pinned in the active project, both layers merged.
+
+    Resolves the active project itself when ``project_root`` is None.
+    Best-effort by design: every caller treats an unreadable manifest as
+    "no pins" and falls back to cache-only resolution, so a malformed
+    file degrades the answer instead of breaking the command.
+    """
+    # Read both through the package rather than their defining modules:
+    # tests redirect the substrate by monkeypatching ``toolbase.envs.*``,
+    # and a function-level ``from . import`` picks that up at call time.
+    from . import load_merged_pins, project_manifest_path
+
+    try:
+        if project_root is None:
+            from ..cli import _resolve_active_project_root
+            project_root, _source = _resolve_active_project_root()
+        return load_merged_pins(project_manifest_path(project_root))
+    except Exception:
+        return {}
