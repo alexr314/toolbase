@@ -156,6 +156,19 @@ def _format_bytes(n: int) -> str:
     return f"{n / (1024 ** 3):.2f} GB"
 
 
+def _display_path(path: Path) -> str:
+    """Render a path relative to cwd when it's below it, else absolute.
+
+    Keeps in-project paths short without ever printing a misleading
+    ``./..`` for one that lives elsewhere (the default-project, another
+    checkout, or another drive on Windows).
+    """
+    try:
+        return f"./{path.relative_to(Path.cwd())}"
+    except ValueError:
+        return str(path)
+
+
 def _require_input(
     label: str,
     *,
@@ -5880,12 +5893,7 @@ def use_cmd(target, global_scope, local_scope):
             )
         console.print(f"[green]✓[/green] {name} now serves {version}")
 
-    try:
-        display = str(manifest_path.relative_to(Path.cwd()))
-        display = f"./{display}"
-    except ValueError:
-        display = str(manifest_path)
-    console.print(f"[dim]Manifest: {display}[/dim]")
+    console.print(f"[dim]Manifest: {_display_path(manifest_path)}[/dim]")
 
     # Report the effect on the scope we just wrote, not on cwd's project
     # — `-g` from inside a project changes a manifest that doesn't apply
@@ -6018,47 +6026,58 @@ def uninstall(name, yes, no_, no_input):
         except OSError:
             pass
 
-    # Update the active project's manifest.
+    # Update every manifest that could pin what we just deleted.
     #
     # - ``uninstall <name>``: remove the pin entirely.
-    # - ``uninstall <name>@<ver>``: if any other version remains, leave
-    #   the pin alone (still valid, even if we just unpinned one slot).
-    #   If no versions remain, remove the pin.
+    # - ``uninstall <name>@<ver>``: leave a pin that still names an
+    #   installed version; drop one that names the slot we removed.
     #
-    # Uninstall never implicitly creates a project: if cwd isn't in one,
-    # we silently fall back to default-project (which is where ``install``
-    # would have pinned in the no-project case anyway).
+    # The active project AND the default-project both get cleaned. The
+    # binaries are gone globally, so a pin naming them dangles wherever
+    # it lives — and ``tb install`` pins the default-project by default
+    # (-g) even when run from inside a project, so cleaning only the
+    # active one orphaned that pin and made serve skip the toolkit
+    # everywhere the default-project applies.
+    #
+    # Uninstall never creates a project: absent manifests simply have no
+    # pin to remove, which ``remove_pin`` treats as a no-op.
     try:
         from .envs import (
             local_manifest_path as _local_manifest_path,
             load_manifest as _load_manifest_for_pins,
+            default_project_root as _default_project_root,
         )
         project_root, _source = _resolve_active_project_root()
-        manifest_path = _project_manifest_path(project_root)
-        local_path = _local_manifest_path(manifest_path)
+        roots = [project_root]
+        default_root = _default_project_root()
+        if default_root.resolve() != project_root.resolve():
+            roots.append(default_root)
+        layers = []
+        for root in roots:
+            committed = _project_manifest_path(root)
+            layers += [committed, _local_manifest_path(committed)]
+
         remaining = _list_versions(name)
-        if not remaining:
-            _remove_pin(manifest_path, name)
-            _remove_pin(local_path, name)
-        else:
-            # Some versions remain. If a pin (committed or local layer)
-            # still names a version we just removed, it now dangles —
-            # serving would SKIP the toolkit entirely ("pinned version
-            # not in cache") even though usable slots exist. Remove the
-            # stale pin loudly; unpinned resolution falls back to the
-            # highest remaining slot.
-            for layer in (manifest_path, local_path):
-                pins = {e.name: e.version
-                        for e in _load_manifest_for_pins(layer).toolkits}
-                pinned = pins.get(name)
-                if pinned is not None and pinned not in remaining:
-                    _remove_pin(layer, name)
-                    console.print(
-                        f"[yellow]⚠ Removed stale pin {name}@{pinned} from "
-                        f"{layer.name} (slot uninstalled; remaining: "
-                        f"{', '.join(remaining)}). Re-pin with "
-                        f"`tb install {name}@<version> -l` if needed.[/yellow]"
-                    )
+        for layer in layers:
+            if not remaining:
+                _remove_pin(layer, name)
+                continue
+            # Some versions remain. A pin still naming a version we just
+            # removed now dangles — serving would SKIP the toolkit
+            # entirely ("pinned version not installed") even though
+            # usable slots exist. Remove it loudly; unpinned resolution
+            # falls back to the highest remaining slot.
+            pins = {e.name: e.version
+                    for e in _load_manifest_for_pins(layer).toolkits}
+            pinned = pins.get(name)
+            if pinned is not None and pinned not in remaining:
+                _remove_pin(layer, name)
+                console.print(
+                    f"[yellow]⚠ Removed stale pin {name}@{pinned} from "
+                    f"{_display_path(layer)} (slot uninstalled; remaining: "
+                    f"{', '.join(remaining)}). Choose one with "
+                    f"`tb use {name}@<version>` if needed.[/yellow]"
+                )
     except Exception as e:
         console.print(
             f"[dim]Note: could not update project manifest: {e}[/dim]"

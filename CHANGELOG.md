@@ -26,6 +26,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **`tb install -l` ignored `--project-dir`.** It walked up from the working directory regardless, so the documented project-discovery override didn't apply to pin writes.
 
+- **`tb uninstall` left a dangling pin in the global manifest.** `install` pins the default-project by default (`-g`), but `uninstall` only cleaned the *active* project's manifest — different files whenever you're inside a project with its own `.toolbase/`. Installing a toolkit from a repo and then uninstalling it there deleted the binaries while leaving `<name>@<version>` pinned globally, naming a version that no longer existed. Since a pin naming an absent slot makes serve skip the toolkit outright, the toolkit then stayed unservable everywhere the default-project applies — including after reinstalling a *different* version, because the stale pin still won. Both roots' committed and machine-local layers are now cleaned, and the stale-pin warning names which manifest it edited.
+
 ## [0.11.0] — 2026-07-30
 
 ### Added
