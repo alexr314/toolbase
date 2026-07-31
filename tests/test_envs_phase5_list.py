@@ -218,9 +218,14 @@ class TestListTreeRendering:
         assert "0.3.0" in result.output
         # Higher version listed first (descending).
         assert result.output.index("0.3.0") < result.output.index("0.1.0")
-        # Tree-shaped: each version row is prefixed with "  - "
-        lines = [l for l in result.output.splitlines() if "0." in l]
-        assert all(l.lstrip().startswith("- ") for l in lines)
+        # Tree-shaped: every version row is prefixed with "  - ". The
+        # resolution line below them is not a version row.
+        version_rows = [
+            l for l in result.output.splitlines()
+            if "0." in l and "serving" not in l
+        ]
+        assert version_rows
+        assert all(l.lstrip().startswith("- ") for l in version_rows)
 
     def test_groups_sorted_alphabetically(self, fake_home):
         _make_slot("zzz", "0.1.0", last_used=datetime.now())
@@ -642,6 +647,99 @@ class TestListVerboseInstallGatedCollapse:
         for i in range(20):
             assert f"b_t{i}" in r.output
         assert "in uninstalled bundle" not in r.output
+
+
+class TestServingMarker:
+    """``<-`` on the slot that would actually serve, plus the reason.
+
+    The pin star answers "what did someone write down"; it says nothing
+    when nobody wrote anything down, which is exactly when the
+    highest-wins fallback is picking for you.
+    """
+
+    def _two_versions(self):
+        _make_slot("kit", "0.1.0",
+                   last_used=datetime.now() - timedelta(days=3),
+                   size_bytes=1024)
+        _make_slot("kit", "0.3.0",
+                   last_used=datetime.now() - timedelta(hours=2),
+                   size_bytes=2048)
+
+    def test_unpinned_multi_version_marks_highest_and_explains(self, fake_home):
+        self._two_versions()
+        r = CliRunner().invoke(cli.main, ["list"])
+        assert r.exit_code == 0, r.output
+        lines = r.output.splitlines()
+        assert "<-" in next(l for l in lines if "0.3.0" in l and "serving" not in l)
+        assert "<-" not in next(l for l in lines if "0.1.0" in l)
+        assert "serving 0.3.0 (highest installed, no pin)" in r.output
+        # The advice to pick explicitly is printed once, as a legend.
+        assert r.output.count("tb use <toolkit>@<version>") == 1
+
+    def test_pinned_multi_version_marks_the_pin(self, fake_home, tmp_path):
+        project = tmp_path / "myproj"
+        (project / ".toolbase").mkdir(parents=True)
+        add_pin(project_manifest_path(project), "kit", "0.1.0")
+        self._two_versions()
+        r = CliRunner().invoke(
+            cli.main, ["--project-dir", str(project), "list"],
+        )
+        assert r.exit_code == 0, r.output
+        lines = r.output.splitlines()
+        assert "<-" in next(l for l in lines if "0.1.0" in l)
+        assert "<-" not in next(l for l in lines if "0.3.0" in l and "serving" not in l)
+        assert "serving 0.1.0 (pinned to 0.1.0)" in r.output
+        # Nothing ambiguous here, so no legend.
+        assert "tb use <toolkit>@<version>" not in r.output
+
+    def test_single_version_unchanged(self, fake_home):
+        """One slot: nothing to disambiguate, so no marker and no line."""
+        _make_slot("kit", "0.1.0",
+                   last_used=datetime.now() - timedelta(hours=1),
+                   size_bytes=1024)
+        r = CliRunner().invoke(cli.main, ["list"])
+        assert r.exit_code == 0
+        assert "<-" not in r.output
+        assert "serving" not in r.output
+
+    def test_dangling_pin_reported_without_verbose(self, fake_home, tmp_path):
+        """Serve skips a toolkit whose pin names an absent slot. Plain
+        `tb list` has to say so — no version row can convey it."""
+        project = tmp_path / "myproj"
+        (project / ".toolbase").mkdir(parents=True)
+        add_pin(project_manifest_path(project), "kit", "9.9.9")
+        self._two_versions()
+        r = CliRunner().invoke(
+            cli.main, ["--project-dir", str(project), "list"],
+        )
+        assert r.exit_code == 0, r.output
+        assert "not served" in r.output
+        assert "9.9.9" in r.output
+        assert "tb use kit@<version>" in r.output
+        # Nothing claims to be serving.
+        assert "<-" not in r.output
+
+    def test_json_serving_field(self, fake_home):
+        self._two_versions()
+        r = CliRunner().invoke(cli.main, ["list", "--json"])
+        assert r.exit_code == 0
+        payload = {rec["version"]: rec for rec in json.loads(r.output)}
+        assert payload["0.3.0"]["serving"] is True
+        assert payload["0.1.0"]["serving"] is False
+        assert payload["0.3.0"]["serving_reason"] == "highest"
+
+    def test_json_dangling_pin_serves_nothing(self, fake_home, tmp_path):
+        project = tmp_path / "myproj"
+        (project / ".toolbase").mkdir(parents=True)
+        add_pin(project_manifest_path(project), "kit", "9.9.9")
+        self._two_versions()
+        r = CliRunner().invoke(
+            cli.main, ["--project-dir", str(project), "list", "--json"],
+        )
+        assert r.exit_code == 0
+        payload = json.loads(r.output)
+        assert all(rec["serving"] is False for rec in payload)
+        assert all(rec["serving_reason"] == "pin-missing" for rec in payload)
 
 
 class TestListVerboseUnservableToolkit:

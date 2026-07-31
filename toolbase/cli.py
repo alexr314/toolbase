@@ -5171,10 +5171,11 @@ def list_cmd(as_json, verbose):
     \b
         $ tb list
         heptapod
-          - 0.1     (used 3 days ago, 8.2 GB)
-          - 0.3 *   (used yesterday, 8.4 GB)
+          - 0.3 * <-  (used yesterday, 8.4 GB)
+          - 0.1       (used 3 days ago, 8.2 GB)
+          serving 0.3 (pinned to 0.3)
         arxiv-search
-          - 0.2 *   (used 2 hours ago, 180 MB)
+          - 0.2 *     (used 2 hours ago, 180 MB)
 
         * = pinned in this project (./.toolbase/manifest.yaml)
 
@@ -5190,6 +5191,12 @@ def list_cmd(as_json, verbose):
         resolves to). Legend printed only when at least one pin
         applies. Default-project pins are flagged the same way; the
         legend points at the resolved manifest path.
+      - ``<-``: marks the version that would actually serve, shown
+        only when more than one is installed (with one slot there's
+        nothing to disambiguate). The line below the version rows
+        gives the reason — a pin, or the highest-wins fallback. A pin
+        naming a version that isn't installed is called out there too:
+        serve skips such a toolkit entirely.
 
     With ``--json``, output is a flat array of objects:
 
@@ -5197,7 +5204,8 @@ def list_cmd(as_json, verbose):
         [
           {"name": "heptapod", "version": "0.1.0",
            "last_used_iso": "2026-05-09T14:23:00", "size_bytes": 8200000000,
-           "pinned_in_project": false},
+           "pinned_in_project": false, "serving": false,
+           "serving_reason": "highest"},
           ...
         ]
 
@@ -5213,6 +5221,18 @@ def list_cmd(as_json, verbose):
     # never fall back to interactive prompts; the helper silently uses
     # default-project when no .toolbase/ is found.
     pin_map, manifest_path = _list_resolve_pin_map(entries)
+
+    # Which slot of each toolkit would actually serve, and why. Same call
+    # serve makes, so the markers can't disagree with what runs. Computed
+    # once here and shared by the JSON records and the tree.
+    from .envs import resolve_version
+    _versions_by_name: dict[str, list] = {}
+    for e in entries:
+        _versions_by_name.setdefault(e.name, []).append(e.version)
+    resolutions = {
+        n: resolve_version(vs, pin=pin_map.get(n))
+        for n, vs in _versions_by_name.items()
+    }
 
     # Resolve the active profile to mark which toolkits are active (served).
     # Best-effort: no active profile => everything inactive, no error.
@@ -5231,6 +5251,12 @@ def list_cmd(as_json, verbose):
                 "last_used_iso": e.last_used_iso,
                 "size_bytes": e.disk_size_bytes,
                 "pinned_in_project": pin_map.get(e.name) == e.version,
+                # ``serving``: this is the slot serve would spawn. At most
+                # one entry per name is true; all false means a pin points
+                # at a version that isn't installed. Distinct from
+                # ``active``, which is about the profile, not the version.
+                "serving": resolutions[e.name].version == e.version,
+                "serving_reason": resolutions[e.name].reason,
                 "active": e.name in active_set,
                 # ``installed_bundles``: ``null`` for a full install
                 # (every declared bundle), or a list (possibly empty) for
@@ -5270,16 +5296,23 @@ def list_cmd(as_json, verbose):
         )
 
     any_pin_applied = False
+    any_ambiguous = False
     for name in sorted(grouped):
         is_active = name in active_set
         mark = "[green]✓[/green]" if is_active else "[red]✗[/red]"
         status = "active" if is_active else "inactive"
         console.print(f"{mark} [cyan]{name}[/cyan] [dim]({status})[/dim]")
+        resolution = resolutions[name]
+        multi_version = len(grouped[name]) > 1
         for entry in grouped[name]:
             pinned = pin_map.get(name) == entry.version
             if pinned:
                 any_pin_applied = True
             marker = " [yellow]*[/yellow]" if pinned else ""
+            # Only mark the serving slot when there's a choice to be
+            # made; on a single-version toolkit the arrow is noise.
+            if multi_version and entry.version == resolution.version:
+                marker += " [green]<-[/green]"
             last_used = _format_last_used(entry.last_used_iso)
             size = _format_disk_size(entry.disk_size_bytes)
             # Editable slots show a "-> <source>" indicator so it's
@@ -5318,23 +5351,37 @@ def list_cmd(as_json, verbose):
                     f"[dim](used {last_used}, {size})[/dim]"
                     f"{subset_tag}"
                 )
+        # State the resolution outright. A dangling pin means serve skips
+        # the toolkit entirely, which no marker on a version row conveys;
+        # an unpinned multi-version toolkit is being resolved by a rule
+        # (highest wins) the user never asked for.
+        if not resolution.ok:
+            console.print(
+                f"    [yellow]⚠ not served: {resolution.describe()} — "
+                f"repoint with `tb use {name}@<version>`[/yellow]"
+            )
+        elif multi_version:
+            any_ambiguous = any_ambiguous or resolution.is_ambiguous
+            console.print(
+                f"    [dim]serving {resolution.version} "
+                f"({resolution.describe()})[/dim]"
+            )
         # Editable-shadow warning: a live-linked checkout exists but
         # resolution picks a numbered slot — the developer's code is
         # not what serves. Same condition as discovery's shadow_note.
-        selected = pin_map.get(name) or (
-            max((e.version for e in grouped[name]),
-                key=lambda v: parse_version(v) or (0, 0, 0))
-            if len(grouped[name]) > 1 else grouped[name][0].version
-        )
         has_editable = any(e.version == "editable" for e in grouped[name])
-        if has_editable and selected != "editable":
+        if has_editable and resolution.version != "editable":
             console.print(
                 "    [yellow]⚠ editable slot shadowed by "
-                f"{selected} — pin 'editable' in "
+                f"{resolution.version} — pin 'editable' in "
                 ".toolbase/manifest.local.yaml to serve your checkout[/yellow]"
             )
         if verbose:
-            _list_print_tools_verbose(name, resolved_profile, _name_collisions)
+            _list_print_tools_verbose(
+                name, resolved_profile, _name_collisions,
+                resolution=resolution,
+                multi_version=multi_version,
+            )
 
     if any_pin_applied and manifest_path is not None:
         # Render the manifest path relative to cwd when possible — keeps
@@ -5349,6 +5396,16 @@ def list_cmd(as_json, verbose):
         console.print()
         console.print(
             f"[dim]* = pinned in this project ({display})[/dim]"
+        )
+
+    if any_ambiguous:
+        # Printed once rather than per toolkit: with several unpinned
+        # multi-version toolkits the same advice on every one is noise.
+        console.print()
+        console.print(
+            "[dim]<- = the version that serves. Where nothing is pinned "
+            "the highest wins by default; choose one with "
+            "`tb use <toolkit>@<version>`.[/dim]"
         )
 
 
@@ -5433,11 +5490,20 @@ def _warn_install_name_collisions(new_toolkit: str) -> None:
         pass  # a heads-up must never break install
 
 
-def _list_print_tools_verbose(name, resolved_profile, collisions=None) -> None:
+def _list_print_tools_verbose(
+    name, resolved_profile, collisions=None, *,
+    resolution=None, multi_version=False,
+) -> None:
     """Print a toolkit's declared tools with served/hidden status.
 
     Tool list comes from the toolkit.yaml declaration (explicit form);
     implicit-form toolkits don't enumerate tools there, so we say so.
+
+    ``resolution`` is the caller's already-computed version resolution;
+    when it failed the caller has printed the reason, so we don't repeat
+    it. ``multi_version`` captions the tool block with the version it
+    describes — with several slots installed, an uncaptioned list looks
+    like it belongs to the last version row printed above it.
     """
     from .serve.orchestrator import discover_toolkits, _resolve_bundle_availability
     from .serve.profiles import tool_is_served
@@ -5447,13 +5513,13 @@ def _list_print_tools_verbose(name, resolved_profile, collisions=None) -> None:
     if disc is None:
         return
     if disc.skip_reason:
-        # The toolkit is installed but serve would refuse to spawn it (a
-        # dangling pin, an unsupported environment). Silence here reads
-        # as "this toolkit has no tools" — say why instead, since this
-        # is the same reason string the serve banner prints.
-        console.print(
-            f"    [yellow]⚠ not served: {disc.skip_reason}[/yellow]"
-        )
+        # The toolkit is installed but serve would refuse to spawn it.
+        # Silence here reads as "this toolkit has no tools" — say why
+        # instead, unless the caller already reported the same problem.
+        if resolution is None or resolution.ok:
+            console.print(
+                f"    [yellow]⚠ not served: {disc.skip_reason}[/yellow]"
+            )
         return
     availability, name_to_bundles = _resolve_bundle_availability(disc)
     if not name_to_bundles:
@@ -5462,6 +5528,8 @@ def _list_print_tools_verbose(name, resolved_profile, collisions=None) -> None:
             "is available at serve time)[/dim]"
         )
         return
+    if multi_version:
+        console.print(f"    [dim]tools in {disc.path.name}:[/dim]")
 
     # Subset-install scope. ``None`` (legacy / full install) means
     # nothing is gated by install scope here; a set means tools whose
