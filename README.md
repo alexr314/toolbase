@@ -12,8 +12,6 @@ harness. Each toolkit installs into its own isolated Python environment,
 so dependency conflicts between toolkits are never a problem. A toolkit
 can even ship *only* skills (a **skill pack**).
 
-Full CLI reference: <https://toolbase-ai.com/docs>.
-
 ---
 
 ## Install toolbase
