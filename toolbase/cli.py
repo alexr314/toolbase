@@ -13,7 +13,7 @@ import subprocess
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import yaml
 import tarfile
 import tempfile
@@ -3411,14 +3411,6 @@ _EDITABLE_SYMLINK_ENTRIES = (
 
 # Threshold at which ``tb list -v`` collapses install-gated tools into a
 # single summary line rather than rendering one row per skipped tool.
-# Hits when a many-bundle toolkit (e.g. heptapod with 50 tools across 8
-# bundles) is installed with a small subset: without collapse, ~45 of 50
-# rows are identical-shaped "skipped: bundle X not installed" entries
-# that drown the few tools actually served. Below this count the
-# per-tool view stays useful because each row carries different bundle
-# information; above it the noise dominates.
-_VERBOSE_INSTALL_GATED_COLLAPSE_THRESHOLD = 6
-
 # Cache-slot version sentinel for editable installs. Unparseable by
 # ``parse_version`` (so it sorts last in ``tb list``) and disjoint from
 # any real semver, so it can never collide with a registry version slot.
@@ -5157,8 +5149,9 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
 @click.option(
     "-v", "--verbose", "verbose", is_flag=True, default=False,
     help=(
-        "Show each toolkit's tools with served/hidden status and bundle "
-        "membership (relative to the active profile)."
+        "Show each toolkit's tools grouped by bundle, with served/hidden "
+        "status relative to the active profile. Bundles that can't serve "
+        "carry the reason on the group header."
     ),
 )
 def list_cmd(as_json, verbose):
@@ -5556,75 +5549,90 @@ def _list_print_tools_verbose(
     else:
         toolkit_active = False
 
-    # Install-gated tools (their bundle isn't in the install set) are
-    # collected and either rendered inline (small count) or collapsed
-    # into a single summary line (many). For a 50-tool toolkit installed
-    # with 2 bundles, the per-tool entries previously dominated the view
-    # and added no actionable information beyond "this bundle wasn't
-    # selected at install time." Config-gated tools stay inline because
-    # they're one ``tb config set`` away — meaningfully more actionable
-    # than reinstalling a bundle.
-    install_gated: List[Tuple[str, List[str]]] = []
+    # Tools are grouped under the bundle they belong to. A 60-tool
+    # toolkit across 12 bundles is unreadable as one alphabetical list,
+    # and the gating annotations repeat identically on every row of a
+    # gated bundle; as a group header each is stated once, next to the
+    # command that clears it.
+    by_bundle: Dict[Optional[str], List[str]] = {}
     for tool in sorted(name_to_bundles):
-        bundles = name_to_bundles[tool]
-        install_scope_excludes = (
-            bool(bundles)
-            and installed_set is not None
-            and not any(b in installed_set for b in bundles)
-        )
-        if install_scope_excludes:
-            install_gated.append((tool, bundles))
-            continue
-        # Inline render for tools that aren't install-gated. Config-
-        # gating annotation surfaces here for tools whose bundles are
-        # all dropped at config-evaluation time.
-        served = toolkit_active and tool_is_served(
-            tool, bundles, sel, availability, global_disabled,
-            installed_bundles=installed_set,
-        )
-        mk = "[green]✓[/green]" if served else "[red]✗[/red]"
-        btag = ""
-        if bundles:
-            blabel = "bundle" if len(bundles) == 1 else "bundles"
-            btag = f" [dim][{blabel}: {', '.join(bundles)}][/dim]"
-        gate = ""
-        if bundles and all(b in availability.dropped_bundles for b in bundles):
-            missing_per_bundle = [
-                ", ".join(availability.dropped_bundles[b]) for b in bundles
-            ]
-            gate = (
-                f" [yellow](needs config: "
-                f"{'; '.join(missing_per_bundle)})[/yellow]"
-            )
-        clash = ""
-        others = [tk for tk in (collisions or {}).get(tool, []) if tk != name]
-        if others:
-            clash = f" [yellow](also in: {', '.join(others)})[/yellow]"
-        console.print(f"    {mk} {tool}{btag}{gate}{clash}")
+        # A tool in several bundles is listed under each of them (rare,
+        # and less confusing than picking one arbitrarily); a tool with
+        # no bundle goes in the trailing ``None`` group.
+        for bundle in name_to_bundles[tool] or [None]:
+            by_bundle.setdefault(bundle, []).append(tool)
 
-    if install_gated:
-        if len(install_gated) >= _VERBOSE_INSTALL_GATED_COLLAPSE_THRESHOLD:
-            absent_bundles = sorted({
-                b for _, bundles in install_gated
-                for b in bundles if b not in installed_set
-            })
-            blabel = "bundles" if len(absent_bundles) != 1 else "bundle"
-            console.print(
-                f"    [dim](+{len(install_gated)} tools in uninstalled "
-                f"{blabel}: {', '.join(absent_bundles)} — add with "
-                f"`tb install {name}[<bundle>]`)[/dim]"
-            )
+    def _gated(bundle: Optional[str]) -> bool:
+        if bundle is None:
+            return False
+        return (
+            (installed_set is not None and bundle not in installed_set)
+            or bundle in availability.dropped_bundles
+        )
+
+    # Usable bundles first, then gated ones, ungrouped tools last.
+    ordered = sorted(
+        by_bundle,
+        key=lambda b: (b is None, _gated(b), b or ""),
+    )
+
+    for bundle in ordered:
+        tools = by_bundle[bundle]
+        if bundle is None:
+            # A toolkit that declares no bundles at all has nothing to
+            # group by; the header would be the only one printed.
+            if len(ordered) > 1:
+                console.print("    [dim](no bundle)[/dim]")
         else:
-            for tool, bundles in install_gated:
-                absent = [b for b in bundles if b not in installed_set]
-                btag_label = "bundles" if len(bundles) > 1 else "bundle"
-                glabel = "bundle" if len(absent) == 1 else "bundles"
-                console.print(
-                    f"    [red]✗[/red] {tool}"
-                    f" [dim][{btag_label}: {', '.join(bundles)}][/dim]"
-                    f" [yellow](skipped: {glabel} "
-                    f"{', '.join(absent)} not installed)[/yellow]"
+            not_installed = (
+                installed_set is not None and bundle not in installed_set
+            )
+            missing_cfg = availability.dropped_bundles.get(bundle)
+            if not_installed:
+                # Deps for this bundle were never pip-installed, so none
+                # of its tools can be served whatever the profile says.
+                # Escaped: Rich would read the bracketed bundle name in
+                # the install command as a style tag and swallow it.
+                header_note = (
+                    f"  [yellow]✗ not installed[/yellow] "
+                    f"[dim]— add with `tb install {name}\\[{bundle}]`[/dim]"
                 )
+            elif missing_cfg:
+                header_note = (
+                    f"  [yellow]⚠ needs config: "
+                    f"{', '.join(missing_cfg)}[/yellow]"
+                )
+            else:
+                header_note = ""
+            console.print(f"    [cyan]\\[{bundle}][/cyan]{header_note}")
+            if not_installed:
+                # Names only. Per-tool status would be a column of ✗ all
+                # explained by the header, but dropping the names makes
+                # the tools undiscoverable until the bundle is installed.
+                console.print(f"      [dim]{', '.join(tools)}[/dim]")
+                continue
+
+        for tool in tools:
+            bundles = name_to_bundles[tool]
+            served = toolkit_active and tool_is_served(
+                tool, bundles, sel, availability, global_disabled,
+                installed_bundles=installed_set,
+            )
+            mk = "[green]✓[/green]" if served else "[red]✗[/red]"
+            # Only the *other* bundles are worth naming — this one is the
+            # header the tool is printed under.
+            others_b = [b for b in bundles if b != bundle]
+            btag = (
+                f" [dim](also in: {', '.join(others_b)})[/dim]"
+                if others_b else ""
+            )
+            clash = ""
+            others = [tk for tk in (collisions or {}).get(tool, []) if tk != name]
+            if others:
+                clash = (
+                    f" [yellow](name also in: {', '.join(others)})[/yellow]"
+                )
+            console.print(f"      {mk} {tool}{btag}{clash}")
 
 
 def _list_sorted_entries(entries):

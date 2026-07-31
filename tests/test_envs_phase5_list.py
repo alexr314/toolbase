@@ -326,18 +326,20 @@ def _write_toolkit_yaml(
     (slot / "toolkit.yaml").write_text(pyyaml.safe_dump(payload))
 
 
-class TestListVerboseSubsetAnnotation:
-    """``tb list -v`` per-tool annotations for subset-installed toolkits."""
+class TestListVerboseBundleGrouping:
+    """``tb list -v`` groups tools under their bundle.
 
-    def test_tool_in_uninstalled_bundle_marked_skipped(self, fake_home):
-        """A tool whose bundle isn't in the install set should render
-        a ``(skipped: bundle X not installed)`` annotation so the user
-        sees why it isn't served."""
+    A 60-tool toolkit across 12 bundles is unreadable as one
+    alphabetical list, and gating reasons repeat identically on every
+    row of a gated bundle. The group header carries the bundle name and
+    states each gate once.
+    """
+
+    def test_tools_render_under_their_bundle_header(self, fake_home):
         slot = _make_slot(
             "kit", "0.1.0",
             last_used=datetime.now() - timedelta(hours=1),
             size_bytes=1024,
-            bundles=["alpha"],
         )
         _write_toolkit_yaml(
             slot,
@@ -345,255 +347,151 @@ class TestListVerboseSubsetAnnotation:
             tools=[
                 {"name": "ta", "module": "tools.ta",
                  "description": "alpha tool", "bundle": "alpha"},
-                {"name": "tb", "module": "tools.tb",
+                {"name": "tb_", "module": "tools.tb",
                  "description": "beta tool", "bundle": "beta"},
             ],
         )
-        runner = CliRunner()
-        r = runner.invoke(cli.main, ["list", "-v"])
+        r = CliRunner().invoke(cli.main, ["list", "-v"])
         assert r.exit_code == 0, r.output
-        # The bundle the user installed: no scope annotation.
-        ta_line = next(l for l in r.output.splitlines() if " ta " in l)
-        assert "skipped" not in ta_line
-        # The bundle they didn't: scope annotation cites the bundle.
-        tb_line = next(l for l in r.output.splitlines() if " tb " in l)
-        assert "skipped: bundle beta not installed" in tb_line
+        assert "[alpha]" in r.output
+        assert "[beta]" in r.output
+        # Each tool sits below its own bundle header.
+        out = r.output
+        assert out.index("[alpha]") < out.index("ta") < out.index("[beta]")
+        assert out.index("[beta]") < out.index("tb_")
 
-    def test_full_install_no_per_tool_scope_annotation(self, fake_home):
-        """Without ``bundles`` in the meta (full install) no per-tool
-        scope annotation appears — the existing config-gating annotation
-        is unaffected."""
+    def test_bundleless_toolkit_has_no_group_header(self, fake_home):
+        """A toolkit declaring no bundles has nothing to group by, so the
+        single ``(no bundle)`` header would be pure noise."""
         slot = _make_slot(
             "kit", "0.1.0",
             last_used=datetime.now() - timedelta(hours=1),
             size_bytes=1024,
-            # bundles=None — full install
         )
         _write_toolkit_yaml(
             slot,
-            bundles={"alpha": {}, "beta": {}},
+            bundles={},
+            tools=[{"name": "solo", "module": "tools.solo",
+                    "description": "no bundle"}],
+        )
+        r = CliRunner().invoke(cli.main, ["list", "-v"])
+        assert r.exit_code == 0
+        assert "no bundle" not in r.output
+        assert "solo" in r.output
+
+    def test_bundleless_tools_grouped_last_when_mixed(self, fake_home):
+        """When a toolkit has both, unbundled tools get a trailing group
+        rather than being scattered through the bundle headers."""
+        slot = _make_slot(
+            "kit", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+        )
+        _write_toolkit_yaml(
+            slot,
+            bundles={"alpha": {}},
             tools=[
+                {"name": "loose", "module": "tools.loose",
+                 "description": "no bundle"},
                 {"name": "ta", "module": "tools.ta",
                  "description": "alpha tool", "bundle": "alpha"},
-                {"name": "tb", "module": "tools.tb",
-                 "description": "beta tool", "bundle": "beta"},
-            ],
-        )
-        runner = CliRunner()
-        r = runner.invoke(cli.main, ["list", "-v"])
-        assert r.exit_code == 0
-        assert "skipped" not in r.output
-        assert "not installed" not in r.output
-
-    def test_multi_bundle_tool_lists_all_absent_bundles(self, fake_home):
-        """When a multi-bundle tool's bundles are all uninstalled, the
-        annotation lists them: ``(skipped: bundles a, b not installed)``."""
-        slot = _make_slot(
-            "kit", "0.1.0",
-            last_used=datetime.now() - timedelta(hours=1),
-            size_bytes=1024,
-            bundles=["gamma"],
-        )
-        _write_toolkit_yaml(
-            slot,
-            bundles={"alpha": {}, "beta": {}, "gamma": {}},
-            tools=[
-                {"name": "bridge", "module": "tools.bridge",
-                 "description": "spans alpha + beta",
-                 "bundle": ["alpha", "beta"]},
-            ],
-        )
-        runner = CliRunner()
-        r = runner.invoke(cli.main, ["list", "-v"])
-        assert r.exit_code == 0
-        assert "skipped: bundles alpha, beta not installed" in r.output
-
-    def test_multi_bundle_tool_with_one_installed_bundle_is_kept(self, fake_home):
-        """A multi-bundle tool stays served (no scope annotation) when
-        at least one of its bundles is in the install set, since pip-
-        installing one bundle's deps was enough to satisfy it."""
-        slot = _make_slot(
-            "kit", "0.1.0",
-            last_used=datetime.now() - timedelta(hours=1),
-            size_bytes=1024,
-            bundles=["alpha"],
-        )
-        _write_toolkit_yaml(
-            slot,
-            bundles={"alpha": {}, "beta": {}},
-            tools=[
-                {"name": "bridge", "module": "tools.bridge",
-                 "description": "spans alpha + beta",
-                 "bundle": ["alpha", "beta"]},
-            ],
-        )
-        runner = CliRunner()
-        r = runner.invoke(cli.main, ["list", "-v"])
-        assert r.exit_code == 0
-        bridge_line = next(l for l in r.output.splitlines() if "bridge" in l)
-        assert "skipped" not in bridge_line
-
-
-class TestListVerboseInstallGatedCollapse:
-    """Above-threshold install-gated tools collapse to a summary line."""
-
-    def _build_kit_with_gated_tools(
-        self,
-        n_gated: int,
-        n_served: int = 2,
-        gated_bundle: str = "beta",
-    ) -> Path:
-        """Make a slot with one installed bundle and ``n_gated`` tools in
-        a separate uninstalled bundle. ``n_served`` tools live in the
-        installed bundle so the toolkit isn't empty."""
-        slot = _make_slot(
-            "kit", "0.1.0",
-            last_used=datetime.now() - timedelta(hours=1),
-            size_bytes=1024,
-            bundles=["alpha"],
-        )
-        tools = [
-            {"name": f"alpha_t{i}", "module": f"tools.a{i}",
-             "description": f"alpha tool {i}", "bundle": "alpha"}
-            for i in range(n_served)
-        ]
-        tools += [
-            {"name": f"{gated_bundle}_t{i}", "module": f"tools.b{i}",
-             "description": f"{gated_bundle} tool {i}",
-             "bundle": gated_bundle}
-            for i in range(n_gated)
-        ]
-        _write_toolkit_yaml(
-            slot,
-            bundles={"alpha": {}, gated_bundle: {}},
-            tools=tools,
-        )
-        return slot
-
-    def test_below_threshold_renders_each_tool(self, fake_home):
-        """5 install-gated tools (below threshold of 6) still render per-tool
-        — the per-row info is useful when the count is small."""
-        self._build_kit_with_gated_tools(n_gated=5)
-        r = CliRunner().invoke(cli.main, ["list", "-v"])
-        assert r.exit_code == 0
-        # Each gated tool gets its own row with the skip annotation.
-        assert r.output.count("skipped: bundle beta not installed") == 5
-        # No collapse summary.
-        assert "in uninstalled bundle" not in r.output
-
-    def test_at_threshold_collapses(self, fake_home):
-        """6 install-gated tools (== threshold) collapse to a summary line."""
-        self._build_kit_with_gated_tools(n_gated=6)
-        r = CliRunner().invoke(cli.main, ["list", "-v"])
-        assert r.exit_code == 0
-        # Per-tool skip annotation gone.
-        assert "skipped:" not in r.output
-        # Summary line present with the count + the bundle.
-        assert "(+6 tools in uninstalled bundle: beta" in r.output
-        # Suggestion includes the install command template.
-        assert "tb install kit[<bundle>]" in r.output
-
-    def test_above_threshold_collapses(self, fake_home):
-        """Sanity: 20 install-gated tools also collapses."""
-        self._build_kit_with_gated_tools(n_gated=20)
-        r = CliRunner().invoke(cli.main, ["list", "-v"])
-        assert r.exit_code == 0
-        assert "(+20 tools in uninstalled bundle: beta" in r.output
-
-    def test_served_tools_still_render_individually(self, fake_home):
-        """Above-threshold collapse only affects install-gated tools —
-        installed tools keep their per-row rendering."""
-        self._build_kit_with_gated_tools(n_gated=10, n_served=3)
-        r = CliRunner().invoke(cli.main, ["list", "-v"])
-        assert r.exit_code == 0
-        for i in range(3):
-            assert f"alpha_t{i}" in r.output
-        # The gated bundle's tools should NOT show by name when collapsed.
-        assert "beta_t0" not in r.output
-        assert "beta_t9" not in r.output
-
-    def test_collapse_summary_lists_bundles_alphabetically(self, fake_home):
-        """When gated tools span several uninstalled bundles, the summary
-        lists them sorted, regardless of declaration / tool order."""
-        slot = _make_slot(
-            "kit", "0.1.0",
-            last_used=datetime.now() - timedelta(hours=1),
-            size_bytes=1024,
-            bundles=["alpha"],
-        )
-        # Mix declaration order: zulu, foxtrot, charlie — all uninstalled.
-        # 6 tools total, split across the three bundles.
-        _write_toolkit_yaml(
-            slot,
-            bundles={"alpha": {}, "zulu": {}, "foxtrot": {}, "charlie": {}},
-            tools=[
-                {"name": "z1", "module": "tools.z1", "description": "z",
-                 "bundle": "zulu"},
-                {"name": "z2", "module": "tools.z2", "description": "z",
-                 "bundle": "zulu"},
-                {"name": "f1", "module": "tools.f1", "description": "f",
-                 "bundle": "foxtrot"},
-                {"name": "f2", "module": "tools.f2", "description": "f",
-                 "bundle": "foxtrot"},
-                {"name": "c1", "module": "tools.c1", "description": "c",
-                 "bundle": "charlie"},
-                {"name": "c2", "module": "tools.c2", "description": "c",
-                 "bundle": "charlie"},
             ],
         )
         r = CliRunner().invoke(cli.main, ["list", "-v"])
         assert r.exit_code == 0
-        # Plural "bundles", alphabetically sorted.
-        assert "uninstalled bundles: charlie, foxtrot, zulu" in r.output
+        assert r.output.index("[alpha]") < r.output.index("(no bundle)")
+        assert r.output.index("(no bundle)") < r.output.index("loose")
 
-    def test_multi_bundle_tool_contributes_each_absent_bundle_to_summary(
+    def test_multi_bundle_tool_listed_under_each_with_cross_reference(
         self, fake_home,
     ):
-        """A multi-bundle tool whose bundles are ALL uninstalled contributes
-        every absent bundle to the summary list — so the user sees every
-        bundle they could install to bring it back."""
+        slot = _make_slot(
+            "kit", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+        )
+        _write_toolkit_yaml(
+            slot,
+            bundles={"alpha": {}, "beta": {}},
+            tools=[
+                {"name": "bridge", "module": "tools.bridge",
+                 "description": "spans alpha + beta",
+                 "bundle": ["alpha", "beta"]},
+            ],
+        )
+        r = CliRunner().invoke(cli.main, ["list", "-v"])
+        assert r.exit_code == 0
+        assert r.output.count("bridge") == 2
+        # Under each header, the cross-reference names only the others.
+        assert "(also in: beta)" in r.output
+        assert "(also in: alpha)" in r.output
+
+
+class TestListVerboseGatedBundles:
+    """Gating reasons live on the bundle header, stated once."""
+
+    def test_uninstalled_bundle_header_carries_install_command(self, fake_home):
         slot = _make_slot(
             "kit", "0.1.0",
             last_used=datetime.now() - timedelta(hours=1),
             size_bytes=1024,
             bundles=["alpha"],
         )
-        # 6 single-bundle gated tools + 1 multi-bundle gated tool spanning
-        # two other bundles. Total = 7 gated → collapse triggers.
-        tools = [
-            {"name": f"b_t{i}", "module": f"tools.b{i}",
-             "description": "b", "bundle": "beta"}
-            for i in range(6)
-        ]
-        tools.append({
-            "name": "bridge", "module": "tools.bridge",
-            "description": "spans gamma + delta",
-            "bundle": ["gamma", "delta"],
-        })
         _write_toolkit_yaml(
             slot,
-            bundles={"alpha": {}, "beta": {}, "gamma": {}, "delta": {}},
-            tools=tools,
+            bundles={"alpha": {}, "beta": {}},
+            tools=[
+                {"name": "ta", "module": "tools.ta",
+                 "description": "alpha tool", "bundle": "alpha"},
+            ] + [
+                {"name": f"b_t{i}", "module": f"tools.b{i}",
+                 "description": "beta tool", "bundle": "beta"}
+                for i in range(8)
+            ],
+        )
+        r = CliRunner().invoke(cli.main, ["list", "-v"])
+        assert r.exit_code == 0, r.output
+        assert "not installed" in r.output
+        # Stated once for the bundle, not once per tool.
+        assert r.output.count("not installed") == 1
+        assert "tb install kit[beta]" in r.output
+
+    def test_uninstalled_bundle_still_names_its_tools(self, fake_home):
+        """Names are kept so the tools stay discoverable — only their
+        per-row status is dropped (the header explains it)."""
+        slot = _make_slot(
+            "kit", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+            bundles=["alpha"],
+        )
+        _write_toolkit_yaml(
+            slot,
+            bundles={"alpha": {}, "beta": {}},
+            tools=[
+                {"name": "ta", "module": "tools.ta",
+                 "description": "alpha", "bundle": "alpha"},
+                {"name": "b_one", "module": "tools.b1",
+                 "description": "beta", "bundle": "beta"},
+                {"name": "b_two", "module": "tools.b2",
+                 "description": "beta", "bundle": "beta"},
+            ],
         )
         r = CliRunner().invoke(cli.main, ["list", "-v"])
         assert r.exit_code == 0
-        # Bridge contributes both gamma and delta to the absent-bundle set.
-        assert "uninstalled bundles: beta, delta, gamma" in r.output
+        assert "b_one, b_two" in r.output
 
-    def test_config_gated_tools_not_collapsed(self, fake_home):
-        """Tools whose bundles are CONFIG-gated (require a config key the
-        user hasn't set) stay inline — they're one ``tb config set`` away,
-        not a reinstall. Only install-gated tools are collapse candidates."""
+    def test_config_gated_bundle_header_names_missing_keys(self, fake_home):
+        """A bundle whose deps ARE installed but whose config keys are
+        unset is a different fix (`tb config set`, not a reinstall), so
+        it keeps its per-tool rows and says what's missing on the
+        header."""
         slot = _make_slot(
             "kit", "0.1.0",
             last_used=datetime.now() - timedelta(hours=1),
             size_bytes=1024,
             bundles=["alpha", "needsconfig"],
         )
-        # ``needsconfig`` bundle requires a config key the user hasn't set
-        # — it's installed (deps are in venv) but not available at serve
-        # time. Tools in it should render with (needs config: ...), NOT
-        # collapsed.
         import yaml as pyyaml
         payload = {
             "name": "kit", "version": "0.1.0", "description": "x",
@@ -618,14 +516,37 @@ class TestListVerboseInstallGatedCollapse:
         (slot / "toolkit.yaml").write_text(pyyaml.safe_dump(payload))
         r = CliRunner().invoke(cli.main, ["list", "-v"])
         assert r.exit_code == 0
-        # 8 config-gated tools but no collapse — each gets a (needs config) row.
-        assert r.output.count("needs config: api_key") == 8
-        # And NO install-gated summary.
-        assert "in uninstalled bundle" not in r.output
+        # Once on the header, not once per tool.
+        assert r.output.count("needs config: api_key") == 1
+        # Tools still render individually — the fix is per-toolkit config.
+        for i in range(8):
+            assert f"n_t{i}" in r.output
 
-    def test_full_install_no_collapse_even_with_many_tools(self, fake_home):
-        """A full install (no ``bundles`` in meta) has no install-gating
-        at all, so collapse never triggers regardless of tool count."""
+    def test_gated_bundles_sort_after_usable_ones(self, fake_home):
+        slot = _make_slot(
+            "kit", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+            bundles=["zulu"],
+        )
+        _write_toolkit_yaml(
+            slot,
+            bundles={"zulu": {}, "alpha": {}},
+            tools=[
+                {"name": "z_t", "module": "tools.z",
+                 "description": "zulu", "bundle": "zulu"},
+                {"name": "a_t", "module": "tools.a",
+                 "description": "alpha", "bundle": "alpha"},
+            ],
+        )
+        r = CliRunner().invoke(cli.main, ["list", "-v"])
+        assert r.exit_code == 0
+        # zulu is installed, alpha isn't — usable first despite the name.
+        assert r.output.index("[zulu]") < r.output.index("[alpha]")
+
+    def test_full_install_has_no_install_gating(self, fake_home):
+        """No ``bundles`` in the meta means every bundle's deps are
+        present, so no header carries an install gate."""
         slot = _make_slot(
             "kit", "0.1.0",
             last_used=datetime.now() - timedelta(hours=1),
@@ -643,10 +564,38 @@ class TestListVerboseInstallGatedCollapse:
         )
         r = CliRunner().invoke(cli.main, ["list", "-v"])
         assert r.exit_code == 0
-        # Every tool gets a row; no summary line.
+        assert "not installed" not in r.output
         for i in range(20):
             assert f"b_t{i}" in r.output
-        assert "in uninstalled bundle" not in r.output
+
+    def test_multi_bundle_tool_with_one_installed_bundle_is_kept(
+        self, fake_home,
+    ):
+        """Pip-installing one bundle's deps is enough for a tool that
+        spans two, so it must not be swept into the uninstalled group."""
+        slot = _make_slot(
+            "kit", "0.1.0",
+            last_used=datetime.now() - timedelta(hours=1),
+            size_bytes=1024,
+            bundles=["alpha"],
+        )
+        _write_toolkit_yaml(
+            slot,
+            bundles={"alpha": {}, "beta": {}},
+            tools=[
+                {"name": "bridge", "module": "tools.bridge",
+                 "description": "spans alpha + beta",
+                 "bundle": ["alpha", "beta"]},
+            ],
+        )
+        r = CliRunner().invoke(cli.main, ["list", "-v"])
+        assert r.exit_code == 0
+        # Rendered as a row under the installed bundle, with status.
+        bridge_row = next(
+            l for l in r.output.splitlines()
+            if "bridge" in l and ("✓" in l or "✗" in l)
+        )
+        assert "also in: beta" in bridge_row
 
 
 class TestServingMarker:
