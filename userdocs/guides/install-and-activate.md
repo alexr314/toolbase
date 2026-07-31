@@ -92,6 +92,7 @@ Active profile: default
 
 ```bash
 tb install calculator@1.5.0     # newer version, alongside 1.4.0
+tb use calculator@1.4.0         # switch back — writes the pin, no rebuild
 tb uninstall calculator@1.4.0   # remove one version slot
 tb uninstall calculator         # remove all versions
 ```

@@ -43,7 +43,8 @@ If two active toolkits each define, say, an `add` tool, `tb serve` prints a
 warning at startup and `tb list -v` annotates the rows:
 
 ```console
-✓ add     [bundle: basic]  (also in: matrix)
+    [basic]
+      ✓ add     (name also in: matrix)
 ```
 
 This is **harmless by default**: tools are served namespaced as

@@ -19,7 +19,7 @@ Quick lookup. For the narrative, see [Concepts](../explanation.md).
 | `<toolkit>` | a whole toolkit | `activate`, `deactivate` |
 | `<toolkit>/<bundle>` | one bundle | `activate`, `deactivate` |
 | `<toolkit>__<tool>` | one tool | `activate`, `deactivate` |
-| `<name>@<version>` | a specific version | `install` |
+| `<name>@<version>` | a specific version | `install`, `use`, `uninstall` |
 
 ## Scopes
 

@@ -8,6 +8,24 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Added
+
+- **`tb use <toolkit>@<version>` switches which installed version serves.** Only `install` could write a pin, so moving one between two already-installed versions meant re-running `tb install <name>@<version>` — which deletes the cache slot and rebuilds the environment from scratch, and, if you decline the "already installed, reinstall?" prompt, aborts before writing the pin at all. There was no way to get the pin without paying for the rebuild. `tb use` writes the manifest and nothing else. Bare `tb use <toolkit>` clears the pin; `-g`/`-l` scope it like `install`; an `editable` choice goes to the gitignored `manifest.local.yaml`, since that pin can't be shared. A local pin that would silently override the layer being written is removed, loudly.
+
+- **`tb list` marks the version that actually serves.** `*` (pinned) said what someone wrote down, which is silent in the case that confuses people most: nothing is pinned, several versions are installed, and the highest-wins fallback picks one with no sign a choice was made. Version rows now carry `<-` on the slot `tb serve` would spawn, with the reason below them. `--json` grows `serving` and `serving_reason` (`active` was already taken, and refers to the profile, not the version).
+
+### Changed
+
+- **`tb list -v` groups tools by bundle.** One alphabetical list of 60 tools across 12 bundles said nothing about which capability groups a toolkit offers, and repeated each gating reason on every row of a gated bundle — heptapod printed "needs config: wolframscript_path" seven times. Each gate now sits once on its bundle header, next to the command that clears it, and the per-tool `[bundle: x]` tag is gone (bundle membership is the grouping; only multi-bundle tools keep a cross-reference). Uninstalled bundles collapse to a header plus their tool names, replacing the install-gated collapse threshold.
+
+### Fixed
+
+- **`tb list -v` said nothing at all about a toolkit `serve` would refuse to run.** It filtered discovery on "no skip reason" and returned silently when that matched nothing, so a toolkit with a pin naming an absent slot — an editable install removed outside `tb uninstall`, say — printed its version rows and no tools. It read as "this toolkit has no tools" rather than "this is about to fail". The reason is now printed, in both plain and verbose output.
+
+- **`tb setup` could configure a different version than `tb serve` runs.** It read pins from the committed manifest only, while serve reads the committed and machine-local layers merged, so an editable pin in `manifest.local.yaml` sent the two commands at different slots. Both now resolve through one implementation; a pin naming an uninstalled version is an error rather than a silent fallback to another slot.
+
+- **`tb install -l` ignored `--project-dir`.** It walked up from the working directory regardless, so the documented project-discovery override didn't apply to pin writes.
+
 ## [0.11.0] — 2026-07-30
 
 ### Added

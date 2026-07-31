@@ -244,10 +244,11 @@ The manifest itself (`.toolbase/manifest.yaml`) is safe to commit — it only ha
 ```
 $ tb list
 arxiv-search
-  - 0.2.0 *   (used 2 hours ago, 180 MB)
+  - 0.2.0 *      (used 2 hours ago, 180 MB)
 heptapod
-  - 0.3.0 *   (used yesterday, 8.4 GB)
-  - 0.1.0     (used 3 days ago, 8.2 GB)
+  - 0.3.0 * <-   (used yesterday, 8.4 GB)
+  - 0.1.0        (used 3 days ago, 8.2 GB)
+  serving 0.3.0 (pinned to 0.3.0)
 
 * = pinned in this project (./.toolbase/manifest.yaml)
 ```
@@ -257,7 +258,10 @@ Reading row by row:
 - **Toolkit name** at the top of each group.
 - **Versions** indented underneath, one per line.
 - **`*`** after a version means it's the pinned version in *this project*. The legend at the bottom tells you which manifest the `*` refers to.
+- **`<-`** marks the version that would actually serve, shown only when more than one is installed. The `serving …` line below spells out why: a pin, the only slot, or the highest-installed fallback. They come apart when nothing is pinned — that's the case the `*` alone couldn't express. Change it with `tb use <name>@<version>`.
 - **`(used <delta>, <size>)`** — last time `tb serve` activated this version, and the cached disk size. `used never` means it's installed but hasn't been served.
+
+A pin naming a version that isn't in the cache resolves to *nothing* rather than falling through to another slot: `tb serve` skips the toolkit, and `tb list` reports `not served` with the reason.
 
 `tb list --json` is the structured form:
 
@@ -265,11 +269,13 @@ Reading row by row:
 [
   {"name": "arxiv-search", "version": "0.2.0",
    "last_used_iso": "2026-05-13T08:41:23", "size_bytes": 188743680,
-   "pinned_in_project": true},
+   "pinned_in_project": true, "serving": true, "serving_reason": "pinned"},
   {"name": "heptapod", "version": "0.3.0", ...},
   {"name": "heptapod", "version": "0.1.0", ...}
 ]
 ```
+
+`serving_reason` is one of `pinned`, `only`, `highest`, `pin-missing`.
 
 Use the JSON form when scripting (`tb list --json | jq '.[] | select(.pinned_in_project)'`).
 

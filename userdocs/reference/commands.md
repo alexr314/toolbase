@@ -12,7 +12,8 @@
 | `tb install FILE.tar.gz` | Install an exported toolkit tarball (registry-free distribution) | same flags as a path install; `-e` rejected |
 | `tb export [PATH]` | Package a toolkit dir as `<name>-<version>.tar.gz` (publish's packaging, no upload) | `-o/--output` |
 | `tb uninstall NAME` | Remove a toolkit — all versions, or one slot with `NAME@VERSION` (stale pins are cleaned up) | `-y`/`--no`/`--no-input` |
-| `tb list` | List installed toolkits, active/inactive | `-v/--verbose`, `--json` |
+| `tb use NAME@VERSION` | Choose which installed version serves — writes the pin only, no rebuild. Bare `NAME` clears the pin | `-g`, `-l` |
+| `tb list` | List installed toolkits, active/inactive, and which version serves (`-v` groups tools by bundle) | `-v/--verbose`, `--json` |
 | `tb activate ITEM` | Expose a toolkit / `toolkit/bundle` / `toolkit__tool` | `-g`, `-l` |
 | `tb deactivate ITEM` | Hide a toolkit / bundle / tool | `-g`, `-l` |
 | `tb serve` | Serve the active profile over MCP (the harness runs this) | `--profile`, `--dry-run`, `--call-timeout`, `--bare`/`--qualified` |
