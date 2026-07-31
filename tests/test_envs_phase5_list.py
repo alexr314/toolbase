@@ -644,6 +644,62 @@ class TestListVerboseInstallGatedCollapse:
         assert "in uninstalled bundle" not in r.output
 
 
+class TestListVerboseUnservableToolkit:
+    """A toolkit serve would refuse to spawn must say so under ``-v``.
+
+    Regression: ``-v`` filtered the discovery record on
+    ``skip_reason is None`` and returned silently, so a toolkit with a
+    dangling pin printed its version rows and no tools at all — the one
+    case where the user most needs to be told something is wrong.
+    """
+
+    def _two_slots_with_tools(self):
+        for version in ("0.1.0", "0.2.0"):
+            slot = _make_slot(
+                "kit", version,
+                last_used=datetime.now() - timedelta(hours=1),
+                size_bytes=1024,
+            )
+            _write_toolkit_yaml(
+                slot,
+                bundles={},
+                tools=[{"name": "solo", "module": "tools.solo",
+                        "description": "a tool"}],
+            )
+
+    def test_dangling_pin_reports_reason_instead_of_nothing(
+        self, fake_home, tmp_path,
+    ):
+        project = tmp_path / "myproj"
+        (project / ".toolbase").mkdir(parents=True)
+        # Pin a version that isn't installed — e.g. an editable slot the
+        # user removed outside `tb uninstall`.
+        add_pin(project_manifest_path(project), "kit", "editable")
+        self._two_slots_with_tools()
+
+        r = CliRunner().invoke(
+            cli.main, ["--project-dir", str(project), "list", "-v"],
+        )
+        assert r.exit_code == 0, r.output
+        assert "not served" in r.output
+        # The reason names the pin and what's actually installed.
+        assert "editable" in r.output
+        assert "0.2.0" in r.output
+
+    def test_servable_toolkit_has_no_warning(self, fake_home, tmp_path):
+        project = tmp_path / "myproj"
+        (project / ".toolbase").mkdir(parents=True)
+        add_pin(project_manifest_path(project), "kit", "0.1.0")
+        self._two_slots_with_tools()
+
+        r = CliRunner().invoke(
+            cli.main, ["--project-dir", str(project), "list", "-v"],
+        )
+        assert r.exit_code == 0, r.output
+        assert "not served" not in r.output
+        assert "solo" in r.output
+
+
 # ── pinned-version indicator ────────────────────────────────────────
 
 

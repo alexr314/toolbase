@@ -5443,12 +5443,17 @@ def _list_print_tools_verbose(name, resolved_profile, collisions=None) -> None:
     from .serve.profiles import tool_is_served
     from .envs.cache import installed_bundles as _installed_bundles
 
-    disc = next(
-        (d for d in discover_toolkits()
-         if d.name == name and d.skip_reason is None),
-        None,
-    )
+    disc = next((d for d in discover_toolkits() if d.name == name), None)
     if disc is None:
+        return
+    if disc.skip_reason:
+        # The toolkit is installed but serve would refuse to spawn it (a
+        # dangling pin, an unsupported environment). Silence here reads
+        # as "this toolkit has no tools" — say why instead, since this
+        # is the same reason string the serve banner prints.
+        console.print(
+            f"    [yellow]⚠ not served: {disc.skip_reason}[/yellow]"
+        )
         return
     availability, name_to_bundles = _resolve_bundle_availability(disc)
     if not name_to_bundles:
