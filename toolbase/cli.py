@@ -164,9 +164,11 @@ def _display_path(path: Path) -> str:
     checkout, or another drive on Windows).
     """
     try:
-        return f"./{path.relative_to(Path.cwd())}"
+        rel = path.relative_to(Path.cwd())
     except ValueError:
         return str(path)
+    # relative_to() gives "." for cwd itself; "./." reads as a typo.
+    return "." if str(rel) == "." else f"./{rel}"
 
 
 def _require_input(
@@ -3514,6 +3516,38 @@ def _manifest_scope_root(local_scope: bool) -> Path:
     return project_root
 
 
+def _warn_pin_scope_not_active(
+    manifest_root: Path, name: str, version: Optional[str] = None,
+) -> None:
+    """Warn when a pin was written somewhere that doesn't govern cwd.
+
+    ``-g`` (the default for install/use) writes the default-project,
+    but a cwd inside a project resolves pins from *that* project's
+    manifest — the global pin contributes nothing there. Without this
+    note the command reports success while the version the user asked
+    for is not the one that will serve where they're standing.
+    """
+    try:
+        from .envs import project_manifest_path as _project_manifest_path
+        active, _source = _resolve_active_project_root()
+        if active.resolve() == manifest_root.resolve():
+            return
+        active_manifest = _display_path(_project_manifest_path(active))
+        console.print(
+            f"[yellow]⚠ This global pin does not apply here: you're in a "
+            f"project with its own manifest ({active_manifest}).[/yellow]"
+        )
+        # `tb use -l` rather than `tb install -l`: the slot is already in
+        # the cache, so repeating the install would rebuild it to move a
+        # pin. Suggested for both callers for that reason.
+        target = f"{name}@{version}" if version else f"{name}@<version>"
+        console.print(
+            f"  [dim]To pin for this project: `tb use -l {target}`[/dim]"
+        )
+    except Exception:
+        pass  # a heads-up must never break the command
+
+
 def _pin_after_install(
     name: str, version: str, *,
     local_scope: bool,
@@ -3537,15 +3571,16 @@ def _pin_after_install(
             project_manifest_path as _project_manifest_path,
             add_pin as _add_pin,
         )
-        manifest_path = _project_manifest_path(_manifest_scope_root(local_scope))
+        scope_root = _manifest_scope_root(local_scope)
+        manifest_path = _project_manifest_path(scope_root)
         _add_pin(manifest_path, name, version, bundles=bundles)
         if local_scope:
-            try:
-                rel = manifest_path.relative_to(Path.cwd())
-                display = f"./{rel}"
-            except ValueError:
-                display = str(manifest_path)
-            console.print(f"[dim]Pinned to this project: {display}[/dim]")
+            console.print(
+                f"[dim]Pinned to this project: "
+                f"{_display_path(manifest_path)}[/dim]"
+            )
+        else:
+            _warn_pin_scope_not_active(scope_root, name, version)
     except Exception as e:
         console.print(
             f"[dim]Note: could not pin {name} to the manifest: {e}[/dim]"
@@ -5401,15 +5436,29 @@ def list_cmd(as_json, verbose):
         # the legend readable in real-project usage. Falls back to the
         # absolute path for default-project or when relative-resolution
         # fails (e.g. across drive letters on Windows).
-        try:
-            rel = manifest_path.relative_to(Path.cwd())
-            display = f"./{rel}"
-        except ValueError:
-            display = str(manifest_path)
-        console.print()
-        console.print(
-            f"[dim]* = pinned in this project ({display})[/dim]"
+        # "this project" is only true for a real project. The
+        # default-project is the global fallback used when there's no
+        # project above cwd, and calling that "this project" sends
+        # people looking for a .toolbase/ that isn't there. Its path is
+        # printed absolute for the same reason — rendered relative to a
+        # cwd that happens to be home, it reads like a local one.
+        from .envs import (
+            default_project_root as _default_project_root,
+            project_manifest_path as _project_manifest_path,
         )
+        is_default = (
+            manifest_path == _project_manifest_path(_default_project_root())
+        )
+        console.print()
+        if is_default:
+            console.print(
+                f"[dim]* = pinned globally ({manifest_path})[/dim]"
+            )
+        else:
+            console.print(
+                f"[dim]* = pinned in this project "
+                f"({_display_path(manifest_path)})[/dim]"
+            )
 
     if any_ambiguous:
         # Printed once rather than per toolkit: with several unpinned
@@ -5895,9 +5944,12 @@ def use_cmd(target, global_scope, local_scope):
 
     console.print(f"[dim]Manifest: {_display_path(manifest_path)}[/dim]")
 
-    # Report the effect on the scope we just wrote, not on cwd's project
-    # — `-g` from inside a project changes a manifest that doesn't apply
-    # here, and saying otherwise would be a lie.
+    # The resolution reported is the one for the scope we wrote. That is
+    # only the whole story when that scope governs cwd — otherwise say so
+    # outright, because "now serves X" read from inside a project that
+    # resolves differently is worse than saying nothing.
+    if not local_scope:
+        _warn_pin_scope_not_active(scope_root, name, version)
     resolution = _resolve_version(
         _list_versions(name), pin=_active_pins(scope_root).get(name),
     )
@@ -5926,8 +5978,9 @@ def uninstall(name, yes, no_, no_input):
       tb uninstall aster              — removes ALL installed versions
       tb uninstall aster@1.2.0        — removes one version slot only
 
-    Also removes the corresponding pin from the active project's
-    manifest (Phase 2: default-project; Phase 3 wires real per-project).
+    Also removes the corresponding pin from every manifest that named
+    the removed slot — the active project's and the global
+    default-project's, committed and machine-local layers alike.
 
     Conda environments are torn down before the cache slot is removed
     (so a failure here doesn't leave orphan conda envs behind).
@@ -5944,6 +5997,7 @@ def uninstall(name, yes, no_, no_input):
         find_slot as _find_slot,
         project_manifest_path as _project_manifest_path,
         remove_pin as _remove_pin,
+        sort_versions as _sort_versions_for_display,
     )
 
     mode = _resolve_prompt_mode(yes, no_, no_input)
@@ -5972,7 +6026,8 @@ def uninstall(name, yes, no_, no_input):
                 f"[red]✗ {name} v{target_version} is not installed.[/red]"
             )
             console.print(
-                f"Installed versions of {name}: {', '.join(sorted(versions))}"
+                f"Installed versions of {name}: "
+                f"{', '.join(_sort_versions_for_display(versions))}"
             )
             sys.exit(1)
         targets = [slot]

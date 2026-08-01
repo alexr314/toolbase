@@ -34,6 +34,7 @@ from toolbase.envs import (
     DISK_SIZE_FILE,
     add_pin,
     project_manifest_path,
+    default_project_root,
 )
 
 
@@ -786,6 +787,44 @@ class TestPinIndicator:
         assert "pinned in this project" in result.output
         # Legend points at the resolved manifest path.
         assert "manifest.yaml" in result.output
+
+    def test_default_project_legend_does_not_claim_a_project(
+        self, fake_home, tmp_path, monkeypatch,
+    ):
+        """Outside any project the pin comes from the global fallback.
+        Calling that "this project" sends people looking for a
+        .toolbase/ that doesn't exist."""
+        # Discovery walks up from cwd, so this has to run somewhere with
+        # no project above it or the walk finds one and the pin doesn't
+        # apply at all.
+        workdir = tmp_path / "_cwd"
+        workdir.mkdir()
+        monkeypatch.chdir(workdir)
+        _make_slot("heptapod", "0.1.0",
+                   last_used=datetime.now() - timedelta(hours=1),
+                   size_bytes=1024)
+        add_pin(project_manifest_path(default_project_root()),
+                "heptapod", "0.1.0")
+        result = CliRunner().invoke(cli.main, ["list"])
+        assert result.exit_code == 0, result.output
+        assert "*" in result.output
+        assert "pinned globally" in result.output
+        assert "pinned in this project" not in result.output
+
+    def test_real_project_legend_still_says_this_project(
+        self, fake_home, tmp_path,
+    ):
+        project = tmp_path / "myproj"
+        (project / ".toolbase").mkdir(parents=True)
+        add_pin(project_manifest_path(project), "heptapod", "0.1.0")
+        _make_slot("heptapod", "0.1.0",
+                   last_used=datetime.now() - timedelta(hours=1),
+                   size_bytes=1024)
+        result = CliRunner().invoke(
+            cli.main, ["--project-dir", str(project), "list"],
+        )
+        assert result.exit_code == 0, result.output
+        assert "pinned in this project" in result.output
 
     def test_pin_only_marks_correct_version(self, fake_home, tmp_path):
         """Pinning 0.3.0 doesn't mark 0.1.0 with a star."""

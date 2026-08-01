@@ -125,6 +125,61 @@ class TestPinWriting:
         assert "mutually exclusive" in r.output
 
 
+class TestGlobalPinInsideAProject:
+    """`-g` is the default scope, but a project's own manifest is what
+    governs cwd — so a global pin written from inside one changes
+    nothing there. Reporting plain success would be a lie."""
+
+    @pytest.fixture
+    def project(self, fake_home, tmp_path, monkeypatch):
+        proj = tmp_path / "myrepo"
+        (proj / ".toolbase").mkdir(parents=True)
+        (proj / ".toolbase" / "manifest.yaml").write_text(
+            "toolkits: []\nschema_version: 1\n"
+        )
+        monkeypatch.chdir(proj)
+        return proj
+
+    def test_warns_that_the_global_pin_does_not_apply(self, project):
+        _slot("kit", "1.0.0")
+        _slot("kit", "2.0.0")
+        r = CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
+        assert r.exit_code == 0, r.output
+        assert "does not apply here" in r.output
+        # The fix is spelled out, copy-pasteable, and doesn't rebuild.
+        assert "tb use -l kit@1.0.0" in r.output
+
+    def test_local_scope_does_not_warn(self, project):
+        _slot("kit", "1.0.0")
+        r = CliRunner().invoke(cli.main, ["use", "-l", "kit@1.0.0"])
+        assert r.exit_code == 0, r.output
+        assert "does not apply here" not in r.output
+
+    def test_no_warning_outside_a_project(self, fake_home):
+        """fake_home chdirs somewhere with no project above it, so the
+        default-project IS what governs cwd."""
+        _slot("kit", "1.0.0")
+        r = CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
+        assert r.exit_code == 0, r.output
+        assert "does not apply here" not in r.output
+
+    def test_install_pin_warns_too(self, project, capsys):
+        """`tb install` writes the same pin with the same default scope,
+        and used to say nothing at all about it."""
+        _slot("kit", "1.0.0")
+        cli._pin_after_install("kit", "1.0.0", local_scope=False)
+        out = capsys.readouterr().out
+        assert "does not apply here" in out
+        assert "tb use -l kit@1.0.0" in out
+
+    def test_install_local_pin_does_not_warn(self, project, capsys):
+        _slot("kit", "1.0.0")
+        cli._pin_after_install("kit", "1.0.0", local_scope=True)
+        out = capsys.readouterr().out
+        assert "does not apply here" not in out
+        assert "Pinned to this project" in out
+
+
 class TestEditablePin:
     def test_editable_goes_to_the_local_layer(self, fake_home):
         """An editable slot points at this machine's checkout, so its pin

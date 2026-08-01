@@ -26,6 +26,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **`tb install -l` ignored `--project-dir`.** It walked up from the working directory regardless, so the documented project-discovery override didn't apply to pin writes.
 
+- **A global pin written from inside a project claimed success while changing nothing there.** `-g` is the default scope for `install` and `use`, but a cwd inside a project resolves pins from *that* project's manifest, so `tb install kit@1.0.0` (or `tb use kit@1.0.0`) run from a repo with its own `.toolbase/` pinned a version that the repo then ignored in favour of the highest installed. `install` said nothing at all; `use` printed a plain success line. Both now say the pin doesn't apply there and give the `-l` form to fix it. The underlying scope asymmetry is unchanged — this makes it visible rather than silent.
+
+- **`tb list`'s pin legend claimed a project that doesn't exist.** Outside any project the `*` refers to the global default-project fallback, but the legend read `* = pinned in this project`, sending people to look for a `.toolbase/` that was never there. It now says `pinned globally` and prints that manifest's absolute path (rendered relative to a cwd that happens to be your home directory, it read like a local file).
+
+- **`tb uninstall` listed installed versions lexicographically** in its "not installed" error, putting `2.10.0` before `2.9.0` — the opposite of `tb list` and `tb use`, which sort numerically.
+
 - **`tb uninstall` left a dangling pin in the global manifest.** `install` pins the default-project by default (`-g`), but `uninstall` only cleaned the *active* project's manifest — different files whenever you're inside a project with its own `.toolbase/`. Installing a toolkit from a repo and then uninstalling it there deleted the binaries while leaving `<name>@<version>` pinned globally, naming a version that no longer existed. Since a pin naming an absent slot makes serve skip the toolkit outright, the toolkit then stayed unservable everywhere the default-project applies — including after reinstalling a *different* version, because the stale pin still won. Both roots' committed and machine-local layers are now cleaned, and the stale-pin warning names which manifest it edited.
 
 ## [0.11.0] — 2026-07-30

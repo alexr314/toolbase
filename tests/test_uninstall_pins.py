@@ -143,6 +143,17 @@ class TestPartialUninstall:
         assert "stale pin" not in r.output
 
 
+class TestErrorMessages:
+    def test_installed_versions_listed_highest_first(self, in_project):
+        """Lexicographic order puts 2.10.0 before 2.9.0, contradicting
+        `tb list` and `tb use`, which sort numerically."""
+        for v in ("2.9.0", "2.10.0", "1.0.0"):
+            _slot("kit", v)
+        r = _uninstall("kit@9.9.9")
+        assert r.exit_code == 1
+        assert "2.10.0, 2.9.0, 1.0.0" in r.output
+
+
 class TestOutsideAProject:
     def test_default_project_is_not_processed_twice(self, tmp_path, monkeypatch):
         """With no project above cwd the active project IS the
