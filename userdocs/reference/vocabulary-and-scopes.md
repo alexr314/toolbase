@@ -23,12 +23,35 @@ Quick lookup. For the narrative, see [Concepts](../explanation.md).
 
 ## Scopes
 
-| Flag | Scope | Stores in | Applies to |
-|---|---|---|---|
-| (default), `-l` / `--local` | project | `<repo>/.toolbase/` (created in the cwd if none) | this repository (committed) |
-| `-g` / `--global` | user | `~/.toolbase/` | you, every project |
+Three keys, the same three everywhere:
 
-`config` uses `--user` / `--project` (and `--layer user\|project`) for the same
-distinction, with project the default there too. Project layer overrides user
-layer where they overlap. `install` is the exception: its binaries go to the
-global cache, and `-l` pins the version into the project.
+| Flag | Stores in | Applies to |
+|---|---|---|
+| `-u` / `--user` | `~/.toolbase/` | you, every project |
+| `-p` / `--project` | `<repo>/.toolbase/` (created in the cwd if none) | this repository, committed |
+| `--private` | `<repo>/.toolbase/*.local.yaml` | this repository, **gitignored** |
+
+`--private` is for machine truth that would be wrong on a teammate's clone:
+an absolute tool path, or a pin to a local checkout. It's written to a
+`.local.yaml` sibling of the committed file, wins over it, and drops a
+`.toolbase/.gitignore` so it never reaches git. Not every command takes it —
+profiles and harness configs have no gitignored variant.
+
+Resolution order where layers overlap: user, then project, then private,
+each overriding the last key by key.
+
+**Defaults differ by command**, which is the one wrinkle worth memorising:
+
+| Command | Default scope |
+|---|---|
+| `install`, `use` | `--user` |
+| `activate`, `deactivate`, `profile *`, `config *`, `connect` | `--project` |
+
+So `tb install foo` pins user-wide while `tb activate foo` activates for this
+project only. Inside a repo with its own `.toolbase/`, a user-scope pin does
+not apply — the commands say so when that happens.
+
+`config` additionally accepts `--layer user|project|private` as a scriptable
+spelling of the same three. `install` is the exception to scoping generally:
+its binaries always go to the user-level cache, and the scope only picks which
+manifest records the pin.

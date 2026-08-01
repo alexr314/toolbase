@@ -18,12 +18,12 @@ Then launch the harness. `claude` or `codex` starts a session with toolbase's
 tools wired in (an already-running session needs a restart to pick them up). The
 active profile's tools appear as `<toolkit>__<tool>`.
 
-**Scopes.** The default is project-local (committed, team-shared). `-g/--global`
+**Scopes.** The default is project-local (committed, team-shared). `-u/--user`
 wires it into every session instead:
 
 ```bash
 tb connect claude-code        # project: ./.mcp.json (default)
-tb connect claude-code -g     # user: ~/.claude.json (every session)
+tb connect claude-code -u     # user: ~/.claude.json (every session)
 ```
 
 The first time a harness opens a project with a committed config, it shows a
@@ -50,7 +50,7 @@ stdio MCP server entry:
 ### Codex
 
 `tb connect codex` writes the same entry to Codex's TOML config
-(`./.codex/config.toml`, or `~/.codex/config.toml` with `-g`):
+(`./.codex/config.toml`, or `~/.codex/config.toml` with `-u`):
 
 ```toml
 [mcp_servers.toolbase]
@@ -167,11 +167,11 @@ the project config for each harness — so you can see exactly where an entry
 lives before changing it.
 
 **Removing.** `tb disconnect` mirrors connect's scopes: it removes from this
-project by default, `-g` from the user config, and `--all` from both at once.
+project by default, `-u` from the user config, and `--all` from both at once.
 
 ```bash
 tb disconnect claude-code          # this project's .mcp.json
-tb disconnect claude-code -g       # user ~/.claude.json (every session)
+tb disconnect claude-code -u       # user ~/.claude.json (every session)
 tb disconnect claude-code --all    # both at once
 ```
 

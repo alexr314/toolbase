@@ -128,7 +128,7 @@ def test_pin_editable_local_writes_layer_and_gitignore(tmp_path, monkeypatch):
         "toolbase.envs.project_manifest_path",
         lambda root: root / ".toolbase" / "manifest.yaml")
 
-    cli._pin_editable_local("heptapod", local_scope=True)
+    cli._pin_editable_local("heptapod", scope=cli.SCOPE_PROJECT)
 
     local = project / ".toolbase" / "manifest.local.yaml"
     assert load_merged_pins(project / ".toolbase" / "manifest.yaml") == {
@@ -152,5 +152,5 @@ def test_pin_editable_local_keeps_existing_gitignore(tmp_path, monkeypatch):
     monkeypatch.setattr(
         "toolbase.envs.project_manifest_path",
         lambda root: root / ".toolbase" / "manifest.yaml")
-    cli._pin_editable_local("heptapod", local_scope=True)
+    cli._pin_editable_local("heptapod", scope=cli.SCOPE_PROJECT)
     assert (project / ".toolbase" / ".gitignore").read_text() == "custom\n"

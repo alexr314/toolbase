@@ -2,14 +2,14 @@
 
 Pin toolkits, curation, config, and harness wiring into a repo so the setup
 travels with it. Inside a project (any directory with a `.toolbase/`),
-toolbase writes there by default. Use `-g` (config: `--user`) to target your
+toolbase writes there by default. Use `-u` (config: `--user`) to target your
 user-wide layer instead.
 
 ## Pin toolkits to the project
 
 ```bash
-tb install -l calculator      # install + pin into <repo>/.toolbase/manifest.yaml
-tb install -l units           # one toolkit per command
+tb install -p calculator      # install + pin into <repo>/.toolbase/manifest.yaml
+tb install -p units           # one toolkit per command
 ```
 
 ```yaml
@@ -22,9 +22,9 @@ toolkits:
     version: 0.9.0
 ```
 
-`install` puts binaries in the global cache, shared across projects. The `-l`
+`install` puts binaries in the global cache, shared across projects. The `-p`
 flag also pins the version into this project's `manifest.yaml`, which `serve`
-respects. It's the one command that needs `-l` for the project. `activate`,
+respects. It's the one command that needs `-p` for the project. `activate`,
 `config`, and `connect` already default there.
 
 ## Curate, configure, and wire
@@ -37,7 +37,7 @@ tb config set calculator precision 10  # project config (committed, shared)
 tb connect claude-code                 # writes <repo>/.mcp.json (committed)
 ```
 
-Reach for the user-wide layer with `-g` (config: `--user`) when something
+Reach for the user-wide layer with `-u` (config: `--user`) when something
 shouldn't be committed, like a private secret:
 
 ```bash

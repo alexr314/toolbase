@@ -8,6 +8,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ## [Unreleased]
 
+### Changed (breaking)
+
+- **One scope vocabulary across every command: `--user` / `--project` / `--private`.** The CLI had grown two parallel spellings of the same axis — `-g/--global` and `-l/--local` on install/activate/connect, `--user`/`--project` on config — plus a `--local` that meant *committed project scope* in the first family and *gitignored machine layer* in the second. Same word, opposite answer to "will my teammates get this?"
+
+  The three keys are now the same everywhere: `-u/--user` (`~/.toolbase/`), `-p/--project` (`<repo>/.toolbase/`, committed), and `--private` (`<repo>/.toolbase/*.local.yaml`, gitignored). `--global`, `-g`, `--local` and `-l` are **removed**, not deprecated. `--layer` takes `user|project|private`.
+
+  This closes a gap as well as a redundancy: pins had no flag for the private layer at all — `manifest.local.yaml` was reachable only implicitly, via `-e` or `tb use …@editable`. `tb install --private` and `tb use --private` now write it directly.
+
+  Defaults are unchanged and still differ by command (install/use default to `--user`; activate, config, profile and connect to `--project`). That asymmetry is a separate question from the spelling.
+
+  `tb init`'s `-p` short for `--path` is also gone, so `-p` means project everywhere; `--path` still works.
+
 ### Added
 
 - **`tb use <toolkit>@<version>` switches which installed version serves.** Only `install` could write a pin, so moving one between two already-installed versions meant re-running `tb install <name>@<version>` — which deletes the cache slot and rebuilds the environment from scratch, and, if you decline the "already installed, reinstall?" prompt, aborts before writing the pin at all. There was no way to get the pin without paying for the rebuild. `tb use` writes the manifest and nothing else. Bare `tb use <toolkit>` clears the pin; `-g`/`-l` scope it like `install`; an `editable` choice goes to the gitignored `manifest.local.yaml`, since that pin can't be shared. A local pin that would silently override the layer being written is removed, loudly.

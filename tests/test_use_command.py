@@ -111,7 +111,7 @@ class TestPinWriting:
         _slot("kit", "1.0.0")
         _slot("kit", "2.0.0")
         r = CliRunner().invoke(
-            cli.main, ["--project-dir", str(project), "use", "-l", "kit@1.0.0"],
+            cli.main, ["--project-dir", str(project), "use", "-p", "kit@1.0.0"],
         )
         assert r.exit_code == 0, r.output
         assert _pins(project_manifest_path(project)) == {"kit": "1.0.0"}
@@ -120,7 +120,7 @@ class TestPinWriting:
 
     def test_global_and_local_are_mutually_exclusive(self, fake_home):
         _slot("kit", "1.0.0")
-        r = CliRunner().invoke(cli.main, ["use", "-g", "-l", "kit@1.0.0"])
+        r = CliRunner().invoke(cli.main, ["use", "-u", "-p", "kit@1.0.0"])
         assert r.exit_code != 0
         assert "mutually exclusive" in r.output
 
@@ -147,11 +147,11 @@ class TestGlobalPinInsideAProject:
         assert r.exit_code == 0, r.output
         assert "does not apply here" in r.output
         # The fix is spelled out, copy-pasteable, and doesn't rebuild.
-        assert "tb use -l kit@1.0.0" in r.output
+        assert "tb use -p kit@1.0.0" in r.output
 
     def test_local_scope_does_not_warn(self, project):
         _slot("kit", "1.0.0")
-        r = CliRunner().invoke(cli.main, ["use", "-l", "kit@1.0.0"])
+        r = CliRunner().invoke(cli.main, ["use", "-p", "kit@1.0.0"])
         assert r.exit_code == 0, r.output
         assert "does not apply here" not in r.output
 
@@ -167,14 +167,14 @@ class TestGlobalPinInsideAProject:
         """`tb install` writes the same pin with the same default scope,
         and used to say nothing at all about it."""
         _slot("kit", "1.0.0")
-        cli._pin_after_install("kit", "1.0.0", local_scope=False)
+        cli._pin_after_install("kit", "1.0.0", scope=cli.SCOPE_USER)
         out = capsys.readouterr().out
         assert "does not apply here" in out
-        assert "tb use -l kit@1.0.0" in out
+        assert "tb use -p kit@1.0.0" in out
 
     def test_install_local_pin_does_not_warn(self, project, capsys):
         _slot("kit", "1.0.0")
-        cli._pin_after_install("kit", "1.0.0", local_scope=True)
+        cli._pin_after_install("kit", "1.0.0", scope=cli.SCOPE_PROJECT)
         out = capsys.readouterr().out
         assert "does not apply here" not in out
         assert "Pinned to this project" in out
@@ -198,7 +198,7 @@ class TestEditablePin:
         _slot("kit", "editable")
         CliRunner().invoke(
             cli.main,
-            ["--project-dir", str(project), "use", "-l", "kit@editable"],
+            ["--project-dir", str(project), "use", "-p", "kit@editable"],
         )
         gitignore = project / ".toolbase" / ".gitignore"
         assert "manifest.local.yaml" in gitignore.read_text()

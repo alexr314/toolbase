@@ -156,6 +156,69 @@ def _format_bytes(n: int) -> str:
     return f"{n / (1024 ** 3):.2f} GB"
 
 
+# ── scope vocabulary ────────────────────────────────────────────────
+#
+# Every command that writes state picks one of three destinations. The
+# underlying storage is two axes — user vs project, and committed vs
+# gitignored — but the second only exists at project scope (nothing in
+# ~/.toolbase/ is in git to begin with), so three values cover it.
+#
+#   --user / -u      ~/.toolbase/            you, every project
+#   --project / -p   <repo>/.toolbase/       committed, shared
+#   --private        <repo>/.toolbase/*.local.yaml   gitignored machine state
+#
+# Commands differ only in which of the three they accept and which is
+# their default; the words never change meaning between commands.
+SCOPE_USER = "user"
+SCOPE_PROJECT = "project"
+SCOPE_PRIVATE = "private"
+
+
+def _private_option(f):
+    """Add ``--private`` to a command that writes a layerable file.
+
+    Only pins and per-toolkit config have a gitignored sibling; profiles
+    and harness configs don't, so they don't take this.
+    """
+    return click.option(
+        '--private', 'private_scope', is_flag=True, default=False,
+        help=(
+            "Write this project's gitignored layer (*.local.yaml) — "
+            "machine truth like absolute paths or a local checkout, kept "
+            "out of git. Wins over the committed project layer."
+        ),
+    )(f)
+
+
+def _resolve_scope(
+    user_scope: bool,
+    project_scope: bool,
+    private_scope: bool = False,
+    *,
+    default: str,
+) -> str:
+    """Reduce the scope flags to one of SCOPE_USER/PROJECT/PRIVATE.
+
+    ``default`` is the command's own default, which still differs by
+    command family (install/use default to user; profile and config
+    commands to project). Passing more than one flag is a usage error
+    rather than a silent precedence rule — with three destinations, a
+    precedence order nobody can see is how pins end up in the wrong file.
+    """
+    chosen = [
+        scope for scope, flag in (
+            (SCOPE_USER, user_scope),
+            (SCOPE_PROJECT, project_scope),
+            (SCOPE_PRIVATE, private_scope),
+        ) if flag
+    ]
+    if len(chosen) > 1:
+        raise click.UsageError(
+            "--user / --project / --private are mutually exclusive."
+        )
+    return chosen[0] if chosen else default
+
+
 def _display_path(path: Path) -> str:
     """Render a path relative to cwd when it's below it, else absolute.
 
@@ -825,7 +888,9 @@ def create(name, category, description, organization, version, yes, no_, no_inpu
 @main.command()
 @click.argument('name', required=False)
 @click.option(
-    '--path', '-p', default=None,
+    # No -p short: -p is --project everywhere else, and one short flag
+    # meaning two things is what this vocabulary exists to avoid.
+    '--path', default=None,
     help='Parent directory to create the toolkit in (default: current dir).',
 )
 @click.option('--with-docker', is_flag=True, help='Include Dockerfile template')
@@ -1864,25 +1929,29 @@ def _layer_option(f):
     default). Mutually exclusive — passing more than one is a usage error.
     """
     f = click.option(
-        "--project", "layer_project", is_flag=True, default=False,
-        help="Target the project layer explicitly.",
+        "--project", "-p", "layer_project", is_flag=True, default=False,
+        help="Target this project's committed layer (the default).",
     )(f)
     f = click.option(
-        "--user", "layer_user", is_flag=True, default=False,
-        help="Target the user layer explicitly.",
+        "--user", "-u", "layer_user", is_flag=True, default=False,
+        help="Target the user layer.",
     )(f)
     f = click.option(
-        "--local", "layer_local", is_flag=True, default=False,
+        "--private", "layer_private", is_flag=True, default=False,
         help=(
-            "Target the project-LOCAL layer: config/<toolkit>.local.yaml, "
-            "project-scoped but gitignored — machine truth like absolute "
+            "Target this project's gitignored layer: "
+            "config/<toolkit>.local.yaml — machine truth like absolute "
             "tool paths. Wins over the committed project layer."
         ),
     )(f)
     f = click.option(
         "--layer", "layer_explicit",
-        type=click.Choice(["user", "project", "local"]), default=None,
-        help="Target a specific config layer (alternative to --user/--project/--local).",
+        type=click.Choice([SCOPE_USER, SCOPE_PROJECT, SCOPE_PRIVATE]),
+        default=None,
+        help=(
+            "Target a specific layer (alternative to "
+            "--user/--project/--private)."
+        ),
     )(f)
     return f
 
@@ -1892,7 +1961,7 @@ def _resolve_config_layer(
     layer_explicit: Optional[str],
     layer_user: bool,
     layer_project: bool,
-    layer_local: bool = False,
+    layer_private: bool = False,
     default_context: str = "auto",
 ) -> Tuple[str, Optional[Path]]:
     """Resolve the per-command effective layer.
@@ -1915,32 +1984,32 @@ def _resolve_config_layer(
         explicit.append("user")
     if layer_project:
         explicit.append("project")
-    if layer_local:
-        explicit.append("local")
+    if layer_private:
+        explicit.append(SCOPE_PRIVATE)
     if len(explicit) > 1:
         raise click.UsageError(
-            "--layer / --user / --project / --local are mutually exclusive."
+            "--layer / --user / --project / --private are mutually exclusive."
         )
 
     if explicit:
         layer = explicit[0]
     else:
         # Default: the cwd's project (create .toolbase/ if there's none
-        # above, mirroring `tb activate` / `tb install -l`). --user targets
+        # above, mirroring `tb activate` / `tb install -p`). --user targets
         # the user layer.
-        return "project", _cwd_project_root()
+        return SCOPE_PROJECT, _cwd_project_root()
 
-    # Explicit layer specified. "local" is project-scoped too — same
+    # Explicit layer specified. "private" is project-scoped too — same
     # root discovery, different (gitignored) file.
-    if layer in ("project", "local"):
+    if layer in (SCOPE_PROJECT, SCOPE_PRIVATE):
         return layer, _cwd_project_root()
-    return "user", None
+    return SCOPE_USER, None
 
 
 @config.command(name="path")
 @click.argument("toolkit_name")
 @_layer_option
-def config_path_cmd(toolkit_name, layer_explicit, layer_user, layer_project, layer_local):
+def config_path_cmd(toolkit_name, layer_explicit, layer_user, layer_project, layer_private):
     """Print the absolute path to a toolkit's config file.
 
     Defaults to the active layer for the current context (project layer
@@ -1952,7 +2021,7 @@ def config_path_cmd(toolkit_name, layer_explicit, layer_user, layer_project, lay
     layer, project_root = _resolve_config_layer(
         layer_explicit=layer_explicit,
         layer_user=layer_user, layer_project=layer_project,
-        layer_local=layer_local,
+        layer_private=layer_private,
     )
     print(_cfg_path(toolkit_name, layer=layer, project_root=project_root))
 
@@ -1960,7 +2029,7 @@ def config_path_cmd(toolkit_name, layer_explicit, layer_user, layer_project, lay
 @config.command(name="show")
 @click.argument("toolkit_name")
 @_layer_option
-def config_show(toolkit_name, layer_explicit, layer_user, layer_project, layer_local):
+def config_show(toolkit_name, layer_explicit, layer_user, layer_project, layer_private):
     """Show a toolkit's effective configuration.
 
     Default (no flags): merged view of user + project layers, with each
@@ -2132,7 +2201,7 @@ def config_show(toolkit_name, layer_explicit, layer_user, layer_project, layer_l
 @config.command(name="edit")
 @click.argument("toolkit_name")
 @_layer_option
-def config_edit(toolkit_name, layer_explicit, layer_user, layer_project, layer_local):
+def config_edit(toolkit_name, layer_explicit, layer_user, layer_project, layer_private):
     """Open the toolkit's config file in $EDITOR.
 
     Defaults to the project layer in a project context, the user layer
@@ -2155,7 +2224,7 @@ def config_edit(toolkit_name, layer_explicit, layer_user, layer_project, layer_l
     layer, project_root = _resolve_config_layer(
         layer_explicit=layer_explicit,
         layer_user=layer_user, layer_project=layer_project,
-        layer_local=layer_local,
+        layer_private=layer_private,
     )
     cfg_file = _cfg_path(
         toolkit_name, layer=layer, project_root=project_root,
@@ -2225,7 +2294,7 @@ def config_edit(toolkit_name, layer_explicit, layer_user, layer_project, layer_l
 @_layer_option
 def config_set(
     toolkit_name, key, value,
-    layer_explicit, layer_user, layer_project, layer_local,
+    layer_explicit, layer_user, layer_project, layer_private,
 ):
     """Set one config field on a toolkit (preserves other fields/comments).
 
@@ -2267,14 +2336,14 @@ def config_set(
     layer, project_root = _resolve_config_layer(
         layer_explicit=layer_explicit,
         layer_user=layer_user, layer_project=layer_project,
-        layer_local=layer_local,
+        layer_private=layer_private,
     )
     cfg_written = set_config_value(
         toolkit_name, key, parsed,
         layer=layer, project_root=project_root,
     )
-    if layer == "local":
-        # config/ sits one level below .toolbase/ — keep the local
+    if layer == SCOPE_PRIVATE:
+        # config/ sits one level below .toolbase/ — keep the private
         # layer out of git the same way editable pins are.
         _ensure_toolbase_gitignore(cfg_written.parent.parent)
     cfg_file = _cfg_path(
@@ -2292,7 +2361,7 @@ def config_set(
 @_layer_option
 def config_unset(
     toolkit_name, key,
-    layer_explicit, layer_user, layer_project, layer_local,
+    layer_explicit, layer_user, layer_project, layer_private,
 ):
     """Remove one config field from a toolkit's config file.
 
@@ -2304,7 +2373,7 @@ def config_unset(
     layer, project_root = _resolve_config_layer(
         layer_explicit=layer_explicit,
         layer_user=layer_user, layer_project=layer_project,
-        layer_local=layer_local,
+        layer_private=layer_private,
     )
     removed = unset_config_value(
         toolkit_name, key, layer=layer, project_root=project_root,
@@ -2395,7 +2464,7 @@ def _render_config_scaffold(toolkit_name: str, schema, source_path: Path) -> str
     help="Overwrite an existing config file.",
 )
 def config_init(
-    toolkit_name, layer_explicit, layer_user, layer_project, layer_local, force,
+    toolkit_name, layer_explicit, layer_user, layer_project, layer_private, force,
 ):
     """Scaffold a commented YAML config file from the toolkit's ``config:`` schema.
 
@@ -2425,7 +2494,7 @@ def config_init(
     layer, project_root = _resolve_config_layer(
         layer_explicit=layer_explicit,
         layer_user=layer_user, layer_project=layer_project,
-        layer_local=layer_local,
+        layer_private=layer_private,
     )
     out_path = _cfg_path(
         toolkit_name, layer=layer, project_root=project_root,
@@ -3485,35 +3554,54 @@ def _resolve_install_source_path(arg: str) -> Optional[Path]:
     return None
 
 
-def _manifest_scope_root(local_scope: bool) -> Path:
+def _manifest_scope_root(scope: str) -> Path:
     """The project root whose manifest a pin should be written to.
 
-    ``local_scope=False`` (the -g default) is the global default-project.
-    ``local_scope=True`` (-l) is THIS project: ``--project-dir`` if given,
-    else the nearest ``.toolbase/`` above cwd, else a new one in cwd.
+    ``SCOPE_USER`` is the user-level default-project. ``SCOPE_PROJECT``
+    and ``SCOPE_PRIVATE`` are both THIS project — they differ in which
+    file inside it gets written, not in which root (see
+    ``_pin_manifest_path``): ``--project-dir`` if given, else the
+    nearest ``.toolbase/`` above cwd, else a new one in cwd.
     """
     from .envs import default_project_root as _default_project_root
 
-    if not local_scope:
+    if scope == SCOPE_USER:
         return _default_project_root()
     from .envs import project_manifest_path as _project_manifest_path
 
     project_root, source = _resolve_active_project_root()
     if source == "fallback":
-        # No project anywhere above cwd. -l asked for a local pin, so
-        # make cwd the project rather than silently writing the global
-        # manifest the flag exists to avoid. Materializing writes the
-        # empty manifest.yaml that makes the dir discoverable at all —
-        # find_project_root keys on that file, not on .toolbase/.
+        # No project anywhere above cwd. The flag asked for a project
+        # pin, so make cwd the project rather than silently writing the
+        # user-level manifest the flag exists to avoid. Materializing
+        # writes the empty manifest.yaml that makes the dir discoverable
+        # at all — find_project_root keys on that file, not .toolbase/.
         project_root = Path.cwd().resolve()
         _materialize_project_dir(project_root)
     else:
         # An existing project just needs the directory; don't create a
-        # committed manifest, since an editable pin writes only the
-        # gitignored local layer and would leave a stray empty file.
+        # committed manifest, since a private pin writes only the
+        # gitignored layer and would leave a stray empty file.
         _project_manifest_path(project_root).parent.mkdir(
             parents=True, exist_ok=True)
     return project_root
+
+
+def _pin_manifest_path(scope: str) -> Path:
+    """The manifest file a pin at ``scope`` belongs in.
+
+    ``SCOPE_PRIVATE`` selects the gitignored ``manifest.local.yaml``
+    sibling; the other two write the committed manifest of their root.
+    """
+    from .envs import (
+        project_manifest_path as _project_manifest_path,
+        local_manifest_path as _local_manifest_path,
+    )
+    committed = _project_manifest_path(_manifest_scope_root(scope))
+    if scope == SCOPE_PRIVATE:
+        _ensure_toolbase_gitignore(committed.parent)
+        return _local_manifest_path(committed)
+    return committed
 
 
 def _warn_pin_scope_not_active(
@@ -3542,7 +3630,7 @@ def _warn_pin_scope_not_active(
         # pin. Suggested for both callers for that reason.
         target = f"{name}@{version}" if version else f"{name}@<version>"
         console.print(
-            f"  [dim]To pin for this project: `tb use -l {target}`[/dim]"
+            f"  [dim]To pin for this project: `tb use -p {target}`[/dim]"
         )
     except Exception:
         pass  # a heads-up must never break the command
@@ -3550,37 +3638,34 @@ def _warn_pin_scope_not_active(
 
 def _pin_after_install(
     name: str, version: str, *,
-    local_scope: bool,
+    scope: str,
     bundles: Optional[List[str]] = None,
 ) -> None:
-    """Pin (name, version) into the global or active-project manifest.
+    """Pin (name, version) into the manifest for ``scope``.
 
-    ``local_scope=False`` (the -g default) pins into the global
-    default-project manifest. ``local_scope=True`` (-l) pins into the
-    active project's manifest, creating ``.toolbase/`` in cwd if no
-    project is found above it. Best-effort: a pin failure warns but
-    doesn't fail the install (the cache slot is already usable; serve
-    falls back to walking the cache).
+    ``SCOPE_USER`` (the default) pins into the user-level
+    default-project. ``SCOPE_PROJECT`` / ``SCOPE_PRIVATE`` pin into the
+    active project, creating ``.toolbase/`` in cwd if no project is
+    found above it. Best-effort: a pin failure warns but doesn't fail
+    the install (the cache slot is already usable; serve falls back to
+    walking the cache).
 
     ``bundles`` (when not None) records the subset of declared bundles
     that was installed. ``None`` means "all bundles" — the manifest
     entry omits the field.
     """
     try:
-        from .envs import (
-            project_manifest_path as _project_manifest_path,
-            add_pin as _add_pin,
-        )
-        scope_root = _manifest_scope_root(local_scope)
-        manifest_path = _project_manifest_path(scope_root)
+        from .envs import add_pin as _add_pin
+        manifest_path = _pin_manifest_path(scope)
         _add_pin(manifest_path, name, version, bundles=bundles)
-        if local_scope:
+        if scope == SCOPE_USER:
+            _warn_pin_scope_not_active(
+                _manifest_scope_root(scope), name, version)
+        else:
             console.print(
                 f"[dim]Pinned to this project: "
                 f"{_display_path(manifest_path)}[/dim]"
             )
-        else:
-            _warn_pin_scope_not_active(scope_root, name, version)
     except Exception as e:
         console.print(
             f"[dim]Note: could not pin {name} to the manifest: {e}[/dim]"
@@ -3598,12 +3683,13 @@ def _ensure_toolbase_gitignore(tb_dir: Path) -> None:
         gitignore.write_text("manifest.local.yaml\nconfig/*.local.yaml\n")
 
 
-def _pin_editable_local(name: str, *, local_scope: bool) -> None:
-    """Pin (name, "editable") into the machine-local manifest layer.
+def _pin_editable_local(name: str, *, scope: str) -> None:
+    """Pin (name, "editable") into the machine-private manifest layer.
 
-    Writes ``manifest.local.yaml`` next to the scoped project's
-    committed manifest and drops a ``.gitignore`` into ``.toolbase/``
-    (created only if absent) so the local layer never reaches git.
+    An editable slot points at a checkout only this machine has, so the
+    pin is always private regardless of the scope asked for — ``scope``
+    only picks which root's ``manifest.local.yaml`` it lands in. The
+    ``.gitignore`` that keeps it out of git is written alongside.
     Best-effort like _pin_after_install: a failure warns, the install
     stands.
     """
@@ -3614,7 +3700,7 @@ def _pin_editable_local(name: str, *, local_scope: bool) -> None:
             add_pin as _add_pin,
         )
         local_path = _local_manifest_path(
-            _project_manifest_path(_manifest_scope_root(local_scope))
+            _project_manifest_path(_manifest_scope_root(scope))
         )
         _add_pin(local_path, name, "editable")
         _ensure_toolbase_gitignore(local_path.parent)
@@ -3634,7 +3720,7 @@ def _install_from_path(
     source_path: Path,
     *,
     editable: bool,
-    local_scope: bool,
+    scope: str,
     no_skills: bool,
     mode: str,
     requested_bundles: Optional[List[str]] = None,
@@ -3870,7 +3956,7 @@ def _install_from_path(
         if not editable:
             _pin_after_install(
                 name, version,
-                local_scope=local_scope, bundles=union,
+                scope=scope, bundles=union,
             )
         console.print(
             f"\n[bold green]✓ Added bundle(s) "
@@ -4006,7 +4092,7 @@ def _install_from_path(
     if not editable:
         _pin_after_install(
             name, version,
-            local_scope=local_scope,
+            scope=scope,
             bundles=(
                 sorted(set(bundles_to_install))
                 if requested_bundles is not None else None
@@ -4018,7 +4104,7 @@ def _install_from_path(
         # never the committed manifest. Without a pin the editable slot
         # would lose version resolution to any numbered slot and the
         # checkout would silently not serve.
-        _pin_editable_local(name, local_scope=local_scope)
+        _pin_editable_local(name, scope=scope)
 
     console.print(f"\n[bold]Ready to use! Try:[/bold]")
     console.print(f"  [cyan]tb activate {name}[/cyan]   # expose it to the agent")
@@ -4202,20 +4288,22 @@ def _note_skills_available(name: str, slot: Path, no_skills: bool = False) -> No
 
 
 def _post_install_activate(
-    name: str, *, global_scope: bool, local_scope: bool
+    name: str, *, scope: str
 ) -> None:
     """Activate a just-installed toolkit in the default profile (``-a``).
 
-    Uses the same project-first scope resolution as ``tb activate``: the
-    cwd's project by default (creating ``.toolbase/`` there if needed), or
-    the user layer with ``-g``. The install binary always lives in the global
-    cache, but *activation* is per-project -- you install a toolkit once, then
-    activate it where you want it. Best-effort; a failure here doesn't fail
-    the install (the toolkit is in the cache regardless).
+    Follows the install's scope: ``--user`` activates the user-level
+    profile, and both project scopes activate this project's (profiles
+    have no gitignored layer, so ``--private`` collapses to project
+    here). The install binary always lives in the user-level cache, but
+    *activation* is per-project -- you install a toolkit once, then
+    activate it where you want it. Best-effort; a failure here doesn't
+    fail the install (the toolkit is in the cache regardless).
     """
     from .serve.profile_scaffold import activate as _activate
     try:
-        scope, project_root = _resolve_profile_scope(global_scope, local_scope)
+        scope, project_root = _resolve_profile_scope(
+            scope == SCOPE_USER, scope != SCOPE_USER)
         result = _activate(name, scope=scope, project_root=project_root)
     except Exception as e:
         console.print(f"[yellow]Installed, but could not activate: {e}[/yellow]")
@@ -4352,7 +4440,7 @@ def _parse_import_file(path: Path) -> list:
     return entries
 
 
-def _install_from_import_file(ctx, path: Path, *, global_scope, local_scope,
+def _install_from_import_file(ctx, path: Path, *, scope,
                               no_skills, activate_after, rebuild,
                               yes, no_, no_input, invoke=None) -> None:
     """Install every toolkit an import file lists, via the normal
@@ -4378,7 +4466,7 @@ def _install_from_import_file(ctx, path: Path, *, global_scope, local_scope,
         try:
             invoke(
                 name=e["target"], version=e["version"],
-                global_scope=global_scope, local_scope=local_scope,
+                scope=scope,
                 editable=e["editable"], no_skills=no_skills,
                 activate_after=activate_after, bundle_flags=e["bundles"],
                 rebuild=rebuild, yes=yes, no_=no_, no_input=no_input,
@@ -4397,8 +4485,8 @@ def _install_from_import_file(ctx, path: Path, *, global_scope, local_scope,
     click.echo(f"✓ {len(entries)} toolkit(s) installed from {path.name}")
 
 
-def _install_from_tarball(ctx, path: Path, *, version, global_scope,
-                          local_scope, no_skills, activate_after,
+def _install_from_tarball(ctx, path: Path, *, version, scope,
+                          no_skills, activate_after,
                           bundle_flags, rebuild, yes, no_, no_input,
                           invoke=None) -> None:
     """Install an exported toolkit tarball (``tb export``'s output).
@@ -4434,7 +4522,7 @@ def _install_from_tarball(ctx, path: Path, *, version, global_scope,
                 )
         invoke(
             name=str(root), version=version,
-            global_scope=global_scope, local_scope=local_scope,
+            scope=scope,
             editable=False, no_skills=no_skills,
             activate_after=activate_after, bundle_flags=bundle_flags,
             rebuild=rebuild, yes=yes, no_=no_, no_input=no_input,
@@ -4445,21 +4533,22 @@ def _install_from_tarball(ctx, path: Path, *, version, global_scope,
 @click.argument('name')
 @click.option('--version', '-v', help='Specific version to install (default: latest)')
 @click.option(
-    '--global', '-g', 'global_scope', is_flag=True, default=False,
+    '--user', '-u', 'user_scope', is_flag=True, default=False,
     help=(
-        'Global install (the default): pin into the global default-project '
-        'manifest. Accepts a registry name or a path to a toolkit dir.'
+        'Pin into the user-level default-project manifest (the default). '
+        'Accepts a registry name or a path to a toolkit dir.'
     ),
 )
 @click.option(
-    '--local', '-l', 'local_scope', is_flag=True, default=False,
+    '--project', '-p', 'project_scope', is_flag=True, default=False,
     help=(
-        "Local install: pin into THIS project's manifest "
+        "Pin into THIS project's manifest "
         "(<project>/.toolbase/manifest.yaml), creating the project if "
-        "needed. Binary still lives in the global cache. Accepts a "
+        "needed. Binary still lives in the user-level cache. Accepts a "
         "registry name or a path to a toolkit dir."
     ),
 )
+@_private_option
 @click.option(
     '--editable', '-e', 'editable', is_flag=True, default=False,
     help=(
@@ -4504,20 +4593,21 @@ def _install_from_tarball(ctx, path: Path, *, version, global_scope,
 )
 @_interactive_options
 @click.pass_context
-def install(ctx, name, version, global_scope, local_scope, editable, no_skills, activate_after, bundle_flags, rebuild, yes, no_, no_input):
+def install(ctx, name, version, user_scope, project_scope, private_scope, editable, no_skills, activate_after, bundle_flags, rebuild, yes, no_, no_input):
     """
     Install a toolkit — from the registry or a local source directory.
 
     \b
-    Scope/source flags (mutually exclusive; -g is the default):
-      -g / --global    Pin into the global default-project (the default).
-      -l / --local     Pin into THIS project's manifest (.toolbase/).
+    Scope/source flags (mutually exclusive; -u is the default):
+      -u / --user      Pin into the user-level default-project (default).
+      -p / --project   Pin into THIS project's manifest (.toolbase/).
+      --private        Pin into this project's gitignored layer.
       -e / --editable  Live symlink to a local source dir (path only).
 
     \b
     The toolkit binary (venv/conda env + tools) always lives in the
-    global cache at ~/.toolbase/cache/<name>/<version>/, regardless
-    of flag. -g vs -l only changes which manifest gets the pin; -e
+    user-level cache at ~/.toolbase/cache/<name>/<version>/, regardless
+    of flag. The scope only changes which manifest gets the pin; -e
     additionally points the cache slot at your live source folder.
 
     \b
@@ -4532,15 +4622,15 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
       2. Create an isolated environment (venv or conda, auto-detected)
       3. Install dependencies, then orchestral-ai + mcp
       4. Surface the toolkit's skills into ~/.claude/skills/ (unless --no-skills)
-      5. Pin into the appropriate manifest (-g default-project, -l this project)
+      5. Pin into the scoped manifest (-u default-project, -p this project)
 
     \b
     Examples:
-        toolbase install aster                   # global, latest
+        toolbase install aster                   # user level, latest
         toolbase install aster@1.2.0             # pin a version via @ syntax
         toolbase install aster --version 1.2.0   # pin a version via flag
-        toolbase install -l aster                # pin into this project
-        toolbase install .                        # global install from cwd
+        toolbase install -p aster                # pin into this project
+        toolbase install .                        # user-level install from cwd
         toolbase install -e .                     # editable: live link to cwd
         toolbase install aster --no-skills        # don't touch ~/.claude/skills/
         toolbase install calculator[basic,symbolic]  # only those bundles
@@ -4551,6 +4641,9 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
     import requests
 
     mode = _resolve_prompt_mode(yes, no_, no_input)
+    scope = _resolve_scope(
+        user_scope, project_scope, private_scope, default=SCOPE_USER,
+    )
 
     # Import-file mode: ``tb install <file>.yaml`` installs every
     # toolkit the file lists — the shareable counterpart to
@@ -4566,7 +4659,7 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
             )
         return _install_from_import_file(
             ctx, Path(name),
-            global_scope=global_scope, local_scope=local_scope,
+            scope=scope,
             no_skills=no_skills, activate_after=activate_after,
             rebuild=rebuild, yes=yes, no_=no_, no_input=no_input,
         )
@@ -4582,17 +4675,19 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
             )
         return _install_from_tarball(
             ctx, Path(name), version=version,
-            global_scope=global_scope, local_scope=local_scope,
+            scope=scope,
             no_skills=no_skills, activate_after=activate_after,
             bundle_flags=bundle_flags, rebuild=rebuild,
             yes=yes, no_=no_, no_input=no_input,
         )
 
-    # Flag exclusivity. -e/-l/-g pick one scope/source; -g is the
-    # default when none is given.
-    if sum(int(b) for b in (editable, local_scope, global_scope)) > 1:
+    # Flag exclusivity. -e picks a source; the scope keys pick a
+    # destination, and -e implies the private layer, so combining them
+    # would be two answers to one question.
+    if editable and (user_scope or project_scope or private_scope):
         raise click.UsageError(
-            "-e, -l, and -g are mutually exclusive. Pick one."
+            "-e is mutually exclusive with --user/--project/--private: an "
+            "editable pin is always private to this machine."
         )
 
     # Strip any pip-extras suffix from the name (e.g. ``foo[a,b]``)
@@ -4624,13 +4719,13 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
             "version). Drop --version."
         )
 
-    # Path-source branch (covers -e always, and -g/-l when the arg is a
-    # path). Builds the cache slot from the local dir and pins per scope.
+    # Path-source branch (covers -e always, and any scope when the arg is
+    # a path). Builds the cache slot from the local dir and pins per scope.
     if source_path is not None:
         installed_name = _install_from_path(
             source_path,
             editable=editable,
-            local_scope=local_scope,
+            scope=scope,
             no_skills=no_skills,
             mode=mode,
             requested_bundles=requested_bundles,
@@ -4638,7 +4733,7 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
         )
         if activate_after and installed_name:
             _post_install_activate(
-                installed_name, global_scope=global_scope, local_scope=local_scope
+                installed_name, scope=scope
             )
         return
 
@@ -5023,7 +5118,7 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
     # is deliberately no "where do you want this?" prompt: the flag (or
     # its -g default) carries that intent now.
     _pin_after_install(
-        name, version, local_scope=local_scope,
+        name, version, scope=scope,
         bundles=_bundles_to_install,
     )
 
@@ -5033,7 +5128,7 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
 
     if activate_after:
         _post_install_activate(
-            name, global_scope=global_scope, local_scope=local_scope
+            name, scope=scope
         )
 
     if env_type == 'venv':
@@ -5822,20 +5917,21 @@ def _format_disk_size(size_bytes: Optional[int]) -> str:
 @main.command(name="use")
 @click.argument("target")
 @click.option(
-    '--global', '-g', 'global_scope', is_flag=True, default=False,
+    '--user', '-u', 'user_scope', is_flag=True, default=False,
     help=(
-        'Choose for the global default-project (the default) — applies '
-        'anywhere outside a project with its own manifest.'
+        'Choose for the user-level default-project (the default) — '
+        'applies anywhere outside a project with its own manifest.'
     ),
 )
 @click.option(
-    '--local', '-l', 'local_scope', is_flag=True, default=False,
+    '--project', '-p', 'project_scope', is_flag=True, default=False,
     help=(
         "Choose for THIS project (<project>/.toolbase/manifest.yaml), "
         "creating the project if needed."
     ),
 )
-def use_cmd(target, global_scope, local_scope):
+@_private_option
+def use_cmd(target, user_scope, project_scope, private_scope):
     """Choose which installed version of a toolkit serves.
 
     \b
@@ -5849,10 +5945,11 @@ def use_cmd(target, global_scope, local_scope):
         tb use calculator           clear the pin (highest installed wins)
 
     \b
-    Scope mirrors `tb install`: -g (the default) writes the global
-    default-project manifest, -l writes this project's. An `editable`
-    choice always goes to the gitignored machine-local layer instead —
-    it points at a checkout no other machine has.
+    Scope mirrors `tb install`: -u (the default) writes the user-level
+    default-project manifest, -p writes this project's, --private writes
+    this project's gitignored layer. An `editable` choice always goes to
+    the private layer whatever you ask for — it points at a checkout no
+    other machine has.
 
     The change takes effect the next time `tb serve` starts, so restart
     your agent session to pick it up.
@@ -5871,8 +5968,9 @@ def use_cmd(target, global_scope, local_scope):
     )
     from .envs.cache import installed_bundles as _installed_bundles
 
-    if global_scope and local_scope:
-        raise click.UsageError("-g and -l are mutually exclusive.")
+    scope = _resolve_scope(
+        user_scope, project_scope, private_scope, default=SCOPE_USER,
+    )
 
     name, _, version = target.partition("@")
     version = version or None
@@ -5899,13 +5997,19 @@ def use_cmd(target, global_scope, local_scope):
         )
         sys.exit(1)
 
-    scope_root = _manifest_scope_root(local_scope)
-    manifest_path = _project_manifest_path(scope_root)
-    local_path = _local_manifest_path(manifest_path)
+    scope_root = _manifest_scope_root(scope)
+    # The file this scope writes, plus the private sibling — needed even
+    # when not writing it, since a private pin outranks a committed one
+    # and would silently override the choice being made here.
+    manifest_path = _pin_manifest_path(scope)
+    committed_path = _project_manifest_path(scope_root)
+    local_path = _local_manifest_path(committed_path)
 
     if version is None:
+        # Clearing means "stop pinning here", so both layers of this
+        # scope go — leaving the private one would keep overriding.
         removed = [
-            layer.name for layer in (manifest_path, local_path)
+            layer.name for layer in (committed_path, local_path)
             if _remove_pin(layer, name)
         ]
         if not removed:
@@ -5930,16 +6034,18 @@ def use_cmd(target, global_scope, local_scope):
         slot = _find_slot(name, version)
         bundles = _installed_bundles(slot.path) if slot is not None else None
         _add_pin(manifest_path, name, version, bundles=bundles)
-        # A local pin outranks the layer we just wrote, so leaving one in
-        # place would make this command look like it did nothing.
-        shadowing = _load_manifest(local_path).find(name)
-        if shadowing is not None and shadowing.version != version:
-            _remove_pin(local_path, name)
-            console.print(
-                f"[yellow]⚠ Removed the {name}@{shadowing.version} pin from "
-                f"{local_path.name} — it would have overridden this "
-                f"choice.[/yellow]"
-            )
+        # A private pin outranks the committed layer, so leaving one in
+        # place would make this command look like it did nothing. Only
+        # a concern when the committed layer is what we just wrote.
+        if scope != SCOPE_PRIVATE:
+            shadowing = _load_manifest(local_path).find(name)
+            if shadowing is not None and shadowing.version != version:
+                _remove_pin(local_path, name)
+                console.print(
+                    f"[yellow]⚠ Removed the {name}@{shadowing.version} pin "
+                    f"from {local_path.name} — it would have overridden "
+                    f"this choice.[/yellow]"
+                )
         console.print(f"[green]✓[/green] {name} now serves {version}")
 
     console.print(f"[dim]Manifest: {_display_path(manifest_path)}[/dim]")
@@ -5948,7 +6054,7 @@ def use_cmd(target, global_scope, local_scope):
     # only the whole story when that scope governs cwd — otherwise say so
     # outright, because "now serves X" read from inside a project that
     # resolves differently is worse than saying nothing.
-    if not local_scope:
+    if scope == SCOPE_USER:
         _warn_pin_scope_not_active(scope_root, name, version)
     resolution = _resolve_version(
         _list_versions(name), pin=_active_pins(scope_root).get(name),
@@ -6681,18 +6787,18 @@ def _installed_toolkit_names() -> set:
         return set()
 
 
-def _resolve_profile_scope(global_scope: bool, local_scope: bool):
+def _resolve_profile_scope(user_scope: bool, project_scope: bool):
     """Resolve activate/deactivate/create scope -> (scope, project_root).
 
     Default (and -l): the cwd's project -- the nearest ``.toolbase/`` above
     the cwd, or the cwd itself, creating ``.toolbase/`` there if there's none
     (mirrors ``tb install -l``). ``-g/--global`` forces the user layer.
     """
-    if global_scope and local_scope:
+    if user_scope and project_scope:
         raise click.UsageError(
             "-g/--global and -l/--local are mutually exclusive."
         )
-    if global_scope:
+    if user_scope:
         return "user", None
     return "project", _cwd_project_root()
 
@@ -6710,12 +6816,18 @@ def _print_mutation(result) -> None:
 
 
 def _scope_flags(f):
+    """Add the canonical scope options to a profile-writing command.
+
+    Profiles and serve.yaml exist at user and project scope only — there
+    is no gitignored variant of a profile — so these commands take two
+    of the three scope keys. See ``_resolve_scope``.
+    """
     f = click.option(
-        '-l', '--local', 'local_scope', is_flag=True, default=False,
-        help="Operate on this project's default profile.",
+        '-p', '--project', 'project_scope', is_flag=True, default=False,
+        help="Operate on this project's default profile (the default).",
     )(f)
     f = click.option(
-        '-g', '--global', 'global_scope', is_flag=True, default=False,
+        '-u', '--user', 'user_scope', is_flag=True, default=False,
         help='Operate on the user-level default profile.',
     )(f)
     return f
@@ -6741,7 +6853,7 @@ def _skill_route(tk: str, sub: str) -> bool:
 @main.command()
 @click.argument('item')
 @_scope_flags
-def activate(item, global_scope, local_scope):
+def activate(item, user_scope, project_scope):
     """Activate a toolkit, bundle, tool, or skill in the default profile.
 
     \b
@@ -6760,7 +6872,7 @@ def activate(item, global_scope, local_scope):
         parse_item, ProfileItemError,
     )
 
-    scope, project_root = _resolve_profile_scope(global_scope, local_scope)
+    scope, project_root = _resolve_profile_scope(user_scope, project_scope)
     tk = item.split('/', 1)[0].split('__', 1)[0]
     if tk not in _installed_toolkit_names():
         console.print(f"[red]✗ '{tk}' is not installed.[/red]")
@@ -6783,7 +6895,7 @@ def activate(item, global_scope, local_scope):
 @main.command()
 @click.argument('item')
 @_scope_flags
-def deactivate(item, global_scope, local_scope):
+def deactivate(item, user_scope, project_scope):
     """Deactivate a toolkit, bundle, tool, or skill from the default profile.
 
     \b
@@ -6797,7 +6909,7 @@ def deactivate(item, global_scope, local_scope):
         parse_item, ProfileItemError,
     )
 
-    scope, project_root = _resolve_profile_scope(global_scope, local_scope)
+    scope, project_root = _resolve_profile_scope(user_scope, project_scope)
     try:
         kind, tk2, sub = parse_item(item)
         if kind == "tool" and _skill_route(tk2, sub):
@@ -6931,12 +7043,12 @@ def profile_path_cmd(name):
               help='Scaffold from an existing profile instead of default.')
 @click.option('--empty', 'empty', is_flag=True, default=False,
               help='Create a minimal empty profile.')
-def profile_create(name, global_scope, local_scope, from_profile, empty):
+def profile_create(name, user_scope, project_scope, from_profile, empty):
     """Create a new named profile (scaffolded from default unless overridden)."""
     from .serve.profile_scaffold import _load, _save
     from .serve.profiles import discover_profiles
 
-    scope, project_root = _resolve_profile_scope(global_scope, local_scope)
+    scope, project_root = _resolve_profile_scope(user_scope, project_scope)
     from .serve.profile_scaffold import (
         user_profiles_dir as _u, project_profiles_dir as _p,
     )
@@ -6979,7 +7091,7 @@ def profile_create(name, global_scope, local_scope, from_profile, empty):
 @profile.command('edit')
 @click.argument('name', required=False)
 @_scope_flags
-def profile_edit(name, global_scope, local_scope):
+def profile_edit(name, user_scope, project_scope):
     """Open a profile in $EDITOR (defaults to the active profile).
 
     If the named profile doesn't exist, it's scaffolded from the default
@@ -6998,7 +7110,7 @@ def profile_edit(name, global_scope, local_scope):
     if name in found:
         target = found[name].path
     else:
-        scope, proot = _resolve_profile_scope(global_scope, local_scope)
+        scope, proot = _resolve_profile_scope(user_scope, project_scope)
         if scope == "user":
             from .serve.profile_scaffold import user_profiles_dir as _u
             target = _u() / f"{name}.yaml"
@@ -7019,7 +7131,7 @@ def profile_edit(name, global_scope, local_scope):
 @click.argument('name')
 @_scope_flags
 @_interactive_options
-def profile_delete(name, global_scope, local_scope, yes, no_, no_input):
+def profile_delete(name, user_scope, project_scope, yes, no_, no_input):
     """Delete a profile file."""
     from .serve.profiles import discover_profiles
 
@@ -7043,13 +7155,13 @@ def profile_delete(name, global_scope, local_scope, yes, no_, no_input):
 @profile.command('set-default')
 @click.argument('name')
 @_scope_flags
-def profile_set_default(name, global_scope, local_scope):
+def profile_set_default(name, user_scope, project_scope):
     """Set the active profile by writing default.profile into serve.yaml."""
     from .serve.profiles import discover_profiles
     from .serve.config import load_serve_config, save_serve_config
     from .envs.paths import user_serve_config_path, project_serve_config_path
 
-    scope, project_root = _resolve_profile_scope(global_scope, local_scope)
+    scope, project_root = _resolve_profile_scope(user_scope, project_scope)
     found = discover_profiles(project_root)
     if name not in found:
         console.print(f"[red]No profile named '{name}'.[/red]")
@@ -7141,7 +7253,7 @@ def profile_tools(toolkit):
 # ── tb connect: wire toolbase into an agent harness ────────────────────
 
 
-def _resolve_connect_scope(global_scope: bool, local_scope: bool):
+def _resolve_connect_scope(user_scope: bool, project_scope: bool):
     """Connect scope -> (scope, project_root).
 
     Default is project-local: the client config for the directory you launch
@@ -7150,11 +7262,11 @@ def _resolve_connect_scope(global_scope: bool, local_scope: bool):
     ``.mcp.json`` no client ever reads. ``-g/--global`` writes the user-wide
     config (e.g. ``~/.claude.json``) that every session sees.
     """
-    if global_scope and local_scope:
+    if user_scope and project_scope:
         raise click.UsageError(
             "-g/--global and -l/--local are mutually exclusive."
         )
-    if global_scope:
+    if user_scope:
         return "user", None
     from .envs import find_project_root as _find_project_root
     cwd = Path.cwd()
@@ -7330,7 +7442,7 @@ def _unsurface_skills_for_connect(adapter) -> None:
 @click.option('--no-skills', 'no_skills', is_flag=True, default=False,
               help="Don't surface the activated toolkits' skills into the "
                    "harness (wire the MCP server only).")
-def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
+def connect(harness, user_scope, project_scope, profile_name, remove, dry_run,
             abspath, portable, do_list, do_harnesses, out_path, force, no_skills):
     """Wire toolbase into an agent harness.
 
@@ -7379,7 +7491,7 @@ def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
         # otherwise --list misses a .mcp.json sitting in a dir that has no
         # .toolbase/ yet.
         _, project_root = _resolve_connect_scope(
-            global_scope=False, local_scope=False
+            user_scope=False, project_scope=False
         )
         _connect_print_status(all_adapters(), project_root)
         return
@@ -7407,7 +7519,7 @@ def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
         )
         sys.exit(2)
 
-    scope, project_root = _resolve_connect_scope(global_scope, local_scope)
+    scope, project_root = _resolve_connect_scope(user_scope, project_scope)
 
     if remove:
         try:
@@ -7675,7 +7787,7 @@ def _connect_orchestral(*, profile_name, out, force, dry_run, remove) -> None:
 @_scope_flags
 @click.option('--all', 'all_scopes', is_flag=True, default=False,
               help='Remove from BOTH the user and project config at once.')
-def disconnect(harness, global_scope, local_scope, all_scopes):
+def disconnect(harness, user_scope, project_scope, all_scopes):
     """Remove toolbase from a harness (alias for `tb connect --remove`).
 
     \b
@@ -7692,7 +7804,7 @@ def disconnect(harness, global_scope, local_scope, all_scopes):
         )
         return
 
-    if all_scopes and (global_scope or local_scope):
+    if all_scopes and (user_scope or project_scope):
         raise click.UsageError(
             "--all can't be combined with -g/--global or -l/--local."
         )
@@ -7708,11 +7820,11 @@ def disconnect(harness, global_scope, local_scope, all_scopes):
 
     if all_scopes:
         _, proj_root = _resolve_connect_scope(
-            global_scope=False, local_scope=False
+            user_scope=False, project_scope=False
         )
         targets = [("user", None), ("project", proj_root)]
     else:
-        targets = [_resolve_connect_scope(global_scope, local_scope)]
+        targets = [_resolve_connect_scope(user_scope, project_scope)]
 
     for scope, project_root in targets:
         try:

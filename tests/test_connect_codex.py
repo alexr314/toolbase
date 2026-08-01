@@ -216,7 +216,7 @@ def test_connect_surfaces_activated_toolkit_skills(tmp_path, monkeypatch):
     runner = CliRunner()
     with runner.isolated_filesystem():  # sandbox the .codex/config.toml write
         res = runner.invoke(
-            cli.main, ["connect", "codex", "-l"], catch_exceptions=False,
+            cli.main, ["connect", "codex", "-p"], catch_exceptions=False,
         )
         assert res.exit_code == 0, res.output
         assert surfaced.exists()
@@ -224,7 +224,7 @@ def test_connect_surfaces_activated_toolkit_skills(tmp_path, monkeypatch):
 
         # Removing the server also unsurfaces the prompts.
         res = runner.invoke(
-            cli.main, ["connect", "codex", "-l", "--remove"],
+            cli.main, ["connect", "codex", "-p", "--remove"],
             catch_exceptions=False,
         )
         assert res.exit_code == 0, res.output
@@ -236,7 +236,7 @@ def test_connect_no_skills_flag_skips_surfacing(tmp_path, monkeypatch):
     runner = CliRunner()
     with runner.isolated_filesystem():
         res = runner.invoke(
-            cli.main, ["connect", "codex", "-l", "--no-skills"],
+            cli.main, ["connect", "codex", "-p", "--no-skills"],
             catch_exceptions=False,
         )
         assert res.exit_code == 0, res.output

@@ -38,11 +38,11 @@ tb use calculator         # clear the pin; highest installed wins again
 slots stay in the cache, so switching back is another one-liner. It takes
 effect the next time `tb serve` starts, so restart your agent session.
 
-Scope mirrors `tb install`: `-g` (the default) chooses for the global
-default-project, `-l` chooses for this project only.
+Scope mirrors `tb install`: `-u` (the default) chooses for the global
+default-project, `-p` chooses for this project only.
 
 ```bash
-tb use -l calculator@1.4.0   # pin 1.4.0 in <repo>/.toolbase/manifest.yaml
+tb use -p calculator@1.4.0   # pin 1.4.0 in <repo>/.toolbase/manifest.yaml
 ```
 
 The project now serves 1.4.0 even if a newer version is installed globally.

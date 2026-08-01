@@ -125,7 +125,7 @@ def test_disambiguation_existing_dir_is_path(tmp_path, monkeypatch):
 def test_mutually_exclusive_flags_error(fake_env, tmp_path):
     src = _make_source_toolkit(tmp_path / "src", "demo")
     result = CliRunner().invoke(
-        cli.main, ["install", "-e", "-l", str(src)], catch_exceptions=False,
+        cli.main, ["install", "-e", "-p", str(src)], catch_exceptions=False,
     )
     assert result.exit_code != 0
     assert "mutually exclusive" in result.output
@@ -229,7 +229,7 @@ def test_local_path_install_pins_project_manifest(fake_env, tmp_path, monkeypatc
     src = _make_source_toolkit(tmp_path / "src", "localkit")
 
     result = CliRunner().invoke(
-        cli.main, ["install", "-l", str(src), "--no-input"],
+        cli.main, ["install", "-p", str(src), "--no-input"],
         catch_exceptions=False,
     )
     assert result.exit_code == 0, result.output
@@ -273,7 +273,7 @@ def test_global_and_default_path_install_use_same_cache_slot(fake_env, tmp_path,
     src = _make_source_toolkit(tmp_path / "src", "samekit")
 
     CliRunner().invoke(
-        cli.main, ["install", "-g", str(src), "--no-input"],
+        cli.main, ["install", "-u", str(src), "--no-input"],
         catch_exceptions=False,
     )
     from toolbase.envs import cache_dir

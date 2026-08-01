@@ -36,10 +36,10 @@ layer is the default:
 - **Project** (default): applies to one repository, stored in its `.toolbase/`
   and committed so collaborators share it. Outside a repo, the command creates
   `.toolbase/` in the current directory.
-- **User** (`-g`, or `--user` for `config`): applies to you everywhere.
+- **User** (`-u`, or `--user` for `config`): applies to you everywhere.
 
 Where they overlap, the project layer wins. (`install` is the exception: its
-binaries live in a shared global cache, and `-l` pins the version into the
+binaries live in a shared global cache, and `-p` pins the version into the
 project.) See [Projects & teams](guides/projects-and-teams.md).
 
 ## The active profile

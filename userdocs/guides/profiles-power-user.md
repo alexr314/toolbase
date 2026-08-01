@@ -30,8 +30,8 @@ tb connect claude-code --profile paper   # wire a harness to a specific profile
 tb serve --profile paper --dry-run    # one-shot preview of a profile
 ```
 
-Scope flags apply: `tb profile create paper -l` makes a project profile,
-`-g` a user one.
+Scope flags apply: `tb profile create paper -p` makes a project profile,
+`-u` a user one.
 
 ## The profile file
 
@@ -56,7 +56,7 @@ Profiles are created two ways. `tb activate` / `tb deactivate` auto-create and
 edit the `default` profile at `<project>/.toolbase/profiles/default.yaml`,
 materializing `.toolbase/` in your cwd if there's none above. `tb profile create
 <name>` makes additional named ones. Both land under
-`<scope>/.toolbase/profiles/` (`-l` for project, `-g` for user).
+`<scope>/.toolbase/profiles/` (`-p` for project, `-u` for user).
 
 ## User vs project profiles
 

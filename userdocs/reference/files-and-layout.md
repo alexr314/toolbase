@@ -42,7 +42,7 @@ manifest layer auto-gitignores itself. Keep secrets in the user-layer
 
 ## Harness wiring
 
-| Harness | Project (`tb connect`) | User (`tb connect -g`) |
+| Harness | Project (`tb connect`) | User (`tb connect -u`) |
 |---|---|---|
 | Claude Code | `<repo>/.mcp.json` | `~/.claude.json` |
 | Codex | `<repo>/.codex/config.toml` | `~/.codex/config.toml` |

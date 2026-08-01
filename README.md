@@ -42,7 +42,7 @@ appear as `calculator__add`, `calculator__multiply`, etc.
 but serves nothing — activation is what exposes it to the agent. The
 binary always lives in the shared cache (`~/.toolbase/cache/`); only
 the activation is scoped: `tb activate` writes to the current
-directory's `.toolbase/` by default, `-g` writes to the user-wide
+directory's `.toolbase/` by default, `-u` writes to the user-wide
 profile instead.
 
 **`tb connect` writes the MCP config for you.** Claude Code, Codex,
@@ -141,7 +141,7 @@ binary) read it from three layers, later winning key-by-key:
 
 ```bash
 tb config set calculator precision 10                  # committed
-tb config set calculator solver_path /opt/bin --local  # yours alone
+tb config set calculator solver_path /opt/bin --private  # yours alone
 ```
 
 Toolkit versions split the same way: `manifest.yaml` is committed so a
@@ -190,13 +190,13 @@ Full reference with all flags: <https://toolbase-ai.com/docs/reference/commands>
 | `tb install NAME` | Install a toolkit (`-a` to also activate, `-e <path>` for editable, `NAME[a,b]` for selected bundles) |
 | `tb uninstall NAME` | Remove a toolkit |
 | `tb list` | Installed toolkits (`-v` for a per-tool view) |
-| `tb activate ITEM` | Expose a toolkit / `toolkit/bundle` / `toolkit__tool` / `toolkit__skill` (project-local; `-g` for user-wide) |
+| `tb activate ITEM` | Expose a toolkit / `toolkit/bundle` / `toolkit__tool` / `toolkit__skill` (project-local; `-u` for user-wide) |
 | `tb deactivate ITEM` | Hide a toolkit / bundle / tool / skill |
 | `tb connect HARNESS` | Wire toolbase into Claude Code, Codex, OpenCode, Antigravity, or scaffold an Orchestral agent script (also surfaces skills; `--no-skills` to skip) |
 | `tb disconnect HARNESS` | Remove toolbase from a harness (and its surfaced skills) |
 | `tb logs` | Tail the serve log, live |
 | `tb profile …` | Manage named profiles: `list \| show \| create \| edit \| delete \| set-default \| path \| tools` |
-| `tb config …` | Manage per-toolkit config: `show \| init \| set \| unset \| edit \| path \| validate` (`--user` / `--project` / `--local` pick the layer) |
+| `tb config …` | Manage per-toolkit config: `show \| init \| set \| unset \| edit \| path \| validate` (`--user` / `--project` / `--private` pick the layer) |
 | `tb setup TOOLKIT` | Run a toolkit's `setup.py` (`--reset`, `--check`) |
 | `tb project init` | Create `.toolbase/` here |
 | `tb init NAME` | Scaffold a toolkit from template |
