@@ -161,13 +161,15 @@ def main() -> int:
     print("--- .install_meta.yaml ---")
     print(install_meta.read_text())
 
-    # Verify the default-project manifest got a pin.
+    # Install must write NO manifest. It fills the cache and stops;
+    # `tb use` is the only thing that pins, so an installed-but-unpinned
+    # toolkit resolves by fallback (newest wins).
     manifest_path = FAKE_HOME / "default-project" / "manifest.yaml"
-    if not manifest_path.exists():
-        print(f"!!! no default-project manifest at {manifest_path}")
+    if manifest_path.exists():
+        print(f"!!! install wrote a manifest at {manifest_path}")
+        print(manifest_path.read_text())
         return 1
-    print("--- default-project manifest ---")
-    print(manifest_path.read_text())
+    print("--- no manifest written (install takes no scope) ---")
 
     if result.exit_code != 0:
         print(f"!!! install exited non-zero ({result.exit_code})")
