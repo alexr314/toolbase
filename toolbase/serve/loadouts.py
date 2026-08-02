@@ -67,8 +67,13 @@ class NoActiveLoadoutError(ServeConfigError):
 
 @dataclass
 class ToolkitSelection:
-    """Per-toolkit curation within a loadout.
+    """One toolkit's entry in a loadout: which build, and which of it.
 
+    - ``version is None`` -> resolve by the cache fallback (newest
+      installed). Naming a version pins it, and ``"editable"`` names a
+      linked checkout. A loadout that pins its versions is a complete,
+      reproducible specification — which is what makes it shareable and
+      what a benchmark condition needs.
     - ``bundles is None`` and ``enabled_tools is None`` -> include the
       whole toolkit (no allowlist).
     - Either set -> allowlist mode: the served set is the union of
@@ -76,6 +81,7 @@ class ToolkitSelection:
     - ``disabled_tools`` is always subtracted last.
     """
 
+    version: Optional[str] = None
     bundles: Optional[List[str]] = None
     enabled_tools: Optional[List[str]] = None
     disabled_tools: List[str] = field(default_factory=list)
@@ -198,6 +204,20 @@ def _parse_toolkit_selection(name: str, raw, path: Path) -> ToolkitSelection:
 
     sel = ToolkitSelection()
 
+    if "version" in raw and raw["version"] is not None:
+        version = raw["version"]
+        # Accept a bare number from YAML (``version: 2`` parses as int)
+        # rather than rejecting what looks obviously right in a file
+        # someone hand-edited.
+        if isinstance(version, (int, float)):
+            version = str(version)
+        if not isinstance(version, str) or not version.strip():
+            raise ServeConfigError(
+                f"{path}: toolkit '{name}' version: must be a non-empty "
+                f"string (a version like '1.4.0', or 'editable')"
+            )
+        sel.version = version.strip()
+
     if "bundles" in raw and raw["bundles"] is not None:
         bundles = raw["bundles"]
         if not isinstance(bundles, list) or not all(
@@ -260,11 +280,11 @@ def _parse_toolkit_selection(name: str, raw, path: Path) -> ToolkitSelection:
                 f"{sorted(unknown_skill_keys)}. Recognized: 'disabled'."
             )
 
-    unknown = set(raw.keys()) - {"bundles", "tools", "skills"}
+    unknown = set(raw.keys()) - {"version", "bundles", "tools", "skills"}
     if unknown:
         raise ServeConfigError(
             f"{path}: toolkit '{name}' has unknown key(s) {sorted(unknown)}. "
-            "Recognized: 'bundles', 'tools', 'skills'."
+            "Recognized: 'version', 'bundles', 'tools', 'skills'."
         )
 
     return sel
@@ -342,9 +362,62 @@ def discover_loadouts(
         if not directory.is_dir():
             continue
         for entry in sorted(directory.glob("*.yaml")):
+            if entry.name.endswith(".local.yaml"):
+                continue  # a private layer, applied below
             found[entry.stem] = load_loadout_file(entry, entry.stem, scope)
+        # Private layers: ``<name>.local.yaml`` merges over its committed
+        # sibling toolkit by toolkit, field by field. Same relationship
+        # the config layers have, and the reason it exists is the same:
+        # a pin to a local checkout is true on one machine and would be
+        # a dangling pin on a teammate's clone.
+        for entry in sorted(directory.glob("*.local.yaml")):
+            name = entry.name[: -len(".local.yaml")]
+            private = load_loadout_file(entry, name, scope)
+            base = found.get(name)
+            found[name] = (
+                _merge_private_layer(base, private) if base is not None
+                else private
+            )
 
     return found
+
+
+def _merge_private_layer(base: Loadout, private: Loadout) -> Loadout:
+    """Overlay a ``.local.yaml`` layer onto its committed sibling.
+
+    Per toolkit, per field: a field the private layer doesn't set keeps
+    the committed value, so privately repointing one toolkit's version
+    leaves its curation — and every other toolkit — exactly as shared.
+    """
+    merged = dict(base.toolkits)
+    for name, overlay in private.toolkits.items():
+        current = merged.get(name)
+        if current is None:
+            merged[name] = overlay
+            continue
+        merged[name] = ToolkitSelection(
+            version=(
+                overlay.version if overlay.version is not None
+                else current.version
+            ),
+            bundles=(
+                overlay.bundles if overlay.bundles is not None
+                else current.bundles
+            ),
+            enabled_tools=(
+                overlay.enabled_tools if overlay.enabled_tools is not None
+                else current.enabled_tools
+            ),
+            disabled_tools=(
+                overlay.disabled_tools or current.disabled_tools
+            ),
+            disabled_skills=(
+                overlay.disabled_skills or current.disabled_skills
+            ),
+        )
+    return Loadout(
+        name=base.name, path=base.path, scope=base.scope, toolkits=merged,
+    )
 
 
 # ── active-loadout resolution chain ──────────────────────────────────

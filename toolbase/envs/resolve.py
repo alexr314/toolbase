@@ -150,22 +150,49 @@ def resolve_version(
 
 
 def active_pins(project_root=None) -> Dict[str, str]:
-    """``{name: version}`` pinned in the active project, both layers merged.
+    """``{name: version}`` chosen for the active context.
+
+    Versions live in the active loadout: a ``version:`` on a toolkit's
+    entry pins it, and omitting one takes the cache fallback. Keeping
+    version and tool selection in one file is what makes a loadout a
+    complete specification — share it and it resolves the same way
+    elsewhere, which is the whole point for a benchmark condition.
+
+    Falls back to the pre-0.12 project manifest for any toolkit the
+    loadout doesn't pin, so existing ``manifest.yaml`` /
+    ``manifest.local.yaml`` pins keep working until they're migrated.
 
     Resolves the active project itself when ``project_root`` is None.
-    Best-effort by design: every caller treats an unreadable manifest as
-    "no pins" and falls back to cache-only resolution, so a malformed
-    file degrades the answer instead of breaking the command.
+    Best-effort by design: every caller treats unreadable state as "no
+    pins" and falls back to cache-only resolution, so a malformed file
+    degrades the answer instead of breaking the command.
     """
-    # Read both through the package rather than their defining modules:
-    # tests redirect the substrate by monkeypatching ``toolbase.envs.*``,
-    # and a function-level ``from . import`` picks that up at call time.
+    # Read through the package rather than the defining modules: tests
+    # redirect the substrate by monkeypatching ``toolbase.envs.*``, and a
+    # function-level ``from . import`` picks that up at call time.
     from . import load_merged_pins, project_manifest_path
 
-    try:
-        if project_root is None:
+    if project_root is None:
+        try:
             from ..cli import _resolve_active_project_root
             project_root, _source = _resolve_active_project_root()
-        return load_merged_pins(project_manifest_path(project_root))
+        except Exception:
+            return {}
+
+    # Legacy first, so loadout entries override it per name.
+    pins: Dict[str, str] = {}
+    try:
+        pins.update(load_merged_pins(project_manifest_path(project_root)))
     except Exception:
-        return {}
+        pass
+
+    try:
+        from ..serve.loadouts import resolve_loadout
+        resolved = resolve_loadout(project_root)
+        for name, selection in resolved.toolkits.items():
+            if selection.version:
+                pins[name] = selection.version
+    except Exception:
+        pass  # no loadout, or a malformed one: the fallback still applies
+
+    return pins

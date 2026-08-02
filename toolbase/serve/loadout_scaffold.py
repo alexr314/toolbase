@@ -113,15 +113,18 @@ def default_loadout_path(
 ) -> Path:
     """Return ``<scope>/.toolbase/loadouts/default.yaml``.
 
-    ``scope`` is ``"user"`` or ``"project"``. Project scope requires
-    ``project_root`` (the default-project root is used as a fallback by
-    callers that resolve it).
+    ``scope`` is ``"user"``, ``"project"``, or ``"private"``. The last
+    is the project's gitignored ``default.local.yaml`` layer, which
+    merges over the committed file toolkit by toolkit. Project scopes
+    require ``project_root`` (callers that resolve it pass the
+    default-project root as a fallback).
     """
     if scope == "user":
         return user_loadouts_dir(base=user_base) / "default.yaml"
-    if scope == "project":
+    if scope in ("project", "private"):
         root = project_root if project_root is not None else default_project_root(base=user_base)
-        return project_loadouts_dir(root) / "default.yaml"
+        leaf = "default.local.yaml" if scope == "private" else "default.yaml"
+        return project_loadouts_dir(root) / leaf
     raise ValueError(f"unknown scope {scope!r}")
 
 
@@ -160,6 +163,58 @@ def _ensure_toolkit(toolkits: CommentedMap, name: str) -> CommentedMap:
         entry = CommentedMap()
         toolkits[name] = entry
     return entry
+
+
+# ── version ──────────────────────────────────────────────────────────
+
+
+def set_version(
+    toolkit: str,
+    version: Optional[str],
+    *,
+    scope: str,
+    project_root: Optional[Path] = None,
+    user_base: Optional[Path] = None,
+) -> MutationResult:
+    """Set (or clear) a toolkit's ``version:`` in the scope's loadout.
+
+    ``version=None`` removes the key, which returns that toolkit to the
+    cache fallback — newest installed wins. A toolkit that isn't in the
+    loadout gains an entry, because pinning a version is a statement
+    about what this loadout runs; the entry carries no curation, so the
+    whole toolkit is included.
+
+    Round-trips through ruamel, so comments and ordering survive.
+    """
+    path = default_loadout_path(scope, project_root, user_base=user_base)
+    data = _load(path)
+    toolkits = data["toolkits"]
+
+    if version is None:
+        entry = toolkits.get(toolkit)
+        if entry is None or "version" not in entry:
+            return MutationResult(
+                False, f"{toolkit} has no pinned version here.", path,
+            )
+        previous = entry["version"]
+        del entry["version"]
+        _save(path, data)
+        return MutationResult(
+            True,
+            f"Cleared the {toolkit} version ({previous}); "
+            f"newest installed serves.",
+            path,
+        )
+
+    entry = _ensure_toolkit(toolkits, toolkit)
+    previous = entry.get("version")
+    if previous == version:
+        return MutationResult(
+            False, f"{toolkit} already serves {version}.", path,
+        )
+    entry["version"] = version
+    _save(path, data)
+    return MutationResult(True, f"{toolkit} now serves {version}.", path)
 
 
 # ── activate ─────────────────────────────────────────────────────────

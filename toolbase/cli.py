@@ -5712,38 +5712,52 @@ def _list_sorted_entries(entries):
 
 
 def _list_resolve_pin_map(entries):
-    """Return ``(pin_map, manifest_path)`` for the active project.
+    """Return ``(pin_map, source_path)`` for the active context.
 
-    ``pin_map`` is ``{toolkit_name: pinned_version}`` for every entry
-    pinned in the active project's manifest. Returns an empty dict
-    (and ``None`` manifest path) when no entries are pinned or the
-    manifest is unreadable. Read-only; never creates a project dir.
+    ``pin_map`` is ``{toolkit_name: pinned_version}``. It comes from
+    ``active_pins`` — the same call serve and setup make — so the ``*``
+    markers can never disagree with what actually runs. That means the
+    active loadout's ``version:`` entries, with any legacy manifest pins
+    underneath. ``source_path`` is the file to name in the legend.
+
+    Read-only; never creates a project dir. Unreadable state degrades to
+    "no pins" rather than breaking the listing.
     """
     if not entries:
         return {}, None
     try:
-        from .envs import (
-            project_manifest_path as _project_manifest_path,
-            load_manifest as _load_manifest,
-        )
+        from .envs import active_pins as _active_pins
         project_root, _source = _resolve_active_project_root()
-        from .envs import (
-            load_merged_pins as _load_merged_pins,
-            local_manifest_path as _local_manifest_path,
-        )
-        manifest_path = _project_manifest_path(project_root)
-        if (not manifest_path.exists()
-                and not _local_manifest_path(manifest_path).exists()):
+        pins = _active_pins(project_root)
+        if not pins:
             return {}, None
-        # Merged view: committed manifest + machine-local layer
-        # (manifest.local.yaml), local wins — the same resolution
-        # discover_toolkits uses, so the * markers never disagree
-        # with what actually serves.
-        return _load_merged_pins(manifest_path), manifest_path
+        return pins, _pin_source_path(project_root)
     except Exception:
-        # Manifest read errors (schema-too-new, malformed) shouldn't
-        # break list. Skip the pin indicator and proceed.
         return {}, None
+
+
+def _pin_source_path(project_root):
+    """The file the pin legend should name: the active loadout if there
+    is one, else the legacy manifest it fell back to."""
+    from .envs import project_manifest_path as _project_manifest_path
+    try:
+        from .serve.loadouts import resolve_loadout
+        resolved = resolve_loadout(project_root)
+        if any(sel.version for sel in resolved.toolkits.values()):
+            from .serve.loadout_scaffold import default_loadout_path
+            scope = "user" if _is_default_project_root(project_root) else "project"
+            return default_loadout_path(scope, project_root)
+    except Exception:
+        pass
+    return _project_manifest_path(project_root)
+
+
+def _is_default_project_root(project_root) -> bool:
+    from .envs import default_project_root as _default_project_root
+    try:
+        return Path(project_root).resolve() == _default_project_root().resolve()
+    except Exception:
+        return False
 
 
 def _format_last_used(
@@ -5856,17 +5870,11 @@ def use_cmd(target, user_scope, project_scope, private_scope):
     """
     from .envs import (
         list_versions as _list_versions,
-        find_slot as _find_slot,
-        project_manifest_path as _project_manifest_path,
-        local_manifest_path as _local_manifest_path,
-        load_manifest as _load_manifest,
-        add_pin as _add_pin,
-        remove_pin as _remove_pin,
         resolve_version as _resolve_version,
         sort_versions as _sort_versions,
         active_pins as _active_pins,
     )
-    from .envs.cache import installed_bundles as _installed_bundles
+    from .serve.loadout_scaffold import set_version as _set_loadout_version
 
     scope = _resolve_scope(
         user_scope, project_scope, private_scope, default=SCOPE_USER,
@@ -5897,58 +5905,30 @@ def use_cmd(target, user_scope, project_scope, private_scope):
         )
         sys.exit(1)
 
-    scope_root = _manifest_scope_root(scope)
-    # The file this scope writes, plus the private sibling — needed even
-    # when not writing it, since a private pin outranks a committed one
-    # and would silently override the choice being made here.
-    manifest_path = _pin_manifest_path(scope)
-    committed_path = _project_manifest_path(scope_root)
-    local_path = _local_manifest_path(committed_path)
-
-    if version is None:
-        # Clearing means "stop pinning here", so both layers of this
-        # scope go — leaving the private one would keep overriding.
-        removed = [
-            layer.name for layer in (committed_path, local_path)
-            if _remove_pin(layer, name)
-        ]
-        if not removed:
-            console.print(f"[dim]{name} was not pinned here.[/dim]")
-        else:
-            console.print(
-                f"[green]✓[/green] Cleared the {name} pin "
-                f"({', '.join(removed)})."
-            )
-    elif version == EDITABLE_VERSION:
-        # An editable slot points at this machine's checkout, so the pin
-        # can't be shared — same rule as `tb install -e`.
-        _add_pin(local_path, name, version)
-        _ensure_toolbase_gitignore(local_path.parent)
+    # An editable slot points at this machine's checkout, so committing
+    # that choice would leave a teammate with a pin to a directory they
+    # don't have. Route it to the private layer unless the user picked
+    # user scope, which is never committed either.
+    if version == EDITABLE_VERSION and scope == SCOPE_PROJECT:
+        scope = SCOPE_PRIVATE
         console.print(
-            f"[green]✓[/green] {name} now serves your local checkout "
-            f"[dim](pinned in {local_path.name}, gitignored)[/dim]"
+            "[dim]An editable pin names your checkout, so it goes to the "
+            "gitignored layer rather than the committed loadout.[/dim]"
         )
-    else:
-        # Carry the target slot's installed-bundle subset onto the pin so
-        # the manifest keeps describing what's actually in that slot.
-        slot = _find_slot(name, version)
-        bundles = _installed_bundles(slot.path) if slot is not None else None
-        _add_pin(manifest_path, name, version, bundles=bundles)
-        # A private pin outranks the committed layer, so leaving one in
-        # place would make this command look like it did nothing. Only
-        # a concern when the committed layer is what we just wrote.
-        if scope != SCOPE_PRIVATE:
-            shadowing = _load_manifest(local_path).find(name)
-            if shadowing is not None and shadowing.version != version:
-                _remove_pin(local_path, name)
-                console.print(
-                    f"[yellow]⚠ Removed the {name}@{shadowing.version} pin "
-                    f"from {local_path.name} — it would have overridden "
-                    f"this choice.[/yellow]"
-                )
-        console.print(f"[green]✓[/green] {name} now serves {version}")
 
-    console.print(f"[dim]Manifest: {_display_path(manifest_path)}[/dim]")
+    loadout_root = None if scope == SCOPE_USER else _cwd_project_root()
+    result = _set_loadout_version(
+        name, version, scope=scope, project_root=loadout_root,
+    )
+    if scope == SCOPE_PRIVATE:
+        _ensure_toolbase_gitignore(result.path.parent.parent)
+    if result.changed:
+        console.print(f"[green]✓[/green] {result.message}")
+    else:
+        console.print(f"[dim]{result.message}[/dim]")
+
+    console.print(f"[dim]Loadout: {_display_path(result.path)}[/dim]")
+    scope_root = loadout_root if loadout_root is not None else _manifest_scope_root(SCOPE_USER)
 
     # The resolution reported is the one for the scope we wrote. That is
     # only the whole story when that scope governs cwd — otherwise say so

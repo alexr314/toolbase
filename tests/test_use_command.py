@@ -4,8 +4,11 @@ Before this command the only way to move a pin was to re-run
 ``tb install <name>@<version>``, which deletes the cache slot and
 rebuilds the environment from scratch even when that exact version is
 already installed. These tests pin the two properties that make ``use``
-worth having: it only writes the manifest, and what it writes is what
-serve then resolves.
+worth having: it only writes a file, and what it writes is what serve
+then resolves.
+
+Versions live in the active loadout, alongside the tool selection, so a
+loadout is a complete specification of what an agent gets.
 """
 
 from __future__ import annotations
@@ -57,12 +60,28 @@ def _slot(name: str, version: str, bundles: list[str] | None = None) -> Path:
     return slot
 
 
-def _global_manifest() -> Path:
-    return project_manifest_path(default_project_root())
+def _user_loadout() -> Path:
+    from toolbase.envs.paths import user_loadouts_dir
+    return user_loadouts_dir() / "default.yaml"
 
 
-def _pins(manifest: Path) -> dict:
-    return {e.name: e.version for e in load_manifest(manifest).toolkits}
+def _project_loadout(project: Path, private: bool = False) -> Path:
+    from toolbase.envs.paths import project_loadouts_dir
+    leaf = "default.local.yaml" if private else "default.yaml"
+    return project_loadouts_dir(project) / leaf
+
+
+def _pins(loadout: Path) -> dict:
+    """``{toolkit: version}`` recorded in a loadout file."""
+    import yaml as _yaml
+    if not loadout.exists():
+        return {}
+    data = _yaml.safe_load(loadout.read_text()) or {}
+    return {
+        name: entry["version"]
+        for name, entry in (data.get("toolkits") or {}).items()
+        if isinstance(entry, dict) and entry.get("version")
+    }
 
 
 class TestPinWriting:
@@ -71,7 +90,7 @@ class TestPinWriting:
         _slot("kit", "2.0.0")
         r = CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
         assert r.exit_code == 0, r.output
-        assert _pins(_global_manifest()) == {"kit": "1.0.0"}
+        assert _pins(_user_loadout()) == {"kit": "1.0.0"}
         assert "now serves 1.0.0" in r.output
 
     def test_does_not_touch_the_cache(self, fake_home):
@@ -90,22 +109,24 @@ class TestPinWriting:
         _slot("kit", "2.0.0")
         CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
         CliRunner().invoke(cli.main, ["use", "kit@2.0.0"])
-        entries = load_manifest(_global_manifest()).toolkits
-        assert len(entries) == 1
-        assert entries[0].version == "2.0.0"
+        assert _pins(_user_loadout()) == {"kit": "2.0.0"}
 
-    def test_carries_the_slot_bundle_subset_onto_the_pin(self, fake_home):
-        """The manifest records what a slot actually contains, so a switch
-        has to re-read it rather than keep the old version's subset."""
-        _slot("kit", "1.0.0", bundles=["alpha"])
-        _slot("kit", "2.0.0", bundles=["alpha", "beta"])
+    def test_leaves_curation_alone(self, fake_home, tmp_path, monkeypatch):
+        """A version and a tool selection live in the same entry, so
+        pinning must not disturb what the loadout already exposes."""
+        import yaml as _yaml
+        monkeypatch.chdir(tmp_path)
+        _slot("kit", "1.0.0")
+        _slot("kit", "2.0.0")
+        CliRunner().invoke(cli.main, ["activate", "kit/alpha", "-u"])
         CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
-        assert load_manifest(_global_manifest()).find("kit").bundles == ["alpha"]
-        CliRunner().invoke(cli.main, ["use", "kit@2.0.0"])
-        assert load_manifest(_global_manifest()).find("kit").bundles == [
-            "alpha", "beta"]
+        entry = _yaml.safe_load(_user_loadout().read_text())["toolkits"]["kit"]
+        assert entry["version"] == "1.0.0"
+        assert entry["bundles"] == ["alpha"]
 
-    def test_local_scope_writes_the_project_manifest(self, fake_home, tmp_path):
+    def test_project_scope_writes_the_project_loadout(
+        self, fake_home, tmp_path,
+    ):
         project = tmp_path / "proj"
         (project / ".toolbase").mkdir(parents=True)
         _slot("kit", "1.0.0")
@@ -114,9 +135,9 @@ class TestPinWriting:
             cli.main, ["--project-dir", str(project), "use", "-p", "kit@1.0.0"],
         )
         assert r.exit_code == 0, r.output
-        assert _pins(project_manifest_path(project)) == {"kit": "1.0.0"}
-        # The global manifest is untouched.
-        assert _pins(_global_manifest()) == {}
+        assert _pins(_project_loadout(project)) == {"kit": "1.0.0"}
+        # The user loadout is untouched.
+        assert _pins(_user_loadout()) == {}
 
     def test_global_and_local_are_mutually_exclusive(self, fake_home):
         _slot("kit", "1.0.0")
@@ -180,16 +201,22 @@ class TestGlobalPinInsideAProject:
 
 
 class TestEditablePin:
-    def test_editable_goes_to_the_local_layer(self, fake_home):
-        """An editable slot points at this machine's checkout, so its pin
-        must never land in the committed manifest."""
+    def test_editable_goes_to_the_private_layer(self, fake_home, tmp_path):
+        """An editable pin names a directory only this machine has, so
+        committing it would leave a teammate with a dangling pin."""
+        project = tmp_path / "proj"
+        (project / ".toolbase").mkdir(parents=True)
         _slot("kit", "1.0.0")
         _slot("kit", "editable")
-        r = CliRunner().invoke(cli.main, ["use", "kit@editable"])
+        r = CliRunner().invoke(
+            cli.main,
+            ["--project-dir", str(project), "use", "-p", "kit@editable"],
+        )
         assert r.exit_code == 0, r.output
-        assert _pins(local_manifest_path(_global_manifest())) == {
+        assert _pins(_project_loadout(project, private=True)) == {
             "kit": "editable"}
-        assert _pins(_global_manifest()) == {}
+        assert _pins(_project_loadout(project)) == {}
+        assert "gitignored" in r.output
 
     def test_editable_pin_writes_a_gitignore(self, fake_home, tmp_path):
         project = tmp_path / "proj"
@@ -200,53 +227,82 @@ class TestEditablePin:
             ["--project-dir", str(project), "use", "-p", "kit@editable"],
         )
         gitignore = project / ".toolbase" / ".gitignore"
-        assert "manifest.local.yaml" in gitignore.read_text()
+        assert gitignore.exists()
+
+    def test_user_scope_editable_stays_at_user_scope(self, fake_home):
+        """`~/.toolbase/` is never committed, so there's nothing to
+        protect against — the redirect is only for project scope."""
+        _slot("kit", "editable")
+        r = CliRunner().invoke(cli.main, ["use", "-u", "kit@editable"])
+        assert r.exit_code == 0, r.output
+        assert _pins(_user_loadout()) == {"kit": "editable"}
 
 
-class TestShadowingLocalPin:
-    def test_local_pin_that_would_override_is_removed(self, fake_home):
-        """A local pin outranks the committed layer, so leaving one would
-        make the command silently do nothing."""
+class TestPrivateLayerOverrides:
+    def test_private_version_wins_over_the_committed_one(
+        self, fake_home, tmp_path,
+    ):
+        """The layer exists so one person can repoint one toolkit
+        without touching what the team shares."""
+        from toolbase.serve.loadouts import discover_loadouts
+        project = tmp_path / "proj"
+        (project / ".toolbase").mkdir(parents=True)
         _slot("kit", "1.0.0")
         _slot("kit", "2.0.0")
-        add_pin(local_manifest_path(_global_manifest()), "kit", "2.0.0")
-        r = CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
-        assert r.exit_code == 0, r.output
-        assert "would have overridden" in r.output
-        assert _pins(local_manifest_path(_global_manifest())) == {}
-        # And the choice actually takes effect.
-        assert resolve_version(
-            ["1.0.0", "2.0.0"],
-            pin=_pins(_global_manifest()).get("kit"),
-        ).version == "1.0.0"
+        args = ["--project-dir", str(project), "use"]
+        CliRunner().invoke(cli.main, args + ["-p", "kit@1.0.0"])
+        CliRunner().invoke(cli.main, args + ["--private", "kit@2.0.0"])
 
-    def test_matching_local_pin_is_left_alone(self, fake_home):
+        assert _pins(_project_loadout(project)) == {"kit": "1.0.0"}
+        assert _pins(_project_loadout(project, private=True)) == {"kit": "2.0.0"}
+        merged = discover_loadouts(project, user_base=fake_home)
+        assert merged["default"].toolkits["kit"].version == "2.0.0"
+
+    def test_private_layer_leaves_other_toolkits_alone(
+        self, fake_home, tmp_path,
+    ):
+        from toolbase.serve.loadouts import discover_loadouts
+        project = tmp_path / "proj"
+        (project / ".toolbase").mkdir(parents=True)
         _slot("kit", "1.0.0")
-        add_pin(local_manifest_path(_global_manifest()), "kit", "1.0.0")
-        r = CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
-        assert r.exit_code == 0
-        assert "would have overridden" not in r.output
-        assert _pins(local_manifest_path(_global_manifest())) == {"kit": "1.0.0"}
+        _slot("other", "3.0.0")
+        args = ["--project-dir", str(project), "use"]
+        CliRunner().invoke(cli.main, args + ["-p", "kit@1.0.0"])
+        CliRunner().invoke(cli.main, args + ["-p", "other@3.0.0"])
+        CliRunner().invoke(cli.main, args + ["--private", "kit@1.0.0"])
+
+        merged = discover_loadouts(project, user_base=fake_home)
+        assert merged["default"].toolkits["other"].version == "3.0.0"
 
 
 class TestClearingAPin:
-    def test_bare_name_clears_both_layers(self, fake_home):
+    def test_bare_name_clears_the_version(self, fake_home):
         _slot("kit", "1.0.0")
         _slot("kit", "2.0.0")
-        add_pin(_global_manifest(), "kit", "1.0.0")
-        add_pin(local_manifest_path(_global_manifest()), "kit", "1.0.0")
+        CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
         r = CliRunner().invoke(cli.main, ["use", "kit"])
         assert r.exit_code == 0, r.output
-        assert _pins(_global_manifest()) == {}
-        assert _pins(local_manifest_path(_global_manifest())) == {}
-        # Reports what the fallback now resolves to.
+        assert _pins(_user_loadout()) == {}
+        # And says what now serves instead.
         assert "2.0.0" in r.output
+
+    def test_clearing_leaves_curation_intact(self, fake_home, tmp_path, monkeypatch):
+        """Clearing a version must not deactivate the toolkit."""
+        import yaml as _yaml
+        monkeypatch.chdir(tmp_path)
+        _slot("kit", "1.0.0")
+        CliRunner().invoke(cli.main, ["activate", "kit/alpha", "-u"])
+        CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
+        CliRunner().invoke(cli.main, ["use", "kit"])
+        entry = _yaml.safe_load(_user_loadout().read_text())["toolkits"]["kit"]
+        assert "version" not in entry
+        assert entry["bundles"] == ["alpha"]
 
     def test_clearing_an_unpinned_toolkit_is_not_an_error(self, fake_home):
         _slot("kit", "1.0.0")
         r = CliRunner().invoke(cli.main, ["use", "kit"])
         assert r.exit_code == 0
-        assert "was not pinned" in r.output
+        assert "no pinned version" in r.output
 
 
 class TestValidation:
@@ -266,7 +322,7 @@ class TestValidation:
         assert "2.0.0, 1.0.0" in r.output
         assert "toolbase install kit@3.0.0" in r.output
         # Nothing was written.
-        assert _pins(_global_manifest()) == {}
+        assert _pins(_user_loadout()) == {}
 
     def test_empty_name_is_a_usage_error(self, fake_home):
         r = CliRunner().invoke(cli.main, ["use", "@1.0.0"])
