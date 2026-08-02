@@ -286,7 +286,7 @@ def surface_skills(
     default) disables gating and surfaces every skill.
 
     ``disabled_slugs`` is a per-toolkit blocklist of bare skill slugs
-    (from the active profile's ``skills.disabled``, set by ``tb
+    (from the active loadout's ``skills.disabled``, set by ``tb
     deactivate <toolkit>__<skill>``). A source whose slug is in the set is
     skipped — the per-skill analog of ``available_bundles``.
     """
@@ -300,7 +300,7 @@ def surface_skills(
     for src in sources:
         bare_slug = src.slug
         if disabled_slugs is not None and bare_slug in disabled_slugs:
-            # Individually deactivated in the active profile.
+            # Individually deactivated in the active loadout.
             continue
 
         text = src.doc.read_text(encoding="utf-8")

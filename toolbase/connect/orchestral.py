@@ -72,8 +72,8 @@ def is_orchestral_available() -> bool:
     return importlib.util.find_spec("orchestral") is not None
 
 
-def _resolve(project_root, profile: Optional[str]):
-    """Resolve the active profile, auto-discovering the project root.
+def _resolve(project_root, loadout: Optional[str]):
+    """Resolve the active loadout, auto-discovering the project root.
 
     Mirrors ``tb serve``: if ``project_root`` is None we walk up from the
     cwd for a project; absent one, resolution falls through to the user
@@ -81,13 +81,13 @@ def _resolve(project_root, profile: Optional[str]):
     coerced (downstream path handling requires ``Path``).
     """
     from ..envs import find_project_root
-    from ..serve.profiles import resolve_profile
+    from ..serve.loadouts import resolve_loadout
 
     if project_root is None:
         project_root = find_project_root()
     elif not isinstance(project_root, Path):
         project_root = Path(project_root)
-    return resolve_profile(project_root, cli_profile=profile)
+    return resolve_loadout(project_root, cli_loadout=loadout)
 
 
 def _null_console():
@@ -100,7 +100,7 @@ def _null_console():
 @contextlib.contextmanager
 def toolbase_tools(
     *,
-    profile: Optional[str] = None,
+    loadout: Optional[str] = None,
     project_root: Optional[Union[str, Path]] = None,
     call_timeout_s: float = DEFAULT_CALL_TIMEOUT_S,
     quiet: bool = False,
@@ -110,14 +110,14 @@ def toolbase_tools(
 ) -> Iterator[List[Any]]:
     """Spin up toolbase's served tools and yield them as orchestral BaseTools.
 
-    Resolves the active profile (the same chain as ``tb serve``), starts one
+    Resolves the active loadout (the same chain as ``tb serve``), starts one
     persistent subprocess per served toolkit, and yields the list of proxy
     ``BaseTool`` instances -- ready to pass to ``orchestral.Agent(tools=...)``.
     All subprocesses are torn down when the ``with`` block exits.
 
     Args:
-        profile: profile name to serve (like ``tb serve --profile``). None
-            uses the resolution chain (project/user default profile).
+        loadout: loadout name to serve (like ``tb serve --loadout``). None
+            uses the resolution chain (project/user default loadout).
         project_root: project to resolve config against. None auto-discovers
             from the cwd, falling back to the user layer.
         call_timeout_s: per-call upper bound passed to the upstream MCP
@@ -146,7 +146,7 @@ def toolbase_tools(
         ``<toolkit>__<tool>``).
 
     Raises:
-        NoActiveProfileError / ServeConfigError: no resolvable profile.
+        NoActiveLoadoutError / ServeConfigError: no resolvable loadout.
         RuntimeError: no toolkit could be started.
 
     Example::
@@ -154,14 +154,14 @@ def toolbase_tools(
         from toolbase.connect.orchestral import toolbase_tools
         from orchestral import Agent
 
-        with toolbase_tools(profile="paper") as tools:
+        with toolbase_tools(loadout="paper") as tools:
             agent = Agent(tools=tools)
             agent.run("analyze run3.csv")
     """
-    profile_obj = _resolve(project_root, profile)
+    loadout_obj = _resolve(project_root, loadout)
     console = _null_console() if quiet else None
     orch_kwargs: dict = dict(
-        console=console, profile=profile_obj, call_timeout_s=call_timeout_s,
+        console=console, loadout=loadout_obj, call_timeout_s=call_timeout_s,
     )
     if config_overrides:
         # Passed conditionally so test doubles (and any subclass) with the
@@ -175,7 +175,7 @@ def toolbase_tools(
     try:
         tools = orch.start()
         if report is not None:
-            # Let the caller see how many tools each toolkit dropped (profile /
+            # Let the caller see how many tools each toolkit dropped (loadout /
             # bundle / config gating) — invisible otherwise when quiet=True.
             report.extend(orch.tool_report)
         yield tools
@@ -183,7 +183,7 @@ def toolbase_tools(
         orch.shutdown()
 
 
-def agent_script(profile: Optional[str] = None) -> str:
+def agent_script(loadout: Optional[str] = None) -> str:
     """Return a runnable scaffold that launches an orchestral agent wired with
     toolbase tools. ``tb connect orchestral`` writes this to disk.
 
@@ -207,11 +207,11 @@ def agent_script(profile: Optional[str] = None) -> str:
     Configuring orchestral (the LLM, API keys) is the user's job; the scaffold
     just shows where their LLM plugs in.
     """
-    profile_arg = f'profile="{profile}", ' if profile else ""
-    profile_note = (
-        f'serving the "{profile}" profile'
-        if profile
-        else "serving your active profile"
+    loadout_arg = f'loadout="{loadout}", ' if loadout else ""
+    loadout_note = (
+        f'serving the "{loadout}" loadout'
+        if loadout
+        else "serving your active loadout"
     )
     return f'''{GENERATED_MARKER} Safe to edit.
 #
@@ -253,13 +253,13 @@ SANDBOX = Path(__file__).resolve().parent.parent / "sandbox"
 def main():
     SANDBOX.mkdir(parents=True, exist_ok=True)
 
-    # `toolbase_tools` spins up one subprocess per served toolkit ({profile_note})
+    # `toolbase_tools` spins up one subprocess per served toolkit ({loadout_note})
     # and yields the tools as orchestral BaseTool instances. They are torn
     # down when the `with` block exits. `config_overrides` scopes every served
     # toolkit to SANDBOX, overriding the `base_directory` in
     # ~/.toolbase/config/<toolkit>.yaml for this run only.
     with toolbase_tools(
-        {profile_arg}config_overrides={{"base_directory": str(SANDBOX)}},
+        {loadout_arg}config_overrides={{"base_directory": str(SANDBOX)}},
     ) as served:
         tools = [
             # General-purpose tools, scoped to the same sandbox.

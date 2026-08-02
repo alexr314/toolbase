@@ -1,5 +1,5 @@
 """CLI-level tests for ``tb activate`` / ``tb deactivate`` and the
-install/uninstall profile hooks (nothing-active model).
+install/uninstall loadout hooks (nothing-active model).
 
 Uses the standard CONFIG_DIR monkeypatch + a synthetic cache so the
 commands see "installed" toolkits without a real install.
@@ -22,9 +22,9 @@ def isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     fake = tmp_path / ".toolbase"
     fake.mkdir(parents=True, exist_ok=True)
     monkeypatch.setattr(toolbase_config, "CONFIG_DIR", fake)
-    # Pin cwd as well: profile resolution walks upward for a project, so
+    # Pin cwd as well: loadout resolution walks upward for a project, so
     # a run started inside a real toolbase project both reads that
-    # project's profile and writes activations into it.
+    # project's loadout and writes activations into it.
     workdir = tmp_path / "_cwd"
     workdir.mkdir(exist_ok=True)
     monkeypatch.chdir(workdir)
@@ -58,8 +58,8 @@ def _fake_skillpack_install(base: Path, name: str, version: str = "1.0.0") -> Pa
     return slot
 
 
-def _default_profile(base: Path) -> dict:
-    p = base / "profiles" / "default.yaml"
+def _default_loadout(base: Path) -> dict:
+    p = base / "loadouts" / "default.yaml"
     return yaml.safe_load(p.read_text()) if p.exists() else {}
 
 
@@ -67,7 +67,7 @@ def test_activate_toolkit_writes_user_default(isolated: Path):
     _fake_install(isolated, "heptapod")
     r = CliRunner().invoke(cli.main, ["activate", "heptapod", "-u"])
     assert r.exit_code == 0, r.output
-    data = _default_profile(isolated)
+    data = _default_loadout(isolated)
     assert "heptapod" in data["toolkits"]
 
 
@@ -76,7 +76,7 @@ def test_activate_bundle_narrows(isolated: Path):
     CliRunner().invoke(cli.main, ["activate", "heptapod", "-u"])
     r = CliRunner().invoke(cli.main, ["activate", "heptapod/pythia", "-u"])
     assert r.exit_code == 0, r.output
-    data = _default_profile(isolated)
+    data = _default_loadout(isolated)
     assert data["toolkits"]["heptapod"]["bundles"] == ["pythia"]
 
 
@@ -91,7 +91,7 @@ def test_deactivate_removes_entry(isolated: Path):
     CliRunner().invoke(cli.main, ["activate", "heptapod", "-u"])
     r = CliRunner().invoke(cli.main, ["deactivate", "heptapod", "-u"])
     assert r.exit_code == 0, r.output
-    data = _default_profile(isolated)
+    data = _default_loadout(isolated)
     assert "heptapod" not in (data.get("toolkits") or {})
 
 
@@ -103,7 +103,7 @@ def test_list_marks_active_and_inactive(isolated: Path):
     assert r.exit_code == 0, r.output
     # heptapod active, aster inactive
     assert "heptapod" in r.output and "aster" in r.output
-    assert "Active profile" in r.output
+    assert "Active loadout" in r.output
 
 
 def test_list_json_has_active_field(isolated: Path):
@@ -121,37 +121,37 @@ def test_post_install_activate_helper_uses_the_project(
     isolated: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
     """`-a` follows `tb activate`'s own default — this project — because
-    install has no scope of its own to inherit. For the user profile you
+    install has no scope of its own to inherit. For the user loadout you
     run `tb activate -u` afterwards."""
     _fake_install(isolated, "heptapod")
     proj = tmp_path / "proj"
     proj.mkdir()
     monkeypatch.chdir(proj)
     cli._post_install_activate("heptapod")
-    # User profile stays empty; the project profile gets the toolkit.
-    assert "heptapod" not in (_default_profile(isolated).get("toolkits") or {})
-    proj_profile = yaml.safe_load(
-        (proj / ".toolbase" / "profiles" / "default.yaml").read_text()
+    # User loadout stays empty; the project loadout gets the toolkit.
+    assert "heptapod" not in (_default_loadout(isolated).get("toolkits") or {})
+    proj_loadout = yaml.safe_load(
+        (proj / ".toolbase" / "loadouts" / "default.yaml").read_text()
     )
-    assert "heptapod" in proj_profile["toolkits"]
+    assert "heptapod" in proj_loadout["toolkits"]
 
 
-def test_uninstall_cleanup_profiles_helper(isolated: Path):
+def test_uninstall_cleanup_loadouts_helper(isolated: Path):
     _fake_install(isolated, "heptapod")
     CliRunner().invoke(cli.main, ["activate", "heptapod", "-u"])
-    assert "heptapod" in _default_profile(isolated)["toolkits"]
-    cli._uninstall_cleanup_profiles("heptapod")
-    assert "heptapod" not in (_default_profile(isolated).get("toolkits") or {})
+    assert "heptapod" in _default_loadout(isolated)["toolkits"]
+    cli._uninstall_cleanup_loadouts("heptapod")
+    assert "heptapod" not in (_default_loadout(isolated).get("toolkits") or {})
 
 
-def test_profile_list_and_set_default(isolated: Path):
+def test_loadout_list_and_set_default(isolated: Path):
     _fake_install(isolated, "heptapod")
     CliRunner().invoke(cli.main, ["activate", "heptapod", "-u"])
-    CliRunner().invoke(cli.main, ["profile", "create", "paper", "-u", "--empty"])
-    r = CliRunner().invoke(cli.main, ["profile", "set-default", "paper", "-u"])
+    CliRunner().invoke(cli.main, ["loadout", "create", "paper", "-u", "--empty"])
+    r = CliRunner().invoke(cli.main, ["loadout", "set-default", "paper", "-u"])
     assert r.exit_code == 0, r.output
     serve_yaml = yaml.safe_load((isolated / "serve.yaml").read_text())
-    assert serve_yaml["default"]["profile"] == "paper"
+    assert serve_yaml["default"]["loadout"] == "paper"
 
 
 # ── per-skill activate / deactivate (activation grammar reused) ──────────
@@ -172,7 +172,7 @@ def test_deactivate_routes_to_skill(isolated: Path, monkeypatch):
         cli.main, ["deactivate", "heptapod__debug_guide", "-u"]
     )
     assert r.exit_code == 0, r.output
-    entry = _default_profile(isolated)["toolkits"]["heptapod"]
+    entry = _default_loadout(isolated)["toolkits"]["heptapod"]
     assert entry["skills"]["disabled"] == ["debug_guide"]
     # It must NOT land in tools.disabled.
     assert "debug_guide" not in ((entry.get("tools") or {}).get("disabled") or [])
@@ -185,7 +185,7 @@ def test_activate_clears_disabled_skill(isolated: Path, monkeypatch):
     CliRunner().invoke(cli.main, ["deactivate", "heptapod__debug_guide", "-u"])
     r = CliRunner().invoke(cli.main, ["activate", "heptapod__debug_guide", "-u"])
     assert r.exit_code == 0, r.output
-    entry = _default_profile(isolated)["toolkits"]["heptapod"]
+    entry = _default_loadout(isolated)["toolkits"]["heptapod"]
     # The empty skills block is cleaned up.
     assert "skills" not in entry
 
@@ -209,7 +209,7 @@ def test_name_collision_prefers_tool(isolated: Path, monkeypatch):
     r = CliRunner().invoke(cli.main, ["deactivate", "heptapod__foo", "-u"])
     assert r.exit_code == 0, r.output
     assert "both a tool and a skill" in r.output
-    entry = _default_profile(isolated)["toolkits"]["heptapod"]
+    entry = _default_loadout(isolated)["toolkits"]["heptapod"]
     assert entry["tools"]["disabled"] == ["foo"]
     assert "skills" not in entry
 
@@ -221,7 +221,7 @@ def test_unknown_name_stays_tool(isolated: Path, monkeypatch):
     _route_as_skill(monkeypatch, skills=set(), tools=set())
     r = CliRunner().invoke(cli.main, ["deactivate", "heptapod__mystery", "-u"])
     assert r.exit_code == 0, r.output
-    entry = _default_profile(isolated)["toolkits"]["heptapod"]
+    entry = _default_loadout(isolated)["toolkits"]["heptapod"]
     assert entry["tools"]["disabled"] == ["mystery"]
     assert "skills" not in entry
 
@@ -234,7 +234,7 @@ def test_skillpack_is_installable_and_activatable(isolated: Path):
     # It shows up as installed and can be activated like any toolkit.
     r = CliRunner().invoke(cli.main, ["activate", "mypack", "-u"])
     assert r.exit_code == 0, r.output
-    assert "mypack" in _default_profile(isolated)["toolkits"]
+    assert "mypack" in _default_loadout(isolated)["toolkits"]
 
 
 def test_skillpack_is_discoverable_without_skip(isolated: Path):

@@ -6,7 +6,7 @@ serve ``Orchestrator`` in-process and (b) a generated runnable agent script.
 
 These tests are network- and subprocess-free: the ``Orchestrator`` is
 replaced with a fake so ``toolbase_tools`` exercises only the lifecycle
-contract (resolve profile -> start -> yield -> shutdown).
+contract (resolve loadout -> start -> yield -> shutdown).
 """
 
 from __future__ import annotations
@@ -33,12 +33,12 @@ def test_agent_script_carries_marker():
     assert oc.agent_script(None).startswith(oc.GENERATED_MARKER)
 
 
-def test_agent_script_bakes_profile_when_given():
-    assert 'profile="paper"' in oc.agent_script("paper")
+def test_agent_script_bakes_loadout_when_given():
+    assert 'loadout="paper"' in oc.agent_script("paper")
 
 
-def test_agent_script_no_profile_arg_when_none():
-    assert "profile=" not in oc.agent_script(None)
+def test_agent_script_no_loadout_arg_when_none():
+    assert "loadout=" not in oc.agent_script(None)
 
 
 # ── the scaffold must not shadow the package it imports ───────────────
@@ -146,9 +146,9 @@ class _FakeOrch:
 
     instances: list = []
 
-    def __init__(self, *, console=None, profile=None, call_timeout_s=None):
+    def __init__(self, *, console=None, loadout=None, call_timeout_s=None):
         self.console = console
-        self.profile = profile
+        self.loadout = loadout
         self.call_timeout_s = call_timeout_s
         self.started = False
         self.shut = False
@@ -169,27 +169,27 @@ def fake_orch(monkeypatch):
 
     captured = {}
 
-    def fake_resolve(root=None, *, cli_profile=None, **kw):
+    def fake_resolve(root=None, *, cli_loadout=None, **kw):
         captured["root"] = root
-        captured["cli_profile"] = cli_profile
-        return "RESOLVED_PROFILE"
+        captured["cli_loadout"] = cli_loadout
+        return "RESOLVED_LOADOUT"
 
-    monkeypatch.setattr("toolbase.serve.profiles.resolve_profile", fake_resolve)
+    monkeypatch.setattr("toolbase.serve.loadouts.resolve_loadout", fake_resolve)
     return captured
 
 
 def test_toolbase_tools_yields_started_tools_and_shuts_down(fake_orch, tmp_path):
-    with oc.toolbase_tools(profile="paper", project_root=tmp_path,
+    with oc.toolbase_tools(loadout="paper", project_root=tmp_path,
                            call_timeout_s=12.0) as tools:
         assert tools == ["TOOL_A", "TOOL_B"]
         inst = _FakeOrch.instances[-1]
         assert inst.started is True
         assert inst.shut is False  # not yet
-    # On exit: torn down, and the resolved profile + timeout were threaded in.
+    # On exit: torn down, and the resolved loadout + timeout were threaded in.
     assert inst.shut is True
-    assert inst.profile == "RESOLVED_PROFILE"
+    assert inst.loadout == "RESOLVED_LOADOUT"
     assert inst.call_timeout_s == 12.0
-    assert fake_orch == {"root": tmp_path, "cli_profile": "paper"}
+    assert fake_orch == {"root": tmp_path, "cli_loadout": "paper"}
 
 
 def test_toolbase_tools_shuts_down_on_exception(fake_orch, tmp_path):
@@ -257,10 +257,10 @@ def test_cli_out_overrides_path(tmp_path):
     assert not (tmp_path / ".toolbase").exists()  # didn't use the default
 
 
-def test_cli_bakes_profile(tmp_path):
+def test_cli_bakes_loadout(tmp_path):
     out = tmp_path / "agent.py"
-    _run(["connect", "orchestral", "--profile", "paper", "--out", str(out)])
-    assert 'profile="paper"' in out.read_text()
+    _run(["connect", "orchestral", "--loadout", "paper", "--out", str(out)])
+    assert 'loadout="paper"' in out.read_text()
 
 
 def test_cli_refuses_overwrite_without_force(tmp_path):

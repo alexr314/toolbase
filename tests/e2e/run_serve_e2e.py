@@ -72,15 +72,15 @@ def main() -> int:
     print(f"toolkits visible: {[p.name for p in INSTALL_CACHE.iterdir()]}")
     print(f"using toolbase at: {toolbase_bin}")
 
-    # Under the nothing-active model, `tb serve` resolves an active profile
+    # Under the nothing-active model, `tb serve` resolves an active loadout
     # (no "serve everything" fallback). Activate the synthetic toolkit by
-    # writing the default profile so serve has something to expose.
-    profiles_dir = fake_home / ".toolbase" / "profiles"
-    profiles_dir.mkdir(parents=True, exist_ok=True)
-    (profiles_dir / "default.yaml").write_text(
+    # writing the default loadout so serve has something to expose.
+    loadouts_dir = fake_home / ".toolbase" / "loadouts"
+    loadouts_dir.mkdir(parents=True, exist_ok=True)
+    (loadouts_dir / "default.yaml").write_text(
         f"toolkits:\n  {TOOLKIT_NAME}: {{}}\n"
     )
-    print(f"activated {TOOLKIT_NAME} in the default profile")
+    print(f"activated {TOOLKIT_NAME} in the default loadout")
     print()
 
     # Build the env the MCP client will pass to its subprocess.

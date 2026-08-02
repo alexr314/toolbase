@@ -177,7 +177,7 @@ SCOPE_PRIVATE = "private"
 def _private_option(f):
     """Add ``--private`` to a command that writes a layerable file.
 
-    Only pins and per-toolkit config have a gitignored sibling; profiles
+    Only pins and per-toolkit config have a gitignored sibling; loadouts
     and harness configs don't, so they don't take this.
     """
     return click.option(
@@ -200,7 +200,7 @@ def _resolve_scope(
     """Reduce the scope flags to one of SCOPE_USER/PROJECT/PRIVATE.
 
     ``default`` is the command's own default, which still differs by
-    command family (install/use default to user; profile and config
+    command family (install/use default to user; loadout and config
     commands to project). Passing more than one flag is a usage error
     rather than a silent precedence rule — with three destinations, a
     precedence order nobody can see is how pins end up in the wrong file.
@@ -444,7 +444,7 @@ class _SectionedGroup(click.Group):
         ),
         (
             "Configuration",
-            ["config", "profile", "setup", "project"],
+            ["config", "loadout", "setup", "project"],
         ),
         (
             "Maintenance",
@@ -1501,7 +1501,7 @@ def _login_paste_user_token(token: str, mode: str) -> None:
         console.print(
             "Use [cyan]toolbase login <toolkit-name> --token <token>[/cyan] "
             "for the legacy form, or generate a per-user token at "
-            "[link]https://toolbase-ai.com/profile/cli-tokens[/link]."
+            "[link]https://toolbase-ai.com/loadout/cli-tokens[/link]."
         )
         sys.exit(1)
     if not auth.is_user_token(token):
@@ -1563,7 +1563,7 @@ def _login_browser_flow(mode: str) -> None:
         raise click.UsageError(
             "Cannot run the browser-flow login non-interactively. "
             "Generate a per-user token at "
-            "https://toolbase-ai.com/profile/cli-tokens and pass it via "
+            "https://toolbase-ai.com/loadout/cli-tokens and pass it via "
             "--token <token>."
         )
 
@@ -1596,7 +1596,7 @@ def _login_browser_flow(mode: str) -> None:
         )
         console.print(
             "Try again, or generate a token manually at "
-            "[link]https://toolbase-ai.com/profile/cli-tokens[/link] and pass "
+            "[link]https://toolbase-ai.com/loadout/cli-tokens[/link] and pass "
             "it via [cyan]--token <token>[/cyan]."
         )
         sys.exit(1)
@@ -1760,7 +1760,7 @@ def logout(clean_legacy, yes, no_, no_input):
             )
             console.print(
                 "[dim]To revoke this token on the server side too, visit "
-                "[link]https://toolbase-ai.com/profile/cli-tokens[/link].[/dim]"
+                "[link]https://toolbase-ai.com/loadout/cli-tokens[/link].[/dim]"
             )
 
     if clean_legacy:
@@ -4233,19 +4233,19 @@ def _note_skills_available(name: str, slot: Path, no_skills: bool = False) -> No
 def _post_install_activate(
     name: str,
 ) -> None:
-    """Activate a just-installed toolkit in the default profile (``-a``).
+    """Activate a just-installed toolkit in the default loadout (``-a``).
 
     Uses ``tb activate``'s own default — this project — because install
     has no scope of its own to follow. The binary lives in the
     user-level cache, but *activation* is per-project: you install a
     toolkit once, then activate it where you want it. Pass ``-u`` to
-    ``tb activate`` afterwards for the user-level profile. Best-effort;
+    ``tb activate`` afterwards for the user-level loadout. Best-effort;
     a failure here doesn't fail the install (the toolkit is in the cache
     regardless).
     """
-    from .serve.profile_scaffold import activate as _activate
+    from .serve.loadout_scaffold import activate as _activate
     try:
-        scope, project_root = _resolve_profile_scope(False, False)
+        scope, project_root = _resolve_loadout_scope(False, False)
         result = _activate(name, scope=scope, project_root=project_root)
     except Exception as e:
         console.print(f"[yellow]Installed, but could not activate: {e}[/yellow]")
@@ -4486,10 +4486,10 @@ def _install_from_tarball(ctx, path: Path, *, version,
 @click.option(
     '--activate', '-a', 'activate_after', is_flag=True, default=False,
     help=(
-        "Also activate the toolkit in the default profile after installing "
+        "Also activate the toolkit in the default loadout after installing "
         "(adds it to what `tb serve` exposes). Activates the cwd's project "
         "(creating .toolbase/ there), like `tb activate`; run "
-        "`tb activate -u <toolkit>` afterwards for the user-level profile "
+        "`tb activate -u <toolkit>` afterwards for the user-level loadout "
         "instead. Without -a, install "
         "only places the toolkit in the cache; nothing is served until you "
         "activate it."
@@ -5200,7 +5200,7 @@ def install(ctx, name, version, editable, no_skills, activate_after, bundle_flag
     "-v", "--verbose", "verbose", is_flag=True, default=False,
     help=(
         "Show each toolkit's tools grouped by bundle, with served/hidden "
-        "status relative to the active profile. Bundles that can't serve "
+        "status relative to the active loadout. Bundles that can't serve "
         "carry the reason on the group header."
     ),
 )
@@ -5277,14 +5277,14 @@ def list_cmd(as_json, verbose):
         for n, vs in _versions_by_name.items()
     }
 
-    # Resolve the active profile to mark which toolkits are active (served).
-    # Best-effort: no active profile => everything inactive, no error.
-    resolved_profile, active_set = _list_resolve_active()
+    # Resolve the active loadout to mark which toolkits are active (served).
+    # Best-effort: no active loadout => everything inactive, no error.
+    resolved_loadout, active_set = _list_resolve_active()
     # Tool names shared by >1 active toolkit — annotated per row under -v so
     # overlap (harmless while namespaced, a clash if ever served bare) is
-    # visible. Only meaningful with an active multi-toolkit profile.
+    # visible. Only meaningful with an active multi-toolkit loadout.
     _name_collisions = _active_name_collisions(active_set) if verbose else {}
-    active_profile = resolved_profile.name if resolved_profile is not None else None
+    active_loadout = resolved_loadout.name if resolved_loadout is not None else None
 
     if as_json:
         payload = [
@@ -5297,7 +5297,7 @@ def list_cmd(as_json, verbose):
                 # ``serving``: this is the slot serve would spawn. At most
                 # one entry per name is true; all false means a pin points
                 # at a version that isn't installed. Distinct from
-                # ``active``, which is about the profile, not the version.
+                # ``active``, which is about the loadout, not the version.
                 "serving": resolutions[e.name].version == e.version,
                 "serving_reason": resolutions[e.name].reason,
                 "active": e.name in active_set,
@@ -5319,11 +5319,11 @@ def list_cmd(as_json, verbose):
         )
         return
 
-    if active_profile is not None:
-        console.print(f"[dim]Active profile: {active_profile}[/dim]\n")
+    if active_loadout is not None:
+        console.print(f"[dim]Active loadout: {active_loadout}[/dim]\n")
     else:
         console.print(
-            "[dim]No active profile — nothing is served. "
+            "[dim]No active loadout — nothing is served. "
             "Run `tb activate <toolkit>` to expose tools.[/dim]\n"
         )
 
@@ -5420,7 +5420,7 @@ def list_cmd(as_json, verbose):
             )
         if verbose:
             _list_print_tools_verbose(
-                name, resolved_profile, _name_collisions,
+                name, resolved_loadout, _name_collisions,
                 resolution=resolution,
                 multi_version=multi_version,
             )
@@ -5466,18 +5466,18 @@ def list_cmd(as_json, verbose):
 
 
 def _list_resolve_active():
-    """Best-effort active-profile resolution for ``tb list``.
+    """Best-effort active-loadout resolution for ``tb list``.
 
-    Returns ``(resolved_profile_or_None, active_toolkit_names)``. A toolkit
-    is "active" when the active profile names it and serve.yaml doesn't
-    blocklist it. No active profile (or a malformed one) yields
+    Returns ``(resolved_loadout_or_None, active_toolkit_names)``. A toolkit
+    is "active" when the active loadout names it and serve.yaml doesn't
+    blocklist it. No active loadout (or a malformed one) yields
     ``(None, set())`` — list never errors over serve config.
     """
-    from .serve.profiles import resolve_profile
+    from .serve.loadouts import resolve_loadout
     from .serve.config import ServeConfigError
     try:
         project_root, _src = _resolve_active_project_root()
-        resolved = resolve_profile(project_root)
+        resolved = resolve_loadout(project_root)
     except (ServeConfigError, Exception):
         return None, set()
     disabled = set(resolved.disabled_toolkits)
@@ -5547,7 +5547,7 @@ def _warn_install_name_collisions(new_toolkit: str) -> None:
 
 
 def _list_print_tools_verbose(
-    name, resolved_profile, collisions=None, *,
+    name, resolved_loadout, collisions=None, *,
     resolution=None, multi_version=False,
 ) -> None:
     """Print a toolkit's declared tools with served/hidden status.
@@ -5562,7 +5562,7 @@ def _list_print_tools_verbose(
     like it belongs to the last version row printed above it.
     """
     from .serve.orchestrator import discover_toolkits, _resolve_bundle_availability
-    from .serve.profiles import tool_is_served
+    from .serve.loadouts import tool_is_served
     from .envs.cache import installed_bundles as _installed_bundles
 
     disc = next((d for d in discover_toolkits() if d.name == name), None)
@@ -5599,16 +5599,16 @@ def _list_print_tools_verbose(
 
     sel = None
     global_disabled: set = set()
-    if resolved_profile is not None:
-        sel = resolved_profile.toolkits.get(name)
+    if resolved_loadout is not None:
+        sel = resolved_loadout.toolkits.get(name)
         prefix = f"{name}__"
         global_disabled = {
             q.split("__", 1)[1]
-            for q in resolved_profile.disabled_tools
+            for q in resolved_loadout.disabled_tools
             if q.startswith(prefix)
         }
-        # A toolkit absent from the active profile serves nothing.
-        toolkit_active = name in resolved_profile.toolkits
+        # A toolkit absent from the active loadout serves nothing.
+        toolkit_active = name in resolved_loadout.toolkits
     else:
         toolkit_active = False
 
@@ -5653,7 +5653,7 @@ def _list_print_tools_verbose(
             missing_cfg = availability.dropped_bundles.get(bundle)
             if not_installed:
                 # Deps for this bundle were never pip-installed, so none
-                # of its tools can be served whatever the profile says.
+                # of its tools can be served whatever the loadout says.
                 # Escaped: Rich would read the bracketed bundle name in
                 # the install command as a style tag and swallow it.
                 header_note = (
@@ -6144,7 +6144,7 @@ def uninstall(name, yes, no_, no_input):
             f"[dim]Note: could not update project manifest: {e}[/dim]"
         )
 
-    # Skills + default-profile cleanup — only when ALL versions are gone.
+    # Skills + default-loadout cleanup — only when ALL versions are gone.
     if not _list_versions(name):
         # Remove this toolkit's surfaced skills from every harness that has
         # a skill surface (Claude Code's ~/.claude/skills, Codex's
@@ -6168,22 +6168,22 @@ def uninstall(name, yes, no_, no_input):
                 f"[yellow]Could not clean up surfaced skill entries: {e}[/yellow]"
             )
 
-        # Drop the toolkit from the default profile(s) so an uninstalled
-        # toolkit doesn't linger as a dangling reference. Named profiles
+        # Drop the toolkit from the default loadout(s) so an uninstalled
+        # toolkit doesn't linger as a dangling reference. Named loadouts
         # are explicit user choices and left untouched (they surface a
         # clear skip at serve time if they reference a missing toolkit).
-        _uninstall_cleanup_profiles(name)
+        _uninstall_cleanup_loadouts(name)
 
     console.print(f"\n[bold green]✓ Uninstalled {plural}[/bold green]")
 
 
-def _uninstall_cleanup_profiles(name: str) -> None:
-    """Remove ``name`` from the user and active-project default profiles.
+def _uninstall_cleanup_loadouts(name: str) -> None:
+    """Remove ``name`` from the user and active-project default loadouts.
 
     Best-effort: only touches an entry that exists, only the ``default``
-    profile, and never raises into the uninstall flow.
+    loadout, and never raises into the uninstall flow.
     """
-    from .serve.profile_scaffold import deactivate as _deactivate
+    from .serve.loadout_scaffold import deactivate as _deactivate
     for scope, needs_root in (("user", False), ("project", True)):
         try:
             if needs_root:
@@ -6193,7 +6193,7 @@ def _uninstall_cleanup_profiles(name: str) -> None:
                 res = _deactivate(name, scope="user")
             if res.changed:
                 console.print(
-                    f"[dim]Removed {name} from the {scope} default profile.[/dim]"
+                    f"[dim]Removed {name} from the {scope} default loadout.[/dim]"
                 )
         except Exception:
             pass
@@ -6401,16 +6401,16 @@ def toolbase_config_dir() -> Path:
 
 @main.group(invoke_without_command=True)
 @click.option(
-    '--profile', 'profile_name', default=None, metavar='NAME',
+    '--loadout', 'loadout_name', default=None, metavar='NAME',
     help=(
-        'Serve a specific profile this invocation (one-shot, does not '
-        'persist). Without it, the active profile is resolved from '
-        'serve.yaml default.profile, else the implicit "default" profile.'
+        'Serve a specific loadout this invocation (one-shot, does not '
+        'persist). Without it, the active loadout is resolved from '
+        'serve.yaml default.loadout, else the implicit "default" loadout.'
     ),
 )
 @click.option(
     '--dry-run', '-d', 'dry_run', is_flag=True, default=False,
-    help='Print the active profile and what it selects, then exit.',
+    help='Print the active loadout and what it selects, then exit.',
 )
 @click.option(
     '--call-timeout', 'call_timeout', type=float, default=None,
@@ -6435,23 +6435,23 @@ def toolbase_config_dir() -> Path:
     ),
 )
 @click.pass_context
-def serve(ctx, profile_name, dry_run, call_timeout, no_tui, bare_flag):
+def serve(ctx, loadout_name, dry_run, call_timeout, no_tui, bare_flag):
     """
-    Start the MCP server for the active profile's tools.
+    Start the MCP server for the active loadout's tools.
 
-    Serves the tools selected by the active profile. The active profile is
-    resolved in order: --profile flag, then default.profile in serve.yaml,
-    then an implicit profile named "default". If none resolve, serve errors
+    Serves the tools selected by the active loadout. The active loadout is
+    resolved in order: --loadout flag, then default.loadout in serve.yaml,
+    then an implicit loadout named "default". If none resolve, serve errors
     with a hint — there is no "serve everything" fallback.
 
     You normally don't run this yourself: your agent harness (e.g. Claude
     Code) spawns it. Curate what's served with `tb activate` /
-    `tb deactivate`, or manage named profiles with `tb profile`.
+    `tb deactivate`, or manage named loadouts with `tb loadout`.
 
     \b
     Examples:
-        tb serve                        # active profile
-        tb serve --profile paper        # one-shot: serve the 'paper' profile
+        tb serve                        # active loadout
+        tb serve --loadout paper        # one-shot: serve the 'paper' loadout
         tb serve --dry-run              # preview the resolved selection
 
     \b
@@ -6472,7 +6472,7 @@ def serve(ctx, profile_name, dry_run, call_timeout, no_tui, bare_flag):
         )
         sys.exit(2)
 
-    from .serve.profiles import resolve_profile, NoActiveProfileError
+    from .serve.loadouts import resolve_loadout, NoActiveLoadoutError
     from .serve.config import ServeConfigError
 
     # Claim serve.log mirroring before anything else can take the singleton
@@ -6484,8 +6484,8 @@ def serve(ctx, profile_name, dry_run, call_timeout, no_tui, bare_flag):
     project_root, _src = _resolve_active_project_root()
 
     try:
-        profile = resolve_profile(project_root, cli_profile=profile_name)
-    except NoActiveProfileError as e:
+        loadout = resolve_loadout(project_root, cli_loadout=loadout_name)
+    except NoActiveLoadoutError as e:
         console.print(f"[red]{e}[/red]")
         sys.exit(1)
     except ServeConfigError as e:
@@ -6496,14 +6496,14 @@ def serve(ctx, profile_name, dry_run, call_timeout, no_tui, bare_flag):
     if bare_flag is not None:
         bare = bare_flag
     else:
-        from .serve.profiles import load_merged_serve_config
+        from .serve.loadouts import load_merged_serve_config
         try:
             bare = load_merged_serve_config(project_root).default.bare
         except ServeConfigError:
             bare = False
 
     if dry_run:
-        _print_resolution(profile, bare=bare)
+        _print_resolution(loadout, bare=bare)
         return
 
     # The MCP stdio protocol owns this process's stdin/stdout, so we do NOT
@@ -6511,32 +6511,32 @@ def serve(ctx, profile_name, dry_run, call_timeout, no_tui, bare_flag):
     # orchestrator builds its own stderr-bound Console.
     from .serve.orchestrator import DEFAULT_CALL_TIMEOUT_S, serve as _serve_entry
     timeout_s = call_timeout if call_timeout is not None else DEFAULT_CALL_TIMEOUT_S
-    rc = _serve_entry(no_tui=True, profile=profile, call_timeout_s=timeout_s,
+    rc = _serve_entry(no_tui=True, loadout=loadout, call_timeout_s=timeout_s,
                       bare=bare)
     sys.exit(rc)
 
 
-def _print_resolution(profile, bare: bool = False) -> None:
-    """Render --dry-run output: the active profile and what it selects.
+def _print_resolution(loadout, bare: bool = False) -> None:
+    """Render --dry-run output: the active loadout and what it selects.
 
-    Shows the profile name + provenance, each selected toolkit and its
+    Shows the loadout name + provenance, each selected toolkit and its
     per-toolkit curation (bundles / enabled / disabled), and the absolute
     serve.yaml blocklist. Exact served tools also depend on each toolkit's
     bundle membership and config-gating, so this is the selection view, not
     the final tool list — `tb list -v` gives the tool-level view.
     """
     console.print(
-        f"\n[bold]Active profile:[/bold] [cyan]{profile.name}[/cyan] "
-        f"[dim]({profile.source})[/dim]"
+        f"\n[bold]Active loadout:[/bold] [cyan]{loadout.name}[/cyan] "
+        f"[dim]({loadout.source})[/dim]"
     )
     console.print(
         f"[bold]Naming:[/bold] "
         + ("[yellow]bare <tool>[/yellow] (un-namespaced)" if bare
            else "qualified [cyan]<toolkit>__<tool>[/cyan]")
     )
-    if not profile.toolkits:
-        console.print("  [dim](profile selects no toolkits)[/dim]")
-    for tk, sel in profile.toolkits.items():
+    if not loadout.toolkits:
+        console.print("  [dim](loadout selects no toolkits)[/dim]")
+    for tk, sel in loadout.toolkits.items():
         if not sel.is_allowlist and not sel.disabled_tools:
             console.print(f"  [cyan]{tk}[/cyan] [dim](whole toolkit)[/dim]")
             continue
@@ -6554,16 +6554,16 @@ def _print_resolution(profile, bare: bool = False) -> None:
                 f"    disabled tools: {', '.join(sel.disabled_tools)}"
             )
 
-    if profile.disabled_toolkits or profile.disabled_tools:
+    if loadout.disabled_toolkits or loadout.disabled_tools:
         console.print(
             "\n[bold]Absolute blocklist (serve.yaml default.disabled):[/bold]"
         )
-        if profile.disabled_toolkits:
+        if loadout.disabled_toolkits:
             console.print(
-                f"  toolkits: {', '.join(profile.disabled_toolkits)}"
+                f"  toolkits: {', '.join(loadout.disabled_toolkits)}"
             )
-        if profile.disabled_tools:
-            console.print(f"  tools: {', '.join(profile.disabled_tools)}")
+        if loadout.disabled_tools:
+            console.print(f"  tools: {', '.join(loadout.disabled_tools)}")
 
     console.print(
         "\n[dim]Exact served tools also depend on bundle membership and "
@@ -6675,7 +6675,7 @@ def serve_config(action):
     console.print(SERVE_CONFIG_PATH.read_text())
 
 
-# ── activate / deactivate (casual-tier profile editing) ────────────────
+# ── activate / deactivate (casual-tier loadout editing) ────────────────
 
 
 def _installed_toolkit_names() -> set:
@@ -6687,7 +6687,7 @@ def _installed_toolkit_names() -> set:
         return set()
 
 
-def _resolve_profile_scope(user_scope: bool, project_scope: bool):
+def _resolve_loadout_scope(user_scope: bool, project_scope: bool):
     """Resolve activate/deactivate/create scope -> (scope, project_root).
 
     Default (and -l): the cwd's project -- the nearest ``.toolbase/`` above
@@ -6716,19 +6716,19 @@ def _print_mutation(result) -> None:
 
 
 def _scope_flags(f):
-    """Add the canonical scope options to a profile-writing command.
+    """Add the canonical scope options to a loadout-writing command.
 
-    Profiles and serve.yaml exist at user and project scope only — there
-    is no gitignored variant of a profile — so these commands take two
+    Loadouts and serve.yaml exist at user and project scope only — there
+    is no gitignored variant of a loadout — so these commands take two
     of the three scope keys. See ``_resolve_scope``.
     """
     f = click.option(
         '-p', '--project', 'project_scope', is_flag=True, default=False,
-        help="Operate on this project's default profile (the default).",
+        help="Operate on this project's default loadout (the default).",
     )(f)
     f = click.option(
         '-u', '--user', 'user_scope', is_flag=True, default=False,
-        help='Operate on the user-level default profile.',
+        help='Operate on the user-level default loadout.',
     )(f)
     return f
 
@@ -6754,7 +6754,7 @@ def _skill_route(tk: str, sub: str) -> bool:
 @click.argument('item')
 @_scope_flags
 def activate(item, user_scope, project_scope):
-    """Activate a toolkit, bundle, tool, or skill in the default profile.
+    """Activate a toolkit, bundle, tool, or skill in the default loadout.
 
     \b
     ITEM is one of:
@@ -6767,12 +6767,12 @@ def activate(item, user_scope, project_scope):
     surfaced skill and not a tool. Skills are on by default; activating one
     just clears a previous `tb deactivate`.
     """
-    from .serve.profile_scaffold import (
+    from .serve.loadout_scaffold import (
         activate as _activate, activate_skill as _activate_skill,
-        parse_item, ProfileItemError,
+        parse_item, LoadoutItemError,
     )
 
-    scope, project_root = _resolve_profile_scope(user_scope, project_scope)
+    scope, project_root = _resolve_loadout_scope(user_scope, project_scope)
     tk = item.split('/', 1)[0].split('__', 1)[0]
     if tk not in _installed_toolkit_names():
         console.print(f"[red]✗ '{tk}' is not installed.[/red]")
@@ -6786,7 +6786,7 @@ def activate(item, user_scope, project_scope):
             )
         else:
             result = _activate(item, scope=scope, project_root=project_root)
-    except ProfileItemError as e:
+    except LoadoutItemError as e:
         console.print(f"[red]✗ {e}[/red]")
         sys.exit(2)
     _print_mutation(result)
@@ -6796,7 +6796,7 @@ def activate(item, user_scope, project_scope):
 @click.argument('item')
 @_scope_flags
 def deactivate(item, user_scope, project_scope):
-    """Deactivate a toolkit, bundle, tool, or skill from the default profile.
+    """Deactivate a toolkit, bundle, tool, or skill from the default loadout.
 
     \b
     ITEM forms match `tb activate` (toolkit, toolkit/bundle, toolkit__tool,
@@ -6804,12 +6804,12 @@ def deactivate(item, user_scope, project_scope):
     it matches a surfaced skill and not a tool; deactivating it stops that
     guide from surfacing on the next `tb connect`.
     """
-    from .serve.profile_scaffold import (
+    from .serve.loadout_scaffold import (
         deactivate as _deactivate, deactivate_skill as _deactivate_skill,
-        parse_item, ProfileItemError,
+        parse_item, LoadoutItemError,
     )
 
-    scope, project_root = _resolve_profile_scope(user_scope, project_scope)
+    scope, project_root = _resolve_loadout_scope(user_scope, project_scope)
     try:
         kind, tk2, sub = parse_item(item)
         if kind == "tool" and _skill_route(tk2, sub):
@@ -6818,59 +6818,59 @@ def deactivate(item, user_scope, project_scope):
             )
         else:
             result = _deactivate(item, scope=scope, project_root=project_root)
-    except ProfileItemError as e:
+    except LoadoutItemError as e:
         console.print(f"[red]✗ {e}[/red]")
         sys.exit(2)
     _print_mutation(result)
 
 
-# ── tb profile: named-profile management (power tier) ──────────────────
+# ── tb loadout: named-loadout management (power tier) ──────────────────
 
 
 @main.group()
-def profile():
-    """Manage named profiles (curated tool sets)."""
+def loadout():
+    """Manage named loadouts (curated tool sets)."""
     pass
 
 
-def _profile_active_name(project_root):
-    """Best-effort name of the active profile, or None if unresolved."""
-    from .serve.profiles import (
-        load_merged_serve_config, discover_profiles,
-        resolve_active_profile_name,
+def _loadout_active_name(project_root):
+    """Best-effort name of the active loadout, or None if unresolved."""
+    from .serve.loadouts import (
+        load_merged_serve_config, discover_loadouts,
+        resolve_active_loadout_name,
     )
     from .serve.config import ServeConfigError
     try:
         merged = load_merged_serve_config(project_root)
-        available = discover_profiles(project_root)
-        name, _src = resolve_active_profile_name(merged, available)
+        available = discover_loadouts(project_root)
+        name, _src = resolve_active_loadout_name(merged, available)
         return name
     except ServeConfigError:
         return None
 
 
-@profile.command('list')
-def profile_list():
-    """List all available profiles (user + project), marking the active one."""
-    from .serve.profiles import discover_profiles
+@loadout.command('list')
+def loadout_list():
+    """List all available loadouts (user + project), marking the active one."""
+    from .serve.loadouts import discover_loadouts
     from .serve.config import ServeConfigError
 
     project_root, _src = _resolve_active_project_root()
     try:
-        found = discover_profiles(project_root)
+        found = discover_loadouts(project_root)
     except ServeConfigError as e:
         console.print(f"[red]{e}[/red]")
         sys.exit(1)
 
     if not found:
-        console.print("[dim]No profiles defined.[/dim]\n")
+        console.print("[dim]No loadouts defined.[/dim]\n")
         console.print(
             "Create one with [cyan]tb activate <toolkit>[/cyan] (builds the "
-            "default profile) or [cyan]tb profile create <name>[/cyan]."
+            "default loadout) or [cyan]tb loadout create <name>[/cyan]."
         )
         return
 
-    active = _profile_active_name(project_root)
+    active = _loadout_active_name(project_root)
     for name in sorted(found):
         prof = found[name]
         mark = "[green]*[/green]" if name == active else " "
@@ -6880,30 +6880,30 @@ def profile_list():
             f"{n_tk} toolkit{'s' if n_tk != 1 else ''})[/dim]"
         )
     if active:
-        console.print(f"\n[dim]* = active profile[/dim]")
+        console.print(f"\n[dim]* = active loadout[/dim]")
 
 
-@profile.command('show')
+@loadout.command('show')
 @click.argument('name', required=False)
-def profile_show(name):
-    """Pretty-print a profile (defaults to the active one)."""
-    from .serve.profiles import discover_profiles
+def loadout_show(name):
+    """Pretty-print a loadout (defaults to the active one)."""
+    from .serve.loadouts import discover_loadouts
     from .serve.config import ServeConfigError
 
     project_root, _src = _resolve_active_project_root()
     try:
-        found = discover_profiles(project_root)
+        found = discover_loadouts(project_root)
     except ServeConfigError as e:
         console.print(f"[red]{e}[/red]")
         sys.exit(1)
 
     if name is None:
-        name = _profile_active_name(project_root)
+        name = _loadout_active_name(project_root)
         if name is None:
-            console.print("[red]No active profile to show.[/red]")
+            console.print("[red]No active loadout to show.[/red]")
             sys.exit(1)
     if name not in found:
-        console.print(f"[red]No profile named '{name}'.[/red]")
+        console.print(f"[red]No loadout named '{name}'.[/red]")
         sys.exit(1)
 
     prof = found[name]
@@ -6923,44 +6923,44 @@ def profile_show(name):
             console.print(f"    disabled: {', '.join(sel.disabled_tools)}")
 
 
-@profile.command('path')
+@loadout.command('path')
 @click.argument('name')
-def profile_path_cmd(name):
-    """Print the file path of a profile."""
-    from .serve.profiles import discover_profiles
+def loadout_path_cmd(name):
+    """Print the file path of a loadout."""
+    from .serve.loadouts import discover_loadouts
     project_root, _src = _resolve_active_project_root()
-    found = discover_profiles(project_root)
+    found = discover_loadouts(project_root)
     if name not in found:
-        console.print(f"[red]No profile named '{name}'.[/red]")
+        console.print(f"[red]No loadout named '{name}'.[/red]")
         sys.exit(1)
     print(found[name].path)
 
 
-@profile.command('create')
+@loadout.command('create')
 @click.argument('name')
 @_scope_flags
-@click.option('--from', 'from_profile', default=None, metavar='PROFILE',
-              help='Scaffold from an existing profile instead of default.')
+@click.option('--from', 'from_loadout', default=None, metavar='LOADOUT',
+              help='Scaffold from an existing loadout instead of default.')
 @click.option('--empty', 'empty', is_flag=True, default=False,
-              help='Create a minimal empty profile.')
-def profile_create(name, user_scope, project_scope, from_profile, empty):
-    """Create a new named profile (scaffolded from default unless overridden)."""
-    from .serve.profile_scaffold import _load, _save
-    from .serve.profiles import discover_profiles
+              help='Create a minimal empty loadout.')
+def loadout_create(name, user_scope, project_scope, from_loadout, empty):
+    """Create a new named loadout (scaffolded from default unless overridden)."""
+    from .serve.loadout_scaffold import _load, _save
+    from .serve.loadouts import discover_loadouts
 
-    scope, project_root = _resolve_profile_scope(user_scope, project_scope)
-    from .serve.profile_scaffold import (
-        user_profiles_dir as _u, project_profiles_dir as _p,
+    scope, project_root = _resolve_loadout_scope(user_scope, project_scope)
+    from .serve.loadout_scaffold import (
+        user_loadouts_dir as _u, project_loadouts_dir as _p,
     )
     if scope == "user":
         dest = _u() / f"{name}.yaml"
     else:
-        from .serve.profile_scaffold import default_project_root as _dpr
+        from .serve.loadout_scaffold import default_project_root as _dpr
         root = project_root if project_root is not None else _dpr()
         dest = _p(root) / f"{name}.yaml"
 
     if dest.exists():
-        console.print(f"[red]Profile '{name}' already exists at {dest}.[/red]")
+        console.print(f"[red]Loadout '{name}' already exists at {dest}.[/red]")
         sys.exit(1)
 
     if empty:
@@ -6969,12 +6969,12 @@ def profile_create(name, user_scope, project_scope, from_profile, empty):
         data["toolkits"] = CommentedMap()
         _save(dest, data)
     else:
-        src_name = from_profile or "default"
-        found = discover_profiles(project_root)
+        src_name = from_loadout or "default"
+        found = discover_loadouts(project_root)
         if src_name in found:
             data = _load(found[src_name].path)
-        elif from_profile is not None:
-            console.print(f"[red]No profile named '{from_profile}' to copy.[/red]")
+        elif from_loadout is not None:
+            console.print(f"[red]No loadout named '{from_loadout}' to copy.[/red]")
             sys.exit(1)
         else:
             # No default to scaffold from — start blank.
@@ -6983,40 +6983,40 @@ def profile_create(name, user_scope, project_scope, from_profile, empty):
             data["toolkits"] = CommentedMap()
         _save(dest, data)
 
-    console.print(f"[green]✓[/green] Created profile '{name}'.")
+    console.print(f"[green]✓[/green] Created loadout '{name}'.")
     console.print(f"  [dim]{dest}[/dim]")
-    console.print(f"  [dim]Edit it: tb profile edit {name}[/dim]")
+    console.print(f"  [dim]Edit it: tb loadout edit {name}[/dim]")
 
 
-@profile.command('edit')
+@loadout.command('edit')
 @click.argument('name', required=False)
 @_scope_flags
-def profile_edit(name, user_scope, project_scope):
-    """Open a profile in $EDITOR (defaults to the active profile).
+def loadout_edit(name, user_scope, project_scope):
+    """Open a loadout in $EDITOR (defaults to the active loadout).
 
-    If the named profile doesn't exist, it's scaffolded from the default
-    profile (or blank) before opening.
+    If the named loadout doesn't exist, it's scaffolded from the default
+    loadout (or blank) before opening.
     """
-    from .serve.profiles import discover_profiles
-    from .serve.profile_scaffold import _load, _save
+    from .serve.loadouts import discover_loadouts
+    from .serve.loadout_scaffold import _load, _save
 
     project_root_tuple = _resolve_active_project_root()
     project_root = project_root_tuple[0]
-    found = discover_profiles(project_root)
+    found = discover_loadouts(project_root)
 
     if name is None:
-        name = _profile_active_name(project_root) or "default"
+        name = _loadout_active_name(project_root) or "default"
 
     if name in found:
         target = found[name].path
     else:
-        scope, proot = _resolve_profile_scope(user_scope, project_scope)
+        scope, proot = _resolve_loadout_scope(user_scope, project_scope)
         if scope == "user":
-            from .serve.profile_scaffold import user_profiles_dir as _u
+            from .serve.loadout_scaffold import user_loadouts_dir as _u
             target = _u() / f"{name}.yaml"
         else:
-            from .serve.profile_scaffold import (
-                project_profiles_dir as _p, default_project_root as _dpr,
+            from .serve.loadout_scaffold import (
+                project_loadouts_dir as _p, default_project_root as _dpr,
             )
             root = proot if proot is not None else _dpr()
             target = _p(root) / f"{name}.yaml"
@@ -7027,69 +7027,69 @@ def profile_edit(name, user_scope, project_scope):
     click.edit(filename=str(target))
 
 
-@profile.command('delete')
+@loadout.command('delete')
 @click.argument('name')
 @_scope_flags
 @_interactive_options
-def profile_delete(name, user_scope, project_scope, yes, no_, no_input):
-    """Delete a profile file."""
-    from .serve.profiles import discover_profiles
+def loadout_delete(name, user_scope, project_scope, yes, no_, no_input):
+    """Delete a loadout file."""
+    from .serve.loadouts import discover_loadouts
 
     mode = _resolve_prompt_mode(yes, no_, no_input)
     project_root, _src = _resolve_active_project_root()
-    found = discover_profiles(project_root)
+    found = discover_loadouts(project_root)
     if name not in found:
-        console.print(f"[red]No profile named '{name}'.[/red]")
+        console.print(f"[red]No loadout named '{name}'.[/red]")
         sys.exit(1)
     target = found[name].path
     if not _confirm(
-        f"Delete profile '{name}' ({target})?", default=False, mode=mode,
+        f"Delete loadout '{name}' ({target})?", default=False, mode=mode,
         consequential=True,
     ):
         console.print("[dim]Cancelled.[/dim]")
         sys.exit(0)
     target.unlink()
-    console.print(f"[green]✓[/green] Deleted profile '{name}'.")
+    console.print(f"[green]✓[/green] Deleted loadout '{name}'.")
 
 
-@profile.command('set-default')
+@loadout.command('set-default')
 @click.argument('name')
 @_scope_flags
-def profile_set_default(name, user_scope, project_scope):
-    """Set the active profile by writing default.profile into serve.yaml."""
-    from .serve.profiles import discover_profiles
+def loadout_set_default(name, user_scope, project_scope):
+    """Set the active loadout by writing default.loadout into serve.yaml."""
+    from .serve.loadouts import discover_loadouts
     from .serve.config import load_serve_config, save_serve_config
     from .envs.paths import user_serve_config_path, project_serve_config_path
 
-    scope, project_root = _resolve_profile_scope(user_scope, project_scope)
-    found = discover_profiles(project_root)
+    scope, project_root = _resolve_loadout_scope(user_scope, project_scope)
+    found = discover_loadouts(project_root)
     if name not in found:
-        console.print(f"[red]No profile named '{name}'.[/red]")
-        console.print("Create it first with [cyan]tb profile create[/cyan].")
+        console.print(f"[red]No loadout named '{name}'.[/red]")
+        console.print("Create it first with [cyan]tb loadout create[/cyan].")
         sys.exit(1)
 
     if scope == "user":
         path = user_serve_config_path()
     else:
-        from .serve.profile_scaffold import default_project_root as _dpr
+        from .serve.loadout_scaffold import default_project_root as _dpr
         root = project_root if project_root is not None else _dpr()
         path = project_serve_config_path(root)
 
     cfg = load_serve_config(path)
-    cfg.default.profile = name
+    cfg.default.loadout = name
     save_serve_config(cfg, path)
-    console.print(f"[green]✓[/green] Active profile set to '{name}'.")
+    console.print(f"[green]✓[/green] Active loadout set to '{name}'.")
     console.print(f"  [dim]{path}[/dim]")
 
 
-@profile.command('tools')
+@loadout.command('tools')
 @click.argument('toolkit', required=False)
-def profile_tools(toolkit):
+def loadout_tools(toolkit):
     """List available bundles + tools across installed toolkits.
 
-    Use as a reference while editing a profile: the names shown here are
+    Use as a reference while editing a loadout: the names shown here are
     what you pass to `tb activate` / `tb deactivate` and the `bundles:` /
-    `tools:` fields in a profile.
+    `tools:` fields in a loadout.
     """
     from .serve.orchestrator import discover_toolkits, _resolve_bundle_availability
 
@@ -7215,7 +7215,7 @@ def _resolve_connect_command(*, abspath: bool, portable: bool, scope: str) -> st
 def _activated_toolkit_dirs() -> "dict[str, Path]":
     """``{name: slot_dir}`` for each activated, ready toolkit.
 
-    "Activated" means the active profile names it and serve.yaml doesn't
+    "Activated" means the active loadout names it and serve.yaml doesn't
     blocklist it — the same set whose tools get served over MCP. Skills
     follow the tools: we surface a guide only for a toolkit whose tools the
     agent can actually reach. Best-effort; returns ``{}`` on any error."""
@@ -7253,7 +7253,7 @@ def _toolkit_skill_slugs(name: str) -> set:
 
 
 def _resolve_disabled_skills(name: str) -> set:
-    """Bare skill slugs the active profile blocklists for ``name``."""
+    """Bare skill slugs the active loadout blocklists for ``name``."""
     _resolved, _active = _list_resolve_active()
     if _resolved is None:
         return set()
@@ -7317,8 +7317,8 @@ def _unsurface_skills_for_connect(adapter) -> None:
 @main.command()
 @click.argument('harness', required=False)
 @_scope_flags
-@click.option('--profile', 'profile_name', default=None, metavar='NAME',
-              help='Also set NAME as the active profile (writes default.profile).')
+@click.option('--loadout', 'loadout_name', default=None, metavar='NAME',
+              help='Also set NAME as the active loadout (writes default.loadout).')
 @click.option('--remove', 'remove', is_flag=True, default=False,
               help="Remove the toolbase entry from the harness's config.")
 @click.option('--dry-run', 'dry_run', is_flag=True, default=False,
@@ -7342,7 +7342,7 @@ def _unsurface_skills_for_connect(adapter) -> None:
 @click.option('--no-skills', 'no_skills', is_flag=True, default=False,
               help="Don't surface the activated toolkits' skills into the "
                    "harness (wire the MCP server only).")
-def connect(harness, user_scope, project_scope, profile_name, remove, dry_run,
+def connect(harness, user_scope, project_scope, loadout_name, remove, dry_run,
             abspath, portable, do_list, do_harnesses, out_path, force, no_skills):
     """Wire toolbase into an agent harness.
 
@@ -7356,10 +7356,10 @@ def connect(harness, user_scope, project_scope, profile_name, remove, dry_run,
         tb connect claude-code              # project: .mcp.json here (default)
         tb connect claude-code -g           # user: ~/.claude.json (every session)
         tb connect antigravity -g           # agy CLI + IDE: ~/.gemini/config/
-        tb connect claude-code --profile paper
+        tb connect claude-code --loadout paper
         tb connect claude-code --remove
         tb connect orchestral               # write .toolbase/agent.py
-        tb connect orchestral --profile paper --out my_agent.py
+        tb connect orchestral --loadout paper --out my_agent.py
         tb connect --list                   # where is toolbase wired?
         tb connect --harnesses              # which harnesses are supported?
     """
@@ -7405,7 +7405,7 @@ def connect(harness, user_scope, project_scope, profile_name, remove, dry_run,
 
     if harness == "orchestral":
         _connect_orchestral(
-            profile_name=profile_name, out=out_path, force=force,
+            loadout_name=loadout_name, out=out_path, force=force,
             dry_run=dry_run, remove=remove,
         )
         return
@@ -7456,9 +7456,9 @@ def connect(harness, user_scope, project_scope, profile_name, remove, dry_run,
 
     console.print(f"[green]✓[/green] Wired toolbase into {harness} at {path}.")
 
-    # --profile: set the active profile in the matching serve.yaml scope.
-    if profile_name is not None:
-        _connect_set_profile(profile_name, scope, project_root)
+    # --loadout: set the active loadout in the matching serve.yaml scope.
+    if loadout_name is not None:
+        _connect_set_loadout(loadout_name, scope, project_root)
 
     # Surface the activated toolkits' skills into this harness (best-effort).
     _surface_skills_for_connect(adapter, no_skills=no_skills)
@@ -7469,19 +7469,19 @@ def connect(harness, user_scope, project_scope, profile_name, remove, dry_run,
             console.print(f"[dim]Note: {note}[/dim]")
 
 
-def _connect_set_profile(profile_name, scope, project_root) -> None:
-    """Validate + write default.profile into the matching serve.yaml."""
-    from .serve.profiles import discover_profiles
+def _connect_set_loadout(loadout_name, scope, project_root) -> None:
+    """Validate + write default.loadout into the matching serve.yaml."""
+    from .serve.loadouts import discover_loadouts
     from .serve.config import load_serve_config, save_serve_config
     from .envs.paths import user_serve_config_path, project_serve_config_path
-    from .serve.profile_scaffold import default_project_root as _dpr
+    from .serve.loadout_scaffold import default_project_root as _dpr
 
-    found = discover_profiles(project_root)
-    if profile_name not in found:
+    found = discover_loadouts(project_root)
+    if loadout_name not in found:
         console.print(
-            f"[yellow]Wired, but no profile named '{profile_name}' exists "
-            "— default.profile not set. Create it with "
-            f"[cyan]tb profile create {profile_name}[/cyan].[/yellow]"
+            f"[yellow]Wired, but no loadout named '{loadout_name}' exists "
+            "— default.loadout not set. Create it with "
+            f"[cyan]tb loadout create {loadout_name}[/cyan].[/yellow]"
         )
         return
     if scope == "user":
@@ -7490,9 +7490,9 @@ def _connect_set_profile(profile_name, scope, project_root) -> None:
         root = project_root if project_root is not None else _dpr()
         path = project_serve_config_path(root)
     cfg = load_serve_config(path)
-    cfg.default.profile = profile_name
+    cfg.default.loadout = loadout_name
     save_serve_config(cfg, path)
-    console.print(f"[green]✓[/green] Active profile set to '{profile_name}'.")
+    console.print(f"[green]✓[/green] Active loadout set to '{loadout_name}'.")
 
 
 def _connect_print_status(adapters, project_root) -> None:
@@ -7567,27 +7567,27 @@ def _orchestral_script_path(out=None, *, accept_legacy=False):
     return path
 
 
-def _warn_if_profile_selects_nothing(profile_name) -> None:
-    """Warn at connect time if the profile the scaffold will serve is empty.
+def _warn_if_loadout_selects_nothing(loadout_name) -> None:
+    """Warn at connect time if the loadout the scaffold will serve is empty.
 
     Without this the user only finds out at launch, as a bare
     ``RuntimeError: no toolkits could be started`` from deep inside the
-    orchestrator. Best-effort: an unresolvable profile is not a reason to
+    orchestrator. Best-effort: an unresolvable loadout is not a reason to
     refuse to write the scaffold, so any failure here is silent.
     """
     from pathlib import Path as _Path
     from .envs import find_project_root
-    from .serve.profiles import resolve_profile
+    from .serve.loadouts import resolve_loadout
 
     try:
         root = find_project_root() or _Path.cwd()
-        profile = resolve_profile(root, cli_profile=profile_name)
+        loadout = resolve_loadout(root, cli_loadout=loadout_name)
     except Exception:
         return
-    if profile.toolkits:
+    if loadout.toolkits:
         return
     console.print(
-        f"[yellow]Note: profile '{profile.name}' currently serves no "
+        f"[yellow]Note: loadout '{loadout.name}' currently serves no "
         "toolkits[/yellow] — the agent would start with zero tools."
     )
     console.print(
@@ -7596,7 +7596,7 @@ def _warn_if_profile_selects_nothing(profile_name) -> None:
     )
 
 
-def _connect_orchestral(*, profile_name, out, force, dry_run, remove) -> None:
+def _connect_orchestral(*, loadout_name, out, force, dry_run, remove) -> None:
     """Handle `tb connect orchestral`: write (or remove) a runnable agent
     script at ``<project>/.toolbase/agent.py``. Orchestral is a library
     harness, not a config-file one, so "connecting" means scaffolding the code
@@ -7628,7 +7628,7 @@ def _connect_orchestral(*, profile_name, out, force, dry_run, remove) -> None:
         console.print(f"[green]✓[/green] Removed {path}.")
         return
 
-    content = agent_script(profile_name)
+    content = agent_script(loadout_name)
 
     if dry_run:
         console.print(f"[dim]Would write the following to {path}:[/dim]\n")
@@ -7675,7 +7675,7 @@ def _connect_orchestral(*, profile_name, out, force, dry_run, remove) -> None:
             "[yellow]Note: the orchestral package isn't importable here; "
             "the script needs it (and an LLM API key) at runtime.[/yellow]"
         )
-    _warn_if_profile_selects_nothing(profile_name)
+    _warn_if_loadout_selects_nothing(loadout_name)
     console.print(
         "[dim]Configure orchestral (LLM + API key), then launch with "
         "[cyan]tb orchestral[/cyan].[/dim]"
@@ -7699,7 +7699,7 @@ def disconnect(harness, user_scope, project_scope, all_scopes):
 
     if harness == "orchestral":
         _connect_orchestral(
-            profile_name=None, out=None, force=False, dry_run=False,
+            loadout_name=None, out=None, force=False, dry_run=False,
             remove=True,
         )
         return
@@ -7786,7 +7786,7 @@ def orchestral(script):
         )
         sys.exit(1)
     # Run with the interpreter toolbase runs under (toolbase + orchestral live
-    # there), cwd = the project root so the script resolves the active profile
+    # there), cwd = the project root so the script resolves the active loadout
     # and orchestral persists its conversation under the project.
     root = find_project_root() or _Path.cwd()
     console.print(f"[dim]Running {path} ...[/dim]")
@@ -7941,7 +7941,7 @@ def create_tarball(source_dir: Path, output_path: Path, toolkit_name: str):
 
     Excludes build/VCS/editor cruft AND consumer-side state that a dir
     accumulates when it doubles as a place you install/serve the toolkit
-    from: .toolbase/ (manifest, profiles, project config), .mcp.json,
+    from: .toolbase/ (manifest, loadouts, project config), .mcp.json,
     .codex/ and .agents/ (harness wiring with machine-specific paths), and
     .claude/ (local agent settings). Publishing those would leak local
     state and absolute paths into the public package.

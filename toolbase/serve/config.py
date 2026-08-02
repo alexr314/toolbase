@@ -3,23 +3,23 @@
 
 This file is intentionally small. It carries only two things:
 
-1. ``default.profile`` — the name of the active profile (which curated
+1. ``default.loadout`` — the name of the active loadout (which curated
    tool set ``tb serve`` exposes). This is the canonical way to choose
-   the active profile; ``tb profile set-default`` and ``tb connect
-   --profile`` are conveniences that write it. The profile *bodies*
-   live one-file-per-profile under ``profiles/`` (see
-   ``toolbase.serve.profiles``), NOT here.
+   the active loadout; ``tb loadout set-default`` and ``tb connect
+   --loadout`` are conveniences that write it. The loadout *bodies*
+   live one-file-per-loadout under ``loadouts/`` (see
+   ``toolbase.serve.loadouts``), NOT here.
 
 2. ``default.disabled`` — an absolute blocklist applied on top of any
-   active profile. Toolkits / tools listed here are never served, no
-   matter what the active profile says.
+   active loadout. Toolkits / tools listed here are never served, no
+   matter what the active loadout says.
 
 Two-layer resolution: the project-level ``serve.yaml`` (if present)
-overrides the user-level one. ``default.profile`` is project-wins;
+overrides the user-level one. ``default.loadout`` is project-wins;
 the ``default.disabled`` lists are unioned (both layers block).
 
-The profile resolution chain and per-toolkit curation live in
-``toolbase.serve.profiles``; this module is just the serve.yaml I/O
+The loadout resolution chain and per-toolkit curation live in
+``toolbase.serve.loadouts``; this module is just the serve.yaml I/O
 plus the two-layer merge.
 """
 
@@ -48,17 +48,17 @@ class ServeConfigError(Exception):
 
 @dataclass
 class DefaultBlock:
-    """Serve defaults: which profile is active + absolute blocklists."""
+    """Serve defaults: which loadout is active + absolute blocklists."""
 
-    profile: Optional[str] = None
+    loadout: Optional[str] = None
     disabled_toolkits: List[str] = field(default_factory=list)
     disabled_tools: List[str] = field(default_factory=list)  # "toolkit__tool"
     bare: bool = False  # serve un-namespaced <tool> names (default: <toolkit>__<tool>)
 
     def to_yaml_dict(self) -> dict:
         out: dict = {}
-        if self.profile:
-            out["profile"] = self.profile
+        if self.loadout:
+            out["loadout"] = self.loadout
         if self.bare:
             out["bare"] = True
         disabled: dict = {}
@@ -93,7 +93,7 @@ def load_serve_config(path: Path = SERVE_CONFIG_PATH) -> ServeConfig:
     throw a yaml stack trace at the user.
 
     Rejects the retired ``groups:`` block with a pointer to the per-file
-    profile layout — clean cutover, no silent ignore.
+    loadout layout — clean cutover, no silent ignore.
     """
     if not path.exists():
         return ServeConfig()
@@ -108,8 +108,8 @@ def load_serve_config(path: Path = SERVE_CONFIG_PATH) -> ServeConfig:
     if "groups" in raw:
         raise ServeConfigError(
             f"{path}: the 'groups:' block was removed. Curated tool sets "
-            "are now per-file profiles under 'profiles/<name>.yaml'. "
-            "Set 'default.profile:' here to choose the active one."
+            "are now per-file loadouts under 'loadouts/<name>.yaml'. "
+            "Set 'default.loadout:' here to choose the active one."
         )
 
     cfg = ServeConfig()
@@ -118,13 +118,17 @@ def load_serve_config(path: Path = SERVE_CONFIG_PATH) -> ServeConfig:
     if not isinstance(default_raw, dict):
         raise ServeConfigError(f"{path}: 'default' must be a mapping")
 
-    profile = default_raw.get("profile")
-    if profile is not None:
-        if not isinstance(profile, str) or not profile:
+    # ``default.profile`` is the pre-0.12 spelling. Read it when the
+    # current key is absent so an existing serve.yaml keeps working;
+    # anything we write back uses ``loadout``, so the file converts
+    # itself the first time something sets the active loadout.
+    loadout = default_raw.get("loadout", default_raw.get("profile"))
+    if loadout is not None:
+        if not isinstance(loadout, str) or not loadout:
             raise ServeConfigError(
-                f"{path}: 'default.profile' must be a non-empty string"
+                f"{path}: 'default.loadout' must be a non-empty string"
             )
-        cfg.default.profile = profile
+        cfg.default.loadout = loadout
 
     bare = default_raw.get("bare", False)
     if not isinstance(bare, bool):
@@ -157,14 +161,14 @@ def save_serve_config(cfg: ServeConfig, path: Path = SERVE_CONFIG_PATH) -> None:
 def merge_serve_configs(user: ServeConfig, project: ServeConfig) -> ServeConfig:
     """Two-layer merge: project overrides user.
 
-    - ``default.profile``: project wins; user falls through when the
+    - ``default.loadout``: project wins; user falls through when the
       project doesn't set one.
     - ``default.disabled.toolkits`` / ``.tools``: union (both layers
       block; a global disable stays in effect even if a project doesn't
       repeat it).
     """
     merged = ServeConfig()
-    merged.default.profile = project.default.profile or user.default.profile
+    merged.default.loadout = project.default.loadout or user.default.loadout
     # A mode toggle: on if either layer turns it on (the CLI flag is the
     # per-invocation override either way).
     merged.default.bare = project.default.bare or user.default.bare

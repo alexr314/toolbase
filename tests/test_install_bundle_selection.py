@@ -204,7 +204,7 @@ def test_update_install_meta_bundles_noop_when_no_meta(tmp_path: Path):
 def test_tool_is_served_passes_when_installed_bundles_is_none():
     """Backward compat: no install-time gating when installed_bundles=None."""
     from toolbase.serve.bundles import BundleAvailability
-    from toolbase.serve.profiles import tool_is_served
+    from toolbase.serve.loadouts import tool_is_served
     av = BundleAvailability(
         available_bundles=["alpha"], dropped_bundles={},
         has_bundles_block=True,
@@ -217,7 +217,7 @@ def test_tool_is_served_passes_when_installed_bundles_is_none():
 def test_tool_is_served_excludes_when_bundle_not_installed():
     """A tool's bundles must intersect installed_bundles when set."""
     from toolbase.serve.bundles import BundleAvailability
-    from toolbase.serve.profiles import tool_is_served
+    from toolbase.serve.loadouts import tool_is_served
     av = BundleAvailability(
         available_bundles=["alpha", "beta"], dropped_bundles={},
         has_bundles_block=True,
@@ -238,7 +238,7 @@ def test_tool_is_served_bundle_less_tool_always_passes_install_gate():
     """A tool with no declared bundles is always installed (no extras
     gating it); it passes the install-time check regardless of the set."""
     from toolbase.serve.bundles import BundleAvailability
-    from toolbase.serve.profiles import tool_is_served
+    from toolbase.serve.loadouts import tool_is_served
     av = BundleAvailability(
         available_bundles=[], dropped_bundles={},
         has_bundles_block=False,
@@ -253,7 +253,7 @@ def test_tool_is_served_empty_installed_bundles_excludes_bundled_tools():
     """``installed_bundles=set()`` (= base-only install) excludes every
     bundle-aware tool, leaves bundle-less tools served."""
     from toolbase.serve.bundles import BundleAvailability
-    from toolbase.serve.profiles import tool_is_served
+    from toolbase.serve.loadouts import tool_is_served
     av = BundleAvailability(
         available_bundles=["alpha"], dropped_bundles={},
         has_bundles_block=True,

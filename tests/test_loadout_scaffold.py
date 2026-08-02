@@ -1,5 +1,5 @@
-"""Tests for ``toolbase/serve/profile_scaffold.py`` — the activate /
-deactivate mutation engine on the default profile file.
+"""Tests for ``toolbase/serve/loadout_scaffold.py`` — the activate /
+deactivate mutation engine on the default loadout file.
 
 These call ``activate`` / ``deactivate`` directly with ``scope="user"``
 and a ``user_base`` pointing at a tmp dir, so no monkeypatching of the
@@ -13,19 +13,19 @@ from pathlib import Path
 import pytest
 import yaml
 
-from toolbase.serve.profile_scaffold import (
-    ProfileItemError,
+from toolbase.serve.loadout_scaffold import (
+    LoadoutItemError,
     activate,
     activate_skill,
     deactivate,
     deactivate_skill,
-    default_profile_path,
+    default_loadout_path,
     parse_item,
 )
 
 
 def _read(base: Path) -> dict:
-    p = default_profile_path("user", user_base=base)
+    p = default_loadout_path("user", user_base=base)
     return yaml.safe_load(p.read_text())
 
 
@@ -54,7 +54,7 @@ def test_parse_item_tool():
 
 @pytest.mark.parametrize("bad", ["", "heptapod/", "/x", "heptapod__", "__t", "a/b__c"])
 def test_parse_item_malformed(bad):
-    with pytest.raises(ProfileItemError):
+    with pytest.raises(LoadoutItemError):
         parse_item(bad)
 
 
@@ -229,5 +229,5 @@ def test_skill_and_tool_disabled_coexist(tmp_path: Path):
 def test_header_comment_survives_round_trip(tmp_path: Path):
     _act(tmp_path, "heptapod")
     _act(tmp_path, "aster")
-    raw = default_profile_path("user", user_base=tmp_path).read_text()
-    assert "Profile: default" in raw  # the scaffold header comment persists
+    raw = default_loadout_path("user", user_base=tmp_path).read_text()
+    assert "Loadout: default" in raw  # the scaffold header comment persists

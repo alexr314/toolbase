@@ -940,7 +940,7 @@ class Orchestrator:
         *,
         console: Optional[Console] = None,
         toolkits_dir: Optional[Path] = None,
-        profile: Optional[Any] = None,  # serve.profiles.ResolvedProfile
+        loadout: Optional[Any] = None,  # serve.loadouts.ResolvedLoadout
         call_timeout_s: float = DEFAULT_CALL_TIMEOUT_S,
         config_overrides: Optional[Dict[str, Any]] = None,
         bare: bool = False,
@@ -958,13 +958,13 @@ class Orchestrator:
         self._runtimes: Dict[str, ToolkitRuntime] = {}
         self._proxy_tools: List[Any] = []
         self._shutdown_initiated = False
-        # The active profile (``serve.profiles.ResolvedProfile``) decides
+        # The active loadout (``serve.loadouts.ResolvedLoadout``) decides
         # which toolkits and which tools per toolkit to expose. None means
         # "serve every discovered toolkit, uncurated" — used by lower-level
         # callers (e.g. crash-recovery tests). The CLI always resolves a
-        # profile and passes it, so the "no active profile" requirement is
+        # loadout and passes it, so the "no active loadout" requirement is
         # enforced at the CLI boundary, not here.
-        self._profile = profile
+        self._loadout = loadout
         self._call_timeout_s = call_timeout_s
         # Per-serve state-config overrides, merged over every toolkit's
         # resolved config before host spawn. The embedding harness uses
@@ -987,16 +987,16 @@ class Orchestrator:
     def tool_report(self) -> List[Dict[str, Any]]:
         """Per-toolkit serve summary from the last ``start()``: one
         ``{toolkit, advertised, served, hidden}`` dict each. ``hidden > 0``
-        means tools were dropped by the profile / bundle selection / config
+        means tools were dropped by the loadout / bundle selection / config
         gating."""
         return list(self._tool_report)
 
     def _selection_for(self, name: str):
         """Return the ``ToolkitSelection`` for a toolkit under the active
-        profile, or ``None`` when no profile is active (serve-all mode)."""
-        if self._profile is None:
+        loadout, or ``None`` when no loadout is active (serve-all mode)."""
+        if self._loadout is None:
             return None
-        return self._profile.toolkits.get(name)
+        return self._loadout.toolkits.get(name)
 
     # ── startup ─────────────────────────────────────────────────────────
 
@@ -1018,13 +1018,13 @@ class Orchestrator:
             )
             raise RuntimeError("no toolkits installed")
 
-        # Filter discoveries to the active profile: only toolkits named in
-        # the profile are served, minus the absolute serve.yaml blocklist.
-        # When no profile is active (serve-all mode) every discovered
+        # Filter discoveries to the active loadout: only toolkits named in
+        # the loadout are served, minus the absolute serve.yaml blocklist.
+        # When no loadout is active (serve-all mode) every discovered
         # toolkit is served.
-        if self._profile is not None:
-            served = set(self._profile.toolkits.keys())
-            disabled_tk = set(self._profile.disabled_toolkits)
+        if self._loadout is not None:
+            served = set(self._loadout.toolkits.keys())
+            disabled_tk = set(self._loadout.disabled_toolkits)
             for d in discoveries:
                 if d.skip_reason is not None:
                     continue
@@ -1032,9 +1032,9 @@ class Orchestrator:
                     d.skip_reason = "disabled in serve.yaml"
                 elif d.name not in served:
                     d.skip_reason = (
-                        f"not in active profile '{self._profile.name}'"
+                        f"not in active loadout '{self._loadout.name}'"
                     )
-            for w in self._profile.warnings:
+            for w in self._loadout.warnings:
                 self.console.print(f"  [yellow]warning:[/yellow] {w}")
 
         # Skip launching skill packs (toolkits with no tools). They have no
@@ -1063,18 +1063,18 @@ class Orchestrator:
 
         if not self._runtimes:
             SKILLS_ONLY = "skills-only toolkit (no tools to serve)"
-            not_in_profile = (
-                f"not in active profile '{self._profile.name}'"
-                if self._profile is not None else None
+            not_in_loadout = (
+                f"not in active loadout '{self._loadout.name}'"
+                if self._loadout is not None else None
             )
             skillpacks = sorted(
                 d.name for d in discoveries if d.skip_reason == SKILLS_ONLY
             )
-            # Toolkits the profile actually selected (i.e. not dropped for
-            # being out of the active profile). If every one of those is a
+            # Toolkits the loadout actually selected (i.e. not dropped for
+            # being out of the active loadout). If every one of those is a
             # skill pack, there is genuinely nothing to serve — not a
             # misconfiguration — so say that instead of the generic error.
-            selected = [d for d in discoveries if d.skip_reason != not_in_profile]
+            selected = [d for d in discoveries if d.skip_reason != not_in_loadout]
             if skillpacks and selected and all(
                 d.skip_reason == SKILLS_ONLY for d in selected
             ):
@@ -1354,16 +1354,16 @@ class Orchestrator:
         from .proxy_tool import make_proxy_tool
         from .bundles import format_skip_log_line
 
-        # The active profile's per-toolkit selection (bundles / enabled /
-        # disabled). None when no profile is active (serve-all mode).
+        # The active loadout's per-toolkit selection (bundles / enabled /
+        # disabled). None when no loadout is active (serve-all mode).
         sel = self._selection_for(disc.name)
 
         # Global absolute blocklist of qualified tool names (serve.yaml
         # default.disabled.tools), restricted to this toolkit.
         global_disabled: set = set()
-        if self._profile is not None:
+        if self._loadout is not None:
             prefix = f"{disc.name}__"
-            for q in self._profile.disabled_tools:
+            for q in self._loadout.disabled_tools:
                 if q.startswith(prefix):
                     global_disabled.add(q.split("__", 1)[1])
 
@@ -1410,7 +1410,7 @@ class Orchestrator:
         # Forwarder is bound to the toolkit *name*, not the client. The
         # forwarder looks up the live MCPClient on every call so a restart
         # that swaps the client is picked up transparently.
-        from .profiles import tool_is_served
+        from .loadouts import tool_is_served
 
         exposed_tools: List[str] = []
         forward = self._make_forwarder(disc.name)
@@ -1467,7 +1467,7 @@ class Orchestrator:
             )
 
         # Catch-all visibility: whenever fewer tools are served than the
-        # toolkit advertised, say so — regardless of reason (active profile,
+        # toolkit advertised, say so — regardless of reason (active loadout,
         # bundle selection, config gating, subset install, disabled list). The
         # subset-install line above only covers one reason and only fires when
         # `tool_bundles` is non-empty, so tools that match no served bundle
@@ -1489,7 +1489,7 @@ class Orchestrator:
             # misconfiguration, worth a real warning.
             self.console.print(
                 f"  [yellow]⚠[/yellow] {disc.name}: advertised {n_advertised} "
-                "tools but serving 0 — all filtered out by the active profile / "
+                "tools but serving 0 — all filtered out by the active loadout / "
                 "bundle selection / config gating"
             )
             self.logger.log_event(
@@ -1497,12 +1497,12 @@ class Orchestrator:
                 level="warn",
             )
         elif n_hidden > 0:
-            # A profile serving a subset of a toolkit's tools is normal; report
+            # A loadout serving a subset of a toolkit's tools is normal; report
             # the count as info (no alarm) so "where did the rest go?" is
             # answerable without implying something broke.
             self.console.print(
                 f"  [dim]{disc.name}: serving {n_served} of {n_advertised} "
-                f"tools ({n_hidden} not in the active profile's bundles)[/dim]"
+                f"tools ({n_hidden} not in the active loadout's bundles)[/dim]"
             )
             self.logger.log_event(
                 "tools_hidden", toolkit=disc.name, served=n_served,
@@ -1911,7 +1911,7 @@ class Orchestrator:
 def serve(
     *,
     no_tui: bool = True,
-    profile: Optional[Any] = None,
+    loadout: Optional[Any] = None,
     call_timeout_s: float = DEFAULT_CALL_TIMEOUT_S,
     bare: bool = False,
 ) -> int:
@@ -1919,8 +1919,8 @@ def serve(
 
     For now ``no_tui=False`` is rejected (TUI not implemented yet).
 
-    ``profile`` is the resolved active profile (``serve.profiles.
-    ResolvedProfile``) that decides which toolkits and tools to serve.
+    ``loadout`` is the resolved active loadout (``serve.loadouts.
+    ResolvedLoadout``) that decides which toolkits and tools to serve.
     The CLI resolves it before calling here; None means "serve every
     discovered toolkit, uncurated" (lower-level / test path).
 
@@ -1939,7 +1939,7 @@ def serve(
     # stream we're handing to Claude Code.
     console = Console(stderr=True)
     orch = Orchestrator(
-        console=console, profile=profile, call_timeout_s=call_timeout_s,
+        console=console, loadout=loadout, call_timeout_s=call_timeout_s,
         bare=bare,
     )
 
