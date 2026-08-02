@@ -89,7 +89,6 @@ from .resolve import (
     PINNED,
     ONLY,
     HIGHEST,
-    EDITABLE_SLOT,
     PIN_MISSING,
     NOT_INSTALLED,
 )
@@ -150,7 +149,6 @@ __all__ = [
     "PINNED",
     "ONLY",
     "HIGHEST",
-    "EDITABLE_SLOT",
     "PIN_MISSING",
     "NOT_INSTALLED",
     # config layers

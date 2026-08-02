@@ -3639,10 +3639,12 @@ def _warn_pin_scope_not_active(
 def _note_if_not_the_serving_version(name: str, version: str) -> None:
     """Say so when the version just installed isn't the one that serves.
 
-    Install no longer pins, so ``tb install foo@1.2.0`` alongside a
-    newer slot puts 1.2.0 in the cache and leaves 1.4.0 serving. That is
-    the intended split — install places bits, ``tb use`` chooses — but
-    unannounced it reads as the install having failed.
+    Install never pins, so ``tb install foo@1.2.0`` alongside a newer
+    slot puts 1.2.0 in the cache and leaves 1.4.0 serving. Same for
+    ``-e``: linking a checkout doesn't make it serve, deliberately, since
+    the cache is user-wide and it would otherwise change every directory
+    at once. That is the intended split — install places bits, ``tb use``
+    chooses — but unannounced it reads as the install having failed.
     """
     try:
         from .envs import (
@@ -3653,10 +3655,14 @@ def _note_if_not_the_serving_version(name: str, version: str) -> None:
         )
         if not resolution.ok or resolution.version == version:
             return
+        tail = (
+            "not the editable checkout you just linked"
+            if version == EDITABLE_VERSION
+            else f"not the {version} you just installed"
+        )
         console.print(
             f"[yellow]Note: {resolution.version} is what serves here "
-            f"({resolution.describe()}), not the {version} you just "
-            f"installed.[/yellow]"
+            f"({resolution.describe()}), {tail}.[/yellow]"
         )
         console.print(
             f"  [dim]To use it: [/dim][cyan]tb use {name}@{version}[/cyan]"
@@ -4018,8 +4024,12 @@ def _install_from_path(
         f"{'(editable)' if editable else 'v' + version}[/bold green]\n"
     )
     _warn_install_name_collisions(name)
-    if not editable:
-        _note_if_not_the_serving_version(name, version)
+    # Editable included: a linked checkout that loses to a numbered slot
+    # is exactly the "my edits do nothing" case, and this is the earliest
+    # possible place to say so.
+    _note_if_not_the_serving_version(
+        name, EDITABLE_VERSION if editable else version,
+    )
     if editable:
         console.print(f"Source: [cyan]{source_path}[/cyan] (live link)")
         console.print(
@@ -5318,7 +5328,7 @@ def list_cmd(as_json, verbose):
         )
 
     # Group entries by toolkit name; within a name, sort by version desc.
-    from .envs import version_sort_key, EDITABLE_SLOT as _EDITABLE_SLOT
+    from .envs import version_sort_key
     grouped: dict[str, list] = {}
     for e in entries:
         grouped.setdefault(e.name, []).append(e)
@@ -5398,26 +5408,16 @@ def list_cmd(as_json, verbose):
                 f"    [dim]serving {resolution.version} "
                 f"({resolution.describe()})[/dim]"
             )
-        # Editable notices, both directions — same conditions as
-        # discovery's shadow_note, so the two views agree. An editable
-        # slot that serves does so in every directory (the cache is
-        # user-wide), which is the one worth flagging unprompted.
+        # An editable checkout that isn't serving: same condition as
+        # discovery's shadow_note, so the two views agree. This is the
+        # "my edits do nothing" symptom, and the fix is one command.
         has_editable = any(e.version == EDITABLE_VERSION for e in grouped[name])
-        if has_editable and resolution.ok:
-            if resolution.version == EDITABLE_VERSION:
-                # Only when it won by fallback — an explicit pin to
-                # 'editable' is a choice the user already knows about.
-                if resolution.reason == _EDITABLE_SLOT and multi_version:
-                    console.print(
-                        "    [yellow]⚠ your editable checkout serves here "
-                        "and in every other directory[/yellow]"
-                    )
-            else:
-                console.print(
-                    f"    [dim]editable checkout overridden by the "
-                    f"{resolution.version} pin — `tb use {name}` to clear "
-                    f"it[/dim]"
-                )
+        if (has_editable and resolution.ok
+                and resolution.version != EDITABLE_VERSION):
+            console.print(
+                f"    [yellow]⚠ your editable checkout is NOT what serves — "
+                f"`tb use {name}@editable` to serve it[/yellow]"
+            )
         if verbose:
             _list_print_tools_verbose(
                 name, resolved_profile, _name_collisions,

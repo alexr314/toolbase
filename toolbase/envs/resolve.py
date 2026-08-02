@@ -22,8 +22,20 @@ The rule, in order:
 
 Ordering is ``versioning.parse_version``, which yields ``(0, 0, 0)`` for
 non-numeric slot names — so an ``editable`` slot sorts below every
-numbered one and loses rule 4. That is deliberate and long-standing: an
-editable checkout only wins when a pin names it.
+numbered one and loses rule 4. An editable checkout serves only when a
+pin names it.
+
+That is deliberate. The cache is user-wide: one ``cache/<name>/editable/``
+slot shared by every directory on the machine. If linking a checkout won
+the fallback, one ``tb install -e`` would change what every agent session
+everywhere runs, and confining it again would mean pinning numbered
+versions in every *other* project — opt-out, across a scope you can't
+see. Losing by default makes it opt-in instead: ``tb use <name>@editable``
+selects it exactly where you say, and nowhere else.
+
+It also keeps one rule whole. ``tb install`` never changes what serves —
+that is what makes ``tb install foo@1.2.0`` leave 1.4.0 serving — and
+``-e`` is an install like any other.
 """
 
 from __future__ import annotations
@@ -43,7 +55,6 @@ EDITABLE = "editable"
 PINNED = "pinned"
 ONLY = "only"
 HIGHEST = "highest"
-EDITABLE_SLOT = "editable"
 PIN_MISSING = "pin-missing"
 NOT_INSTALLED = "not-installed"
 
@@ -78,15 +89,6 @@ class Resolution:
             return "only version installed"
         if self.reason == HIGHEST:
             return "highest installed, no pin"
-        if self.reason == EDITABLE_SLOT:
-            numbered = [v for v in self.available if v != EDITABLE]
-            if numbered:
-                # No parentheses: callers already wrap this in some.
-                return (
-                    f"editable checkout, no pin — outranks "
-                    f"{', '.join(numbered)}"
-                )
-            return "editable checkout, no pin"
         if self.reason == PIN_MISSING:
             return (
                 f"pinned version {self.pin} is not installed "
@@ -98,23 +100,15 @@ class Resolution:
 def version_sort_key(version: str) -> tuple:
     """Ordering key for cache-slot names; higher sorts later.
 
-    An ``editable`` slot outranks every numbered version. It is a live
-    symlink to a source checkout, and someone who links a checkout means
-    to run it — before this, ``editable`` parsed as unversioned, sorted
-    to the bottom, and lost to any numbered slot, so a developer's own
-    code silently didn't serve unless they also pinned it by hand.
-
-    An explicit pin still wins over this ordering: the ordering only
-    decides the *fallback*, so a profile that names a version (including
-    ``editable``) is unaffected. Explicit beats implicit.
+    Unparseable names — ``editable`` above all — score ``(0, 0, 0)`` and
+    sort last, so they never win the unpinned fallback. See the module
+    docstring for why an editable slot losing by default is the point.
     """
-    if version == EDITABLE:
-        return (1, (0, 0, 0))
-    return (0, parse_version(version) or (0, 0, 0))
+    return parse_version(version) or (0, 0, 0)
 
 
 def sort_versions(versions: Sequence[str]) -> List[str]:
-    """Installed versions, highest first — ``editable`` ahead of all."""
+    """Installed versions, highest first. Unparseable names sort last."""
     return sorted(versions, key=version_sort_key, reverse=True)
 
 
@@ -143,16 +137,6 @@ def resolve_version(
             )
         return Resolution(
             version=None, reason=PIN_MISSING, pin=pin, available=ordered,
-        )
-
-    # Unpinned: the ordering decides, and an editable slot heads it.
-    # Reported as its own reason rather than "highest" so callers can say
-    # "your checkout is what runs" — the one fallback worth noticing,
-    # since a forgotten editable install otherwise serves indefinitely.
-    if ordered[0] == EDITABLE:
-        return Resolution(
-            version=EDITABLE, reason=EDITABLE_SLOT, pin=None,
-            available=ordered,
         )
 
     if len(versions) == 1:

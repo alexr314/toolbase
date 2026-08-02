@@ -257,6 +257,74 @@ def test_path_install_still_lands_in_the_shared_cache(
     assert "cache" in str(slot)
 
 
+# ── install says when it isn't what serves ──────────────────────────────────
+
+
+def test_editable_install_says_it_is_not_serving(fake_env, tmp_path, monkeypatch):
+    """An editable slot loses the unpinned fallback on purpose (the
+    cache is user-wide). The earliest place to say so is the install
+    that just linked it — otherwise the symptom is silent, and it
+    presents as "my edits do nothing" much later."""
+    monkeypatch.chdir(tmp_path)
+    src = _make_source_toolkit(tmp_path / "src", "dualkit")
+    # A numbered slot already in the cache, so the checkout will lose.
+    from toolbase.envs import cache_dir, write_install_meta
+    slot = cache_dir("dualkit", "9.9.9")
+    slot.mkdir(parents=True)
+    write_install_meta(
+        slot, name="dualkit", version="9.9.9",
+        install_method="venv", python_version="3.12",
+    )
+
+    result = CliRunner().invoke(
+        cli.main, ["install", "-e", str(src), "--no-input"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0, result.output
+    # Rich soft-wraps at the narrow test terminal; collapse whitespace
+    # before matching phrases that can straddle a line break.
+    flat = " ".join(result.output.split())
+    assert "9.9.9 is what serves here" in flat
+    assert "not the editable checkout you just linked" in flat
+    assert "tb use dualkit@editable" in flat
+
+
+def test_lone_editable_install_says_nothing(fake_env, tmp_path, monkeypatch):
+    """Nothing to lose to, so no note — the ordinary authoring case
+    must stay quiet."""
+    monkeypatch.chdir(tmp_path)
+    src = _make_source_toolkit(tmp_path / "src", "solokit")
+    result = CliRunner().invoke(
+        cli.main, ["install", "-e", str(src), "--no-input"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0, result.output
+    assert "is what serves here" not in " ".join(result.output.split())
+
+
+def test_older_numbered_install_says_it_is_not_serving(
+    fake_env, tmp_path, monkeypatch,
+):
+    monkeypatch.chdir(tmp_path)
+    from toolbase.envs import cache_dir, write_install_meta
+    slot = cache_dir("oldkit", "9.9.9")
+    slot.mkdir(parents=True)
+    write_install_meta(
+        slot, name="oldkit", version="9.9.9",
+        install_method="venv", python_version="3.12",
+    )
+    src = _make_source_toolkit(tmp_path / "src", "oldkit", version="0.1.0")
+    result = CliRunner().invoke(
+        cli.main, ["install", str(src), "--no-input"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0, result.output
+    flat = " ".join(result.output.split())
+    assert "9.9.9 is what serves here" in flat
+    assert "not the 0.1.0 you just installed" in flat
+    assert "tb use oldkit@0.1.0" in flat
+
+
 # ── tb list rendering ───────────────────────────────────────────────────────
 
 

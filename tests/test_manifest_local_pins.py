@@ -10,10 +10,9 @@ gitignored local layer that merges over the committed manifest
   - load_merged_pins: local wins per name, absent layers contribute
     nothing
   - discover_toolkits: local pin overrides committed; an editable slot
-    that wins the fallback says it serves everywhere, and a pin that
-    overrides one says so too
-  - editable installs write no pin at all — the slot outranks numbered
-    versions on its own
+    that isn't serving gets a note naming the command that opts in
+  - editable installs write no pin at all — the checkout waits in the
+    cache until `tb use` selects it
 """
 
 from __future__ import annotations
@@ -96,36 +95,23 @@ def test_local_editable_pin_overrides_committed(discovered, tmp_path):
     assert "shadow_note" not in d["heptapod"].meta
 
 
-def test_unpinned_editable_wins_and_says_it_serves_everywhere(
-    discovered, tmp_path,
-):
-    """No pins: the checkout wins the fallback. The cache is user-wide,
-    so it serves in every directory — worth saying unprompted, because a
-    checkout linked months ago otherwise keeps serving silently."""
-    d = discovered([_cache_entry("heptapod", "2.3.0"),
-                    _cache_entry("heptapod", "editable", "/src/heptapod")])
-    assert d["heptapod"].path.name == "editable"
-    note = d["heptapod"].meta.get("shadow_note", "")
-    assert "everywhere" in note
-    assert "/src/heptapod" in note
-    assert "2.3.0" in note
-
-
-def test_pin_overriding_editable_gets_the_inverse_note(discovered, tmp_path):
-    """A pin beats the checkout — deliberate, but easy to forget when
-    you're mid-debug and wondering why your edits do nothing."""
-    add_pin(tmp_path / "manifest.yaml", "heptapod", "2.3.0")
+def test_editable_shadow_note_names_the_fix(discovered, tmp_path):
+    """No pins: a numbered slot wins and the checkout doesn't serve.
+    The note has to name the command that opts in, because the symptom
+    ("my edits do nothing") gives no clue on its own. Full coverage of
+    the editable rule lives in test_editable_resolution.py."""
     d = discovered([_cache_entry("heptapod", "2.3.0"),
                     _cache_entry("heptapod", "editable", "/src/heptapod")])
     assert d["heptapod"].path.name == "2.3.0"
     note = d["heptapod"].meta.get("shadow_note", "")
-    assert "overridden by the 2.3.0 pin" in note
+    assert "NOT what serves" in note
     assert "/src/heptapod" in note
+    assert "tb use heptapod@editable" in note
 
 
-def test_no_everywhere_note_when_editable_was_pinned(discovered, tmp_path):
-    """Someone who pinned 'editable' already knows; the warning is for
-    the checkout that wins because nothing said otherwise."""
+def test_no_note_once_the_local_layer_pins_editable(discovered, tmp_path):
+    """The gitignored layer is how you opt in for one machine without
+    touching what the team committed."""
     add_pin(local_manifest_path(tmp_path / "manifest.yaml"),
             "heptapod", "editable")
     d = discovered([_cache_entry("heptapod", "2.3.0"),
@@ -145,14 +131,13 @@ def test_no_note_without_editable_slot(discovered, tmp_path):
 
 
 def test_editable_install_writes_no_pin(discovered, tmp_path):
-    """`-e` used to write a private pin, because without one an editable
-    slot lost to every numbered version. It now wins the fallback on its
-    own, so there is nothing to write and no manifest to keep in sync."""
+    """`-e` used to write a private pin on your behalf. Install no
+    longer writes any manifest, so the checkout sits in the cache until
+    you opt in — the same rule every other install follows."""
     from toolbase import cli
     assert not hasattr(cli, "_pin_editable_local")
 
     d = discovered([_cache_entry("heptapod", "2.3.0"),
                     _cache_entry("heptapod", "editable", "/src/heptapod")])
-    assert d["heptapod"].path.name == "editable"
-    # And no pin was needed to get there.
     assert load_merged_pins(tmp_path / "manifest.yaml") == {}
+    assert d["heptapod"].path.name == "2.3.0"
