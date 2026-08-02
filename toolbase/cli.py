@@ -439,7 +439,8 @@ class _SectionedGroup(click.Group):
         ),
         (
             "Installing & serving",
-            ["search", "install", "uninstall", "use", "list", "activate",
+            ["search", "install", "uninstall", "use", "status", "list",
+             "activate",
              "deactivate", "serve", "connect", "disconnect", "logs"],
         ),
         (
@@ -5185,6 +5186,131 @@ def install(ctx, name, version, editable, no_skills, activate_after, bundle_flag
     console.print(f"  [cyan]tb activate {name}[/cyan]   # expose it to the agent")
     console.print(f"  [cyan]tb list[/cyan]")
     console.print()
+
+
+@main.command(name="status")
+def status_cmd():
+    """Show what applies here: project, loadout, and what would serve.
+
+    \b
+    The three questions you otherwise have to ask three commands:
+    which context am I in, what would run, and what is broken. Sections
+    appear only when they have content, so a healthy setup is short.
+
+    Read-only. Never creates a project or writes a file.
+    """
+    from .envs import (
+        walk_cache as _walk_cache,
+        active_pins as _active_pins,
+        resolve_version as _resolve_version,
+        list_versions as _list_versions,
+    )
+
+    project_root, source = _resolve_active_project_root()
+    resolved, active = _list_resolve_active()
+
+    # ── Context ──────────────────────────────────────────────────────
+    where = {
+        "override": "--project-dir",
+        "walk": ".toolbase/ above cwd",
+        "fallback": "no .toolbase/ above cwd — user default",
+    }.get(source, source)
+    # The default-project is printed absolute: rendered relative to a cwd
+    # that happens to be your home directory it reads like a local one.
+    root_display = (
+        str(project_root) if _is_default_project_root(project_root)
+        else _display_path(project_root)
+    )
+    console.print(
+        f"[bold]On project[/bold]  {root_display}   [dim]({where})[/dim]"
+    )
+    if resolved is None:
+        console.print(
+            "[bold]Loadout[/bold]     [yellow]none resolved[/yellow]"
+            "   [dim](nothing is served)[/dim]"
+        )
+    else:
+        console.print(
+            f"[bold]Loadout[/bold]     {resolved.name}"
+            f"   [dim]({resolved.source})[/dim]"
+        )
+
+    entries = _walk_cache()
+    by_name: dict = {}
+    for e in entries:
+        by_name.setdefault(e.name, []).append(e)
+    pins = _active_pins(project_root)
+    resolutions = {
+        name: _resolve_version([c.version for c in cands], pin=pins.get(name))
+        for name, cands in by_name.items()
+    }
+
+    def _row(name: str) -> str:
+        r = resolutions[name]
+        version = r.version or "—"
+        reason = {
+            "pinned": "pinned", "only": "only", "highest": "latest",
+        }.get(r.reason, r.reason)
+        extra = ""
+        slot = next(
+            (c for c in by_name[name] if c.version == r.version), None)
+        src = (slot.install_meta or {}).get("source_path") if slot else None
+        if src:
+            extra = f"   [dim]-> {src}[/dim]"
+        others = [c.version for c in by_name[name] if c.version != r.version]
+        if r.reason == "highest" and others:
+            extra += f"   [dim]({', '.join(_sorted_versions(others))} also installed)[/dim]"
+        return f"  {name:<22} {version:<10} [dim]{reason}[/dim]{extra}"
+
+    # ── Active / installed ───────────────────────────────────────────
+    servable = [n for n in sorted(by_name) if resolutions[n].ok]
+    active_rows = [n for n in servable if n in active]
+    idle_rows = [n for n in servable if n not in active]
+
+    console.print()
+    console.print("[bold]Active[/bold] [dim]— served to agents[/dim]")
+    if active_rows:
+        for name in active_rows:
+            console.print(_row(name))
+    else:
+        console.print("  [dim](none)[/dim]")
+        console.print(
+            '    [dim](use "tb activate <toolkit>" to expose one)[/dim]'
+        )
+
+    if idle_rows:
+        console.print()
+        console.print("[bold]Installed, not active[/bold]")
+        for name in idle_rows:
+            console.print(_row(name))
+
+    # ── Issues ───────────────────────────────────────────────────────
+    issues: list = []
+    for name in sorted(by_name):
+        r = resolutions[name]
+        if not r.ok:
+            issues.append(
+                f"  {name:<22} {str(r.pin):<10} [dim]{r.describe()}[/dim]"
+            )
+    for name, version in sorted(pins.items()):
+        if name not in by_name:
+            issues.append(
+                f"  {name:<22} {version:<10} [dim]pinned, not installed[/dim]"
+            )
+    if issues:
+        console.print()
+        console.print("[bold yellow]Issues[/bold yellow]")
+        for line in issues:
+            console.print(line)
+        console.print(
+            '    [dim](use "tb use <toolkit>" to clear a pin, or '
+            '"tb install <toolkit>@<version>")[/dim]'
+        )
+
+
+def _sorted_versions(versions):
+    from .envs import sort_versions
+    return sort_versions(versions)
 
 
 @main.command(name='list')
