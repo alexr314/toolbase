@@ -55,13 +55,11 @@ def main() -> int:
         print("    Run run_install_e2e.py first.")
         return 1
 
-    toolbase_bin = shutil.which("toolbase")
-    if toolbase_bin is None:
-        print(
-            "!!! could not find `toolbase` on PATH. Activate the dev venv "
-            "(or set PATH) so this script can launch the orchestrator.",
-        )
-        return 1
+    # Run THIS working copy, not whatever `toolbase` happens to be on
+    # PATH — a separately installed toolbase would be a different version
+    # reading a different on-disk layout, and the harness would be
+    # testing that instead.
+    toolbase_cmd = [sys.executable, "-m", "toolbase.cli"]
 
     # Serve will discover the toolkit in the cache, but it also needs the
     # default-project manifest's pin to resolve which version. The install
@@ -70,7 +68,7 @@ def main() -> int:
 
     print(f"HOME redirected to {fake_home}")
     print(f"toolkits visible: {[p.name for p in INSTALL_CACHE.iterdir()]}")
-    print(f"using toolbase at: {toolbase_bin}")
+    print(f"using toolbase: {' '.join(toolbase_cmd)}")
 
     # Under the nothing-active model, `tb serve` resolves an active loadout
     # (no "serve everything" fallback). Activate the synthetic toolkit by
@@ -94,7 +92,7 @@ def main() -> int:
     from orchestral.mcp import MCPClient
 
     client = MCPClient(
-        server_command=[toolbase_bin, "serve"],
+        server_command=[*toolbase_cmd, "serve"],
         env=sub_env,
     )
 

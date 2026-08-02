@@ -140,16 +140,20 @@ def _use(target: str) -> int:
 
 
 def _read_pinned_version() -> str | None:
-    """Return the version pinned in the default-project manifest, or None."""
-    manifest_path = FAKE_HOME / "default-project" / "manifest.yaml"
-    if not manifest_path.exists():
+    """Return the version pinned in the user loadout, or None.
+
+    Versions live in the loadout beside the tool selection; `tb use` is
+    what writes them.
+    """
+    loadout = FAKE_HOME / "loadouts" / "default.yaml"
+    if not loadout.exists():
         return None
     import yaml as _yaml
-    data = _yaml.safe_load(manifest_path.read_text()) or {}
-    for entry in data.get("toolkits", []) or []:
-        if entry.get("name") == TOOLKIT_NAME:
-            return entry.get("version")
-    return None
+    data = _yaml.safe_load(loadout.read_text()) or {}
+    entry = (data.get("toolkits") or {}).get(TOOLKIT_NAME)
+    if not isinstance(entry, dict):
+        return None
+    return entry.get("version")
 
 
 def main() -> int:
