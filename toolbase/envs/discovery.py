@@ -1,10 +1,12 @@
 """
 Project-root discovery walk.
 
-Behavior (per the 0.5.0 brief):
+Behavior:
 
-1. Walk upward from ``cwd`` looking for ``.toolbase/manifest.yaml``.
-   Stop at the first hit; return that directory as the project root.
+1. Walk upward from ``cwd`` looking for a ``.toolbase/`` directory —
+   excluding the user's own ``~/.toolbase/``, which is config, not a
+   project. Stop at the first hit; return that directory as the project
+   root. A pre-0.12 ``.toolbase/manifest.yaml`` also counts.
 2. If none found, fall back to ``default_project_root()``.
 3. An explicit ``override`` (the ``--project-dir <path>`` CLI flag)
    short-circuits both above.
@@ -28,18 +30,34 @@ _MARKER_DIR = ".toolbase"
 _MARKER_FILE = "manifest.yaml"
 
 
+def _user_config_dir() -> Optional[Path]:
+    """``~/.toolbase/`` — never a project, however the walk finds it.
+
+    Read at call time so a test that redirects ``config.CONFIG_DIR``
+    is honoured (the resolver-pattern discipline in ``paths.py``).
+    """
+    try:
+        from .. import config as _config_mod
+        return Path(_config_mod.CONFIG_DIR).resolve(strict=False)
+    except Exception:
+        return None
+
+
 def find_project_root(
     *,
     cwd: Optional[Path] = None,
     override: Optional[Path] = None,
 ) -> Optional[Path]:
-    """Walk upward from ``cwd`` looking for a ``.toolbase/manifest.yaml``.
+    """Walk upward from ``cwd`` looking for a ``.toolbase/`` directory.
 
-    Returns the directory containing the ``.toolbase/`` directory
-    (NOT the ``.toolbase/`` directory itself). If the override is
-    given, returns ``override.resolve()`` immediately. If no manifest
-    is found anywhere up to the filesystem root, returns ``None``
-    (caller decides whether to fall back to the default-project).
+    Returns the directory *containing* it (NOT the ``.toolbase/`` dir
+    itself). If the override is given, returns ``override.resolve()``
+    immediately. If nothing is found up to the filesystem root, returns
+    ``None`` (caller decides whether to fall back to default-project).
+
+    The user's ``~/.toolbase/`` never counts: it is a directory like any
+    other, so without excluding it the walk would call the home
+    directory a project and everything beneath it would resolve there.
 
     The walk stops at the filesystem root (``Path("/")`` on POSIX,
     the drive root on Windows). It does NOT cross filesystem
@@ -71,9 +89,31 @@ def find_project_root(
     # filesystem weirdness (symlink loops, infinite descent). On any
     # real filesystem this terminates in single-digit iterations.
     seen: set = set()
+    user_root = _user_config_dir()
+
     while True:
-        manifest = current / _MARKER_DIR / _MARKER_FILE
-        if manifest.is_file():
+        marker = current / _MARKER_DIR
+        # The directory itself marks a project. It used to be
+        # ``manifest.yaml`` inside it, which meant every command that
+        # wanted a project had to fabricate an empty manifest just to be
+        # found — and, once versions moved into loadouts, that file was
+        # legacy the moment it was written. A ``.toolbase/`` holding only
+        # config or a loadout is a project too.
+        #
+        # The user's own ``~/.toolbase/`` is excluded: it is a directory
+        # like any other, so without this the walk would report the home
+        # directory as a project and every command run anywhere under it
+        # would resolve there instead of the user default.
+        try:
+            same_as_user_root = (
+                user_root is not None
+                and marker.resolve(strict=False) == user_root
+            )
+        except OSError:  # pragma: no cover (defensive)
+            same_as_user_root = False
+        if not same_as_user_root and (
+            marker.is_dir() or (marker / _MARKER_FILE).is_file()
+        ):
             return current
 
         parent = current.parent

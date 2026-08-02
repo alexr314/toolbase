@@ -629,22 +629,21 @@ def _resolve_active_project_root(*, cwd: Optional[Path] = None):
 
 
 def _materialize_project_dir(project_root: Path) -> Path:
-    """Create ``<project_root>/.toolbase/`` and an empty manifest.yaml.
+    """Create ``<project_root>/.toolbase/``. Idempotent.
 
-    Idempotent — if the dir / manifest already exists, leaves them alone.
-    Returns the path to the manifest file.
+    The directory is the marker, so nothing else needs writing. It used
+    to also drop an empty ``manifest.yaml`` because discovery keyed on
+    that file — which meant a command with no opinion about versions
+    created a versioning file, and after versions moved into loadouts
+    that file was legacy the moment it appeared.
+
+    Returns the ``.toolbase/`` path.
     """
-    from .envs import (
-        project_manifest_path as _project_manifest_path,
-        save_manifest as _save_manifest,
-        Manifest as _Manifest,
-    )
+    from .envs import project_manifest_path as _project_manifest_path
 
-    manifest_path = _project_manifest_path(project_root)
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    if not manifest_path.exists():
-        _save_manifest(manifest_path, _Manifest())
-    return manifest_path
+    tb_dir = _project_manifest_path(project_root).parent
+    tb_dir.mkdir(parents=True, exist_ok=True)
+    return tb_dir
 
 
 def _cwd_project_root() -> Path:
@@ -1668,11 +1667,11 @@ def project():
 )
 @_interactive_options
 def project_init(target_path, yes, no_, no_input):
-    """Create ``.toolbase/`` + empty ``manifest.yaml`` in this directory.
+    """Create ``.toolbase/`` in this directory, marking it a project.
 
     Idempotent — if a project already exists at the target, prints
-    where it is and exits cleanly. The created manifest is empty;
-    ``tb install <name>`` will populate it.
+    where it is and exits cleanly. The directory starts empty; state
+    lands in it as you activate toolkits and choose versions.
     """
     mode = _resolve_prompt_mode(yes, no_, no_input)
 
@@ -1689,24 +1688,24 @@ def project_init(target_path, yes, no_, no_input):
 
     from .envs import project_manifest_path as _project_manifest_path
 
-    manifest_path = _project_manifest_path(target)
-    if manifest_path.exists():
+    tb_dir = _project_manifest_path(target).parent
+    if tb_dir.is_dir():
         console.print(
             f"[yellow]Project already initialized.[/yellow] "
-            f"Manifest at: {manifest_path}"
+            f"Directory at: {tb_dir}"
         )
         return
 
-    # Materialize the project dir + empty manifest.
     _materialize_project_dir(target)
     console.print(
         f"[green]✓[/green] Initialized toolbase project at "
         f"[cyan]{target}[/cyan]"
     )
-    console.print(f"  Manifest: [dim]{manifest_path}[/dim]")
+    console.print(f"  Directory: [dim]{tb_dir}[/dim]")
     console.print(
-        "\nPin toolkits with [cyan]tb install <name>[/cyan] from inside "
-        "this directory."
+        "\nActivate toolkits with [cyan]tb activate <name>[/cyan] and "
+        "choose versions with [cyan]tb use <name>@<version>[/cyan] from "
+        "inside this directory."
     )
 
 
@@ -3553,56 +3552,6 @@ def _resolve_install_source_path(arg: str) -> Optional[Path]:
     if candidate.exists() and candidate.is_dir():
         return candidate.resolve()
     return None
-
-
-def _manifest_scope_root(scope: str) -> Path:
-    """The project root whose manifest a pin should be written to.
-
-    ``SCOPE_USER`` is the user-level default-project. ``SCOPE_PROJECT``
-    and ``SCOPE_PRIVATE`` are both THIS project — they differ in which
-    file inside it gets written, not in which root (see
-    ``_pin_manifest_path``): ``--project-dir`` if given, else the
-    nearest ``.toolbase/`` above cwd, else a new one in cwd.
-    """
-    from .envs import default_project_root as _default_project_root
-
-    if scope == SCOPE_USER:
-        return _default_project_root()
-    from .envs import project_manifest_path as _project_manifest_path
-
-    project_root, source = _resolve_active_project_root()
-    if source == "fallback":
-        # No project anywhere above cwd. The flag asked for a project
-        # pin, so make cwd the project rather than silently writing the
-        # user-level manifest the flag exists to avoid. Materializing
-        # writes the empty manifest.yaml that makes the dir discoverable
-        # at all — find_project_root keys on that file, not .toolbase/.
-        project_root = Path.cwd().resolve()
-        _materialize_project_dir(project_root)
-    else:
-        # An existing project just needs the directory; don't create a
-        # committed manifest, since a private pin writes only the
-        # gitignored layer and would leave a stray empty file.
-        _project_manifest_path(project_root).parent.mkdir(
-            parents=True, exist_ok=True)
-    return project_root
-
-
-def _pin_manifest_path(scope: str) -> Path:
-    """The manifest file a pin at ``scope`` belongs in.
-
-    ``SCOPE_PRIVATE`` selects the gitignored ``manifest.local.yaml``
-    sibling; the other two write the committed manifest of their root.
-    """
-    from .envs import (
-        project_manifest_path as _project_manifest_path,
-        local_manifest_path as _local_manifest_path,
-    )
-    committed = _project_manifest_path(_manifest_scope_root(scope))
-    if scope == SCOPE_PRIVATE:
-        _ensure_toolbase_gitignore(committed.parent)
-        return _local_manifest_path(committed)
-    return committed
 
 
 def _warn_pin_scope_not_active(
@@ -5959,15 +5908,14 @@ def _format_disk_size(size_bytes: Optional[int]) -> str:
 @click.option(
     '--user', '-u', 'user_scope', is_flag=True, default=False,
     help=(
-        'Choose for the user-level default-project (the default) — '
-        'applies anywhere outside a project with its own manifest.'
+        'Choose for you everywhere, rather than for this project.'
     ),
 )
 @click.option(
     '--project', '-p', 'project_scope', is_flag=True, default=False,
     help=(
-        "Choose for THIS project (<project>/.toolbase/manifest.yaml), "
-        "creating the project if needed."
+        "Choose for THIS project (the default), creating .toolbase/ here "
+        "if there is none above."
     ),
 )
 @_private_option
@@ -5985,11 +5933,10 @@ def use_cmd(target, user_scope, project_scope, private_scope):
         tb use calculator           clear the pin (highest installed wins)
 
     \b
-    Scope mirrors `tb install`: -u (the default) writes the user-level
-    default-project manifest, -p writes this project's, --private writes
-    this project's gitignored layer. An `editable` choice always goes to
-    the private layer whatever you ask for — it points at a checkout no
-    other machine has.
+    Scope matches every other state-changing command: this project by
+    default, -u for you everywhere, --private for this project's
+    gitignored layer. An `editable` choice is routed to the private
+    layer, since it names a checkout no other machine has.
 
     The change takes effect the next time `tb serve` starts, so restart
     your agent session to pick it up.
@@ -6003,7 +5950,7 @@ def use_cmd(target, user_scope, project_scope, private_scope):
     from .serve.loadout_scaffold import set_version as _set_loadout_version
 
     scope = _resolve_scope(
-        user_scope, project_scope, private_scope, default=SCOPE_USER,
+        user_scope, project_scope, private_scope, default=SCOPE_PROJECT,
     )
 
     name, _, version = target.partition("@")
@@ -6054,7 +6001,10 @@ def use_cmd(target, user_scope, project_scope, private_scope):
         console.print(f"[dim]{result.message}[/dim]")
 
     console.print(f"[dim]Loadout: {_display_path(result.path)}[/dim]")
-    scope_root = loadout_root if loadout_root is not None else _manifest_scope_root(SCOPE_USER)
+    from .envs import default_project_root as _default_project_root
+    scope_root = (
+        loadout_root if loadout_root is not None else _default_project_root()
+    )
 
     # The resolution reported is the one for the scope we wrote. That is
     # only the whole story when that scope governs cwd — otherwise say so

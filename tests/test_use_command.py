@@ -65,6 +65,13 @@ def _user_loadout() -> Path:
     return user_loadouts_dir() / "default.yaml"
 
 
+def _cwd_loadout() -> Path:
+    """Where a default-scope `tb use` writes: this project's loadout,
+    with .toolbase/ created in cwd if there is none above."""
+    from toolbase.envs.paths import project_loadouts_dir
+    return project_loadouts_dir(Path.cwd()) / "default.yaml"
+
+
 def _project_loadout(project: Path, private: bool = False) -> Path:
     from toolbase.envs.paths import project_loadouts_dir
     leaf = "default.local.yaml" if private else "default.yaml"
@@ -86,12 +93,21 @@ def _pins(loadout: Path) -> dict:
 
 class TestPinWriting:
     def test_pins_the_requested_version(self, fake_home):
+        """Default scope is this project, like every other
+        state-changing command."""
         _slot("kit", "1.0.0")
         _slot("kit", "2.0.0")
         r = CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
         assert r.exit_code == 0, r.output
-        assert _pins(_user_loadout()) == {"kit": "1.0.0"}
+        assert _pins(_cwd_loadout()) == {"kit": "1.0.0"}
+        assert _pins(_user_loadout()) == {}
         assert "now serves 1.0.0" in r.output
+
+    def test_user_scope_writes_the_user_loadout(self, fake_home):
+        _slot("kit", "1.0.0")
+        r = CliRunner().invoke(cli.main, ["use", "-u", "kit@1.0.0"])
+        assert r.exit_code == 0, r.output
+        assert _pins(_user_loadout()) == {"kit": "1.0.0"}
 
     def test_does_not_touch_the_cache(self, fake_home):
         """The whole point: switching must not delete or rebuild a slot."""
@@ -109,7 +125,7 @@ class TestPinWriting:
         _slot("kit", "2.0.0")
         CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
         CliRunner().invoke(cli.main, ["use", "kit@2.0.0"])
-        assert _pins(_user_loadout()) == {"kit": "2.0.0"}
+        assert _pins(_cwd_loadout()) == {"kit": "2.0.0"}
 
     def test_leaves_curation_alone(self, fake_home, tmp_path, monkeypatch):
         """A version and a tool selection live in the same entry, so
@@ -118,9 +134,9 @@ class TestPinWriting:
         monkeypatch.chdir(tmp_path)
         _slot("kit", "1.0.0")
         _slot("kit", "2.0.0")
-        CliRunner().invoke(cli.main, ["activate", "kit/alpha", "-u"])
+        CliRunner().invoke(cli.main, ["activate", "kit/alpha"])
         CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
-        entry = _yaml.safe_load(_user_loadout().read_text())["toolkits"]["kit"]
+        entry = _yaml.safe_load(_cwd_loadout().read_text())["toolkits"]["kit"]
         assert entry["version"] == "1.0.0"
         assert entry["bundles"] == ["alpha"]
 
@@ -146,10 +162,10 @@ class TestPinWriting:
         assert "mutually exclusive" in r.output
 
 
-class TestGlobalPinInsideAProject:
-    """`-g` is the default scope, but a project's own manifest is what
-    governs cwd — so a global pin written from inside one changes
-    nothing there. Reporting plain success would be a lie."""
+class TestUserPinInsideAProject:
+    """A project's own loadout governs cwd, so a `-u` pin written from
+    inside one changes nothing there. Reporting plain success is a lie,
+    and this is now the only place scope comes up at all."""
 
     @pytest.fixture
     def project(self, fake_home, tmp_path, monkeypatch):
@@ -161,26 +177,25 @@ class TestGlobalPinInsideAProject:
         monkeypatch.chdir(proj)
         return proj
 
-    def test_warns_that_the_global_pin_does_not_apply(self, project):
+    def test_warns_that_the_user_pin_does_not_apply(self, project):
         _slot("kit", "1.0.0")
         _slot("kit", "2.0.0")
-        r = CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
+        r = CliRunner().invoke(cli.main, ["use", "-u", "kit@1.0.0"])
         assert r.exit_code == 0, r.output
         assert "does not apply here" in r.output
         # The fix is spelled out, copy-pasteable, and doesn't rebuild.
         assert "tb use -p kit@1.0.0" in r.output
 
-    def test_local_scope_does_not_warn(self, project):
+    def test_default_scope_does_not_warn(self, project):
         _slot("kit", "1.0.0")
-        r = CliRunner().invoke(cli.main, ["use", "-p", "kit@1.0.0"])
+        r = CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
         assert r.exit_code == 0, r.output
         assert "does not apply here" not in r.output
 
     def test_no_warning_outside_a_project(self, fake_home):
-        """fake_home chdirs somewhere with no project above it, so the
-        default-project IS what governs cwd."""
+        """No project above cwd, so a -u pin is what governs."""
         _slot("kit", "1.0.0")
-        r = CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
+        r = CliRunner().invoke(cli.main, ["use", "-u", "kit@1.0.0"])
         assert r.exit_code == 0, r.output
         assert "does not apply here" not in r.output
 
@@ -282,7 +297,7 @@ class TestClearingAPin:
         CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
         r = CliRunner().invoke(cli.main, ["use", "kit"])
         assert r.exit_code == 0, r.output
-        assert _pins(_user_loadout()) == {}
+        assert _pins(_cwd_loadout()) == {}
         # And says what now serves instead.
         assert "2.0.0" in r.output
 
@@ -291,10 +306,10 @@ class TestClearingAPin:
         import yaml as _yaml
         monkeypatch.chdir(tmp_path)
         _slot("kit", "1.0.0")
-        CliRunner().invoke(cli.main, ["activate", "kit/alpha", "-u"])
+        CliRunner().invoke(cli.main, ["activate", "kit/alpha"])
         CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
         CliRunner().invoke(cli.main, ["use", "kit"])
-        entry = _yaml.safe_load(_user_loadout().read_text())["toolkits"]["kit"]
+        entry = _yaml.safe_load(_cwd_loadout().read_text())["toolkits"]["kit"]
         assert "version" not in entry
         assert entry["bundles"] == ["alpha"]
 

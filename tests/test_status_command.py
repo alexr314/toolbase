@@ -134,7 +134,7 @@ class TestIssues:
         # forge the state a stale checkout or edited file would leave.
         CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
         from toolbase.serve.loadout_scaffold import set_version
-        set_version("kit", "9.9.9", scope="user")
+        set_version("kit", "9.9.9", scope="project", project_root=Path.cwd())
 
         r = _run()
         assert "Issues" in r.output
@@ -143,7 +143,7 @@ class TestIssues:
 
     def test_a_pin_for_an_uninstalled_toolkit_is_reported(self, env):
         from toolbase.serve.loadout_scaffold import set_version
-        set_version("ghost", "1.0.0", scope="user")
+        set_version("ghost", "1.0.0", scope="project", project_root=Path.cwd())
         r = _run()
         assert "Issues" in r.output
         assert "ghost" in r.output
