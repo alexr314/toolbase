@@ -80,23 +80,39 @@ tb install -e . -a            # symlink + activate
 tb install -e .               # rebuild the env after changing dependencies
 ```
 
-**An editable slot outranks every numbered version**, so your checkout
-serves as soon as you link it — no pin needed. It writes no manifest
-either.
-
-Two things follow. First, the cache is user-level, so an editable slot
-serves in *every* directory, not only the repo you're developing in;
-`tb list` and serve startup say so, because a checkout linked months ago
-would otherwise keep serving with nothing to indicate it. Second, an
-explicit pin still wins:
+**Linking a checkout doesn't make it serve.** Like every other install,
+`-e` writes no manifest: an `editable` slot loses to any numbered
+version until you say otherwise.
 
 ```bash
-tb use calculator@1.4.0   # a pinned loadout is safe from your checkout
-tb use calculator         # clear it; the checkout serves again
+tb use calculator@editable    # serve the checkout, here
+tb use calculator             # stop; the newest numbered version serves
 ```
 
-That's what keeps a pinned profile reproducible while someone has that
-toolkit checked out. For the authoring loop, see
+That's deliberate. The cache is user-level — one `editable` slot shared
+by every directory on your machine — so if linking a checkout won by
+default, one `tb install -e` would change what every agent session
+everywhere runs, and confining it again would mean pinning numbered
+versions in every *other* project. Opting in with `tb use` selects the
+checkout exactly where you run it, and nowhere else. It also keeps a
+pinned version safe while someone has that toolkit checked out.
+
+If the toolkit has *only* an editable slot — the usual authoring case —
+it serves with no pin, because there's nothing for it to lose to.
+
+The cost is the "my edits do nothing" symptom, so all three places that
+can see it say so. Install, the moment it links a losing checkout:
+
+```console
+$ tb install -e .
+✓ Successfully installed calculator (editable)
+Note: 1.4.0 is what serves here (highest installed, no pin), not the
+editable checkout you just linked.
+  To use it: tb use calculator@editable
+```
+
+`tb list` marks it (`⚠ your editable checkout is NOT what serves`), and
+the serve startup banner repeats it. For the authoring loop, see
 [Authoring → Validate & publish](../authoring/publish.md).
 
 ## Next

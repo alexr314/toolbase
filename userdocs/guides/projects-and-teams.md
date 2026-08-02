@@ -27,8 +27,7 @@ toolkits:
 `install` puts binaries in the user-level cache, shared across projects, and
 takes no scope — it never writes a manifest. `tb use` is the only command
 that pins, so every entry in the file above is one somebody chose. Without a
-pin, the newest installed version serves (an editable checkout ahead of all
-of them), which is usually what you want.
+pin, the newest installed version serves, which is usually what you want.
 
 ## Curate, configure, and wire
 
@@ -63,8 +62,8 @@ Commit all of `.toolbase/` and `.mcp.json`. Keep per-user secrets in your user
 layer (`~/.toolbase/config/<toolkit>.yaml`), not in the repo. Pins that are
 only true on this machine go in `.toolbase/manifest.local.yaml` via
 `tb use --private`, which auto-gitignores itself — commit the dependency, not
-your local resolution. An editable checkout needs no pin at all: it outranks
-numbered versions on its own.
+your local resolution — including a checkout, which needs
+`tb use <toolkit>@editable` before it serves.
 
 ## Reproduce on a clone
 

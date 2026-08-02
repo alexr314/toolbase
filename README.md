@@ -174,6 +174,12 @@ tb install -e . -a             # live symlink to this source dir, and activate
 Edits to your tool source appear on the next serve; rerun
 `tb install -e .` to rebuild the env when dependencies change.
 
+If a published version of the same toolkit is also installed, that one
+keeps serving until you say otherwise — `-e` links the checkout without
+selecting it, because the cache is shared by every directory on your
+machine. `tb use my-toolkit@editable` opts in where you're working;
+install tells you when this applies.
+
 For the full author guide — tool conventions, skills, bundles,
 configuration, `setup.py` — see <https://toolbase-ai.com/docs/authoring>.
 For the agent-assisted authoring flow (recommended for first toolkits),
