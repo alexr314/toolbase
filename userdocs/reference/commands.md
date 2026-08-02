@@ -44,7 +44,7 @@
 | `tb loadout path NAME` | Print a loadout's file path | none |
 | `tb loadout tools [TOOLKIT]` | List available bundles + tools | none |
 | `tb setup TOOLKIT` | Run a toolkit's `setup.py` | `--check`, `--reset` |
-| `tb project init` | Create `.toolbase/` + empty manifest here | none |
+| `tb project init` | Create `.toolbase/` here, marking it a project | none |
 
 ## Authoring & publishing
 

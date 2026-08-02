@@ -61,12 +61,13 @@ Note: 1.4.0 is what serves here (highest installed, no pin), not the
   To use it: tb use calculator@1.2.0
 ```
 
-`tb use` takes the scope keys: `-u` (the default) chooses for the
-user-level default-project, `-p` for this project, `--private` for this
-project's gitignored layer.
+`tb use` takes the scope keys, and like every other state-changing
+command it defaults to **this project**. `-u` chooses for you
+everywhere; `--private` writes this project's gitignored layer.
 
 ```bash
-tb use -p calculator@1.4.0   # pin 1.4.0 in this project's loadout
+tb use calculator@1.4.0       # this project (the default)
+tb use -u calculator@1.4.0    # you, everywhere
 ```
 
 The project now serves 1.4.0 even if a newer version is installed globally.

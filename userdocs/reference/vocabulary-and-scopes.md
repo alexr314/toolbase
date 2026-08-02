@@ -45,15 +45,16 @@ user-level cache and writes no manifest, so there is never a question of
 which file an install touched. `tb use` is the only command that pins a
 version.
 
-Defaults for the commands that *are* scoped:
+Every scoped command defaults to **this project**: `use`, `activate`,
+`deactivate`, `loadout *`, `config *`, `connect`. One rule — act on the
+project you're standing in — with `-u` to opt out.
 
-| Command | Default scope |
-|---|---|
-| `use` | `--user` |
-| `activate`, `deactivate`, `loadout *`, `config *`, `connect` | `--project` |
+A directory is a project when it has a `.toolbase/`; commands create one in
+the current directory if there is none above. (Your own `~/.toolbase/` is
+config, not a project, so your home directory is never one.)
 
-Inside a repo with its own `.toolbase/`, a user-scope pin does not apply —
-`tb use` says so when that happens.
+Inside a project, a `-u` pin does not apply there — `tb use` says so when
+that happens.
 
 `config` additionally accepts `--layer user|project|private` as a scriptable
 spelling of the same three.

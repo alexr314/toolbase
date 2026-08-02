@@ -10,8 +10,8 @@ user-wide layer instead.
 ```bash
 tb install calculator         # into the shared cache; writes no manifest
 tb install units
-tb use -p calculator@1.4.0    # pin 1.4.0 for this repo
-tb use -p units@0.9.0
+tb use calculator@1.4.0       # pin 1.4.0 for this repo (the default scope)
+tb use units@0.9.0
 ```
 
 ```yaml
