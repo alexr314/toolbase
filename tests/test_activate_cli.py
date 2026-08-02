@@ -117,23 +117,17 @@ def test_list_json_has_active_field(isolated: Path):
     assert entry["active"] is True
 
 
-def test_post_install_activate_helper_user(isolated: Path):
-    _fake_install(isolated, "heptapod")
-    cli._post_install_activate("heptapod", scope=cli.SCOPE_USER)
-    data = _default_profile(isolated)
-    assert "heptapod" in data["toolkits"]
-
-
-def test_post_install_activate_helper_project_default(
+def test_post_install_activate_helper_uses_the_project(
     isolated: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ):
-    # Default (no -u) mirrors `tb activate`: activation lands in the cwd's
-    # project, creating .toolbase/ there -- not the user layer.
+    """`-a` follows `tb activate`'s own default — this project — because
+    install has no scope of its own to inherit. For the user profile you
+    run `tb activate -u` afterwards."""
     _fake_install(isolated, "heptapod")
     proj = tmp_path / "proj"
     proj.mkdir()
     monkeypatch.chdir(proj)
-    cli._post_install_activate("heptapod", scope=cli.SCOPE_PROJECT)
+    cli._post_install_activate("heptapod")
     # User profile stays empty; the project profile gets the toolkit.
     assert "heptapod" not in (_default_profile(isolated).get("toolkits") or {})
     proj_profile = yaml.safe_load(

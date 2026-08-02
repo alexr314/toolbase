@@ -20,8 +20,8 @@ convenience over them.
 ```
 <repo>/.toolbase/
 ├── manifest.yaml             pinned toolkits + versions (committed)
-├── manifest.local.yaml       machine-local pins, e.g. editable (gitignored)
-├── .gitignore                written by tb install -e; ignores the local layer
+├── manifest.local.yaml       machine-local pins (tb use --private; gitignored)
+├── .gitignore                written with the first private layer; ignores it
 ├── config/<toolkit>.yaml     per-toolkit config values (project layer, committed)
 ├── config/<toolkit>.local.yaml  machine paths etc. (project-local layer, gitignored)
 ├── profiles/<name>.yaml      project profiles
@@ -35,7 +35,7 @@ Project files override user files where they overlap, and the two
 `.local` files override their committed siblings (`manifest.local.yaml`
 name-by-name for pins; `config/<toolkit>.local.yaml` key-by-key for
 config) — they're the home for state only true on this machine:
-editable pins, absolute tool paths.
+absolute tool paths, a pin to a local build.
 Commit `.toolbase/`, `.mcp.json`, and `.codex/config.toml` — the local
 manifest layer auto-gitignores itself. Keep secrets in the user-layer
 `config/<toolkit>.yaml`.

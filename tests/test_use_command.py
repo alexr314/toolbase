@@ -163,21 +163,20 @@ class TestGlobalPinInsideAProject:
         assert r.exit_code == 0, r.output
         assert "does not apply here" not in r.output
 
-    def test_install_pin_warns_too(self, project, capsys):
-        """`tb install` writes the same pin with the same default scope,
-        and used to say nothing at all about it."""
-        _slot("kit", "1.0.0")
-        cli._pin_after_install("kit", "1.0.0", scope=cli.SCOPE_USER)
-        out = capsys.readouterr().out
-        assert "does not apply here" in out
-        assert "tb use -p kit@1.0.0" in out
+    def test_install_writes_no_manifest_at_all(self, project):
+        """`tb install` used to pin, which is how a pin ended up in a
+        file the directory you were standing in ignored. It now writes
+        no manifest, so the warning above is the only place scope comes
+        up — and only for a pin you typed."""
+        assert not hasattr(cli, "_pin_after_install")
+        assert not hasattr(cli, "_pin_editable_local")
 
-    def test_install_local_pin_does_not_warn(self, project, capsys):
+    def test_install_takes_no_scope_flags(self, project):
         _slot("kit", "1.0.0")
-        cli._pin_after_install("kit", "1.0.0", scope=cli.SCOPE_PROJECT)
-        out = capsys.readouterr().out
-        assert "does not apply here" not in out
-        assert "Pinned to this project" in out
+        for flag in ("-u", "-p", "--private"):
+            r = CliRunner().invoke(cli.main, ["install", flag, "kit"])
+            assert r.exit_code != 0, f"{flag} should not be accepted"
+            assert "no such option" in r.output.lower()
 
 
 class TestEditablePin:

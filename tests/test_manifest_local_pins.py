@@ -9,11 +9,11 @@ gitignored local layer that merges over the committed manifest
 
   - load_merged_pins: local wins per name, absent layers contribute
     nothing
-  - discover_toolkits: local pin overrides committed; a shadowed
-    editable slot gets a loud note (and none when editable serves)
-  - editable installs write the local pin + a .gitignore for it
-  - partial uninstall removes a now-dangling pin instead of leaving a
-    pin that makes serving skip the toolkit entirely
+  - discover_toolkits: local pin overrides committed; an editable slot
+    that wins the fallback says it serves everywhere, and a pin that
+    overrides one says so too
+  - editable installs write no pin at all — the slot outranks numbered
+    versions on its own
 """
 
 from __future__ import annotations
@@ -141,43 +141,18 @@ def test_no_note_without_editable_slot(discovered, tmp_path):
     assert "shadow_note" not in d["heptapod"].meta
 
 
-# ── editable install writes the local layer ──────────────────────────────
+# ── editable installs no longer pin ──────────────────────────────────────
 
 
-def test_pin_editable_local_writes_layer_and_gitignore(tmp_path, monkeypatch):
+def test_editable_install_writes_no_pin(discovered, tmp_path):
+    """`-e` used to write a private pin, because without one an editable
+    slot lost to every numbered version. It now wins the fallback on its
+    own, so there is nothing to write and no manifest to keep in sync."""
     from toolbase import cli
+    assert not hasattr(cli, "_pin_editable_local")
 
-    project = tmp_path / "proj"
-    (project / ".toolbase").mkdir(parents=True)
-    monkeypatch.setattr(
-        "toolbase.envs.find_project_root", lambda cwd: project)
-    monkeypatch.setattr(
-        "toolbase.envs.project_manifest_path",
-        lambda root: root / ".toolbase" / "manifest.yaml")
-
-    cli._pin_editable_local("heptapod", scope=cli.SCOPE_PROJECT)
-
-    local = project / ".toolbase" / "manifest.local.yaml"
-    assert load_merged_pins(project / ".toolbase" / "manifest.yaml") == {
-        "heptapod": "editable"}
-    assert local.is_file()
-    gitignore = project / ".toolbase" / ".gitignore"
-    assert "manifest.local.yaml" in gitignore.read_text()
-    assert "config/*.local.yaml" in gitignore.read_text()
-    # Committed manifest untouched.
-    assert not (project / ".toolbase" / "manifest.yaml").exists()
-
-
-def test_pin_editable_local_keeps_existing_gitignore(tmp_path, monkeypatch):
-    from toolbase import cli
-
-    project = tmp_path / "proj"
-    (project / ".toolbase").mkdir(parents=True)
-    (project / ".toolbase" / ".gitignore").write_text("custom\n")
-    monkeypatch.setattr(
-        "toolbase.envs.find_project_root", lambda cwd: project)
-    monkeypatch.setattr(
-        "toolbase.envs.project_manifest_path",
-        lambda root: root / ".toolbase" / "manifest.yaml")
-    cli._pin_editable_local("heptapod", scope=cli.SCOPE_PROJECT)
-    assert (project / ".toolbase" / ".gitignore").read_text() == "custom\n"
+    d = discovered([_cache_entry("heptapod", "2.3.0"),
+                    _cache_entry("heptapod", "editable", "/src/heptapod")])
+    assert d["heptapod"].path.name == "editable"
+    # And no pin was needed to get there.
+    assert load_merged_pins(tmp_path / "manifest.yaml") == {}

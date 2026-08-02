@@ -122,13 +122,13 @@ def test_disambiguation_existing_dir_is_path(tmp_path, monkeypatch):
 # ── flag exclusivity + validation ──────────────────────────────────────────
 
 
-def test_mutually_exclusive_flags_error(fake_env, tmp_path):
+def test_install_rejects_scope_flags(fake_env, tmp_path):
+    """Install writes no manifest, so it has no destination to scope."""
     src = _make_source_toolkit(tmp_path / "src", "demo")
-    result = CliRunner().invoke(
-        cli.main, ["install", "-e", "-p", str(src)], catch_exceptions=False,
-    )
-    assert result.exit_code != 0
-    assert "mutually exclusive" in result.output
+    for flag in ("-u", "-p", "--private"):
+        result = CliRunner().invoke(cli.main, ["install", flag, str(src)])
+        assert result.exit_code != 0, flag
+        assert "no such option" in result.output.lower()
 
 
 def test_editable_bare_name_errors(fake_env, tmp_path, monkeypatch):
@@ -222,64 +222,38 @@ def test_editable_install_does_not_pin_manifest(fake_env, tmp_path, monkeypatch)
 # ── -l vs -g manifest scoping (path source) ─────────────────────────────────
 
 
-def test_local_path_install_pins_project_manifest(fake_env, tmp_path, monkeypatch):
+def test_path_install_writes_no_manifest(fake_env, tmp_path, monkeypatch):
+    """Neither the project's manifest nor the user-level one. Every pin
+    that exists is one somebody typed via `tb use`."""
     proj = tmp_path / "proj"
     proj.mkdir()
     monkeypatch.chdir(proj)
     src = _make_source_toolkit(tmp_path / "src", "localkit")
 
     result = CliRunner().invoke(
-        cli.main, ["install", "-p", str(src), "--no-input"],
+        cli.main, ["install", str(src), "--no-input"],
         catch_exceptions=False,
     )
     assert result.exit_code == 0, result.output
 
-    proj_manifest = proj / ".toolbase" / "manifest.yaml"
-    assert proj_manifest.exists()
-    data = _read_manifest(proj_manifest)
-    names = [t.get("name") for t in (data.get("toolkits") or [])]
-    assert "localkit" in names
-
-    # default-project manifest must NOT have it.
-    from toolbase.envs import default_project_root, project_manifest_path
-    dp = _read_manifest(project_manifest_path(default_project_root()))
-    dp_names = [t.get("name") for t in (dp.get("toolkits") or [])]
-    assert "localkit" not in dp_names
-
-
-def test_global_path_install_pins_default_project(fake_env, tmp_path, monkeypatch):
-    proj = tmp_path / "proj"
-    proj.mkdir()
-    monkeypatch.chdir(proj)
-    src = _make_source_toolkit(tmp_path / "src", "gkit")
-
-    result = CliRunner().invoke(
-        cli.main, ["install", str(src), "--no-input"],  # no flag = -g
-        catch_exceptions=False,
-    )
-    assert result.exit_code == 0, result.output
-
-    from toolbase.envs import default_project_root, project_manifest_path
-    dp = _read_manifest(project_manifest_path(default_project_root()))
-    dp_names = [t.get("name") for t in (dp.get("toolkits") or [])]
-    assert "gkit" in dp_names
-    # No project manifest created in cwd.
     assert not (proj / ".toolbase" / "manifest.yaml").exists()
+    from toolbase.envs import default_project_root, project_manifest_path
+    dp = _read_manifest(project_manifest_path(default_project_root()))
+    assert [t.get("name") for t in (dp.get("toolkits") or [])] == []
 
 
-def test_global_and_default_path_install_use_same_cache_slot(fake_env, tmp_path, monkeypatch):
-    """-g and no-flag are identical: same cache slot, same default-project pin."""
+def test_path_install_still_lands_in_the_shared_cache(
+    fake_env, tmp_path, monkeypatch,
+):
     monkeypatch.chdir(tmp_path)
     src = _make_source_toolkit(tmp_path / "src", "samekit")
-
     CliRunner().invoke(
-        cli.main, ["install", "-u", str(src), "--no-input"],
+        cli.main, ["install", str(src), "--no-input"],
         catch_exceptions=False,
     )
     from toolbase.envs import cache_dir
     slot = cache_dir("samekit", "0.1.0")
     assert slot.is_dir()
-    # The binary is in the GLOBAL cache regardless of -g/-l.
     assert "cache" in str(slot)
 
 

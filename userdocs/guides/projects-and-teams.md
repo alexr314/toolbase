@@ -8,8 +8,10 @@ user-wide layer instead.
 ## Pin toolkits to the project
 
 ```bash
-tb install -p calculator      # install + pin into <repo>/.toolbase/manifest.yaml
-tb install -p units           # one toolkit per command
+tb install calculator         # into the shared cache; writes no manifest
+tb install units
+tb use -p calculator@1.4.0    # pin 1.4.0 for this repo
+tb use -p units@0.9.0
 ```
 
 ```yaml
@@ -22,10 +24,11 @@ toolkits:
     version: 0.9.0
 ```
 
-`install` puts binaries in the global cache, shared across projects. The `-p`
-flag also pins the version into this project's `manifest.yaml`, which `serve`
-respects. It's the one command that needs `-p` for the project. `activate`,
-`config`, and `connect` already default there.
+`install` puts binaries in the user-level cache, shared across projects, and
+takes no scope — it never writes a manifest. `tb use` is the only command
+that pins, so every entry in the file above is one somebody chose. Without a
+pin, the newest installed version serves (an editable checkout ahead of all
+of them), which is usually what you want.
 
 ## Curate, configure, and wire
 
@@ -57,10 +60,11 @@ tb config set calculator cas_path /opt/sympy --user   # private, your machine
 ```
 
 Commit all of `.toolbase/` and `.mcp.json`. Keep per-user secrets in your user
-layer (`~/.toolbase/config/<toolkit>.yaml`), not in the repo. Machine-local
-resolution choices (editable pins) live in `.toolbase/manifest.local.yaml`,
-which auto-gitignores itself — commit the dependency, not your checkout
-layout.
+layer (`~/.toolbase/config/<toolkit>.yaml`), not in the repo. Pins that are
+only true on this machine go in `.toolbase/manifest.local.yaml` via
+`tb use --private`, which auto-gitignores itself — commit the dependency, not
+your local resolution. An editable checkout needs no pin at all: it outranks
+numbered versions on its own.
 
 ## Reproduce on a clone
 

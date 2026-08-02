@@ -81,9 +81,10 @@ class Resolution:
         if self.reason == EDITABLE_SLOT:
             numbered = [v for v in self.available if v != EDITABLE]
             if numbered:
+                # No parentheses: callers already wrap this in some.
                 return (
-                    "editable checkout, no pin "
-                    f"(outranks {', '.join(numbered)})"
+                    f"editable checkout, no pin — outranks "
+                    f"{', '.join(numbered)}"
                 )
             return "editable checkout, no pin"
         if self.reason == PIN_MISSING:

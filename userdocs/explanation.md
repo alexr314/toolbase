@@ -38,9 +38,10 @@ layer is the default:
   `.toolbase/` in the current directory.
 - **User** (`-u`, or `--user` for `config`): applies to you everywhere.
 
-Where they overlap, the project layer wins. (`install` is the exception: its
-binaries live in a shared global cache, and `-p` pins the version into the
-project.) See [Projects & teams](guides/projects-and-teams.md).
+Where they overlap, the project layer wins. (`install` is the exception: it
+takes no scope at all. Binaries go to a shared user-level cache and no
+manifest is written — `tb use` is what pins a version.) See
+[Projects & teams](guides/projects-and-teams.md).
 
 ## The active profile
 

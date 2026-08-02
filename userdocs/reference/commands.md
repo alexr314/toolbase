@@ -7,12 +7,12 @@
 
 | Command | Purpose | Key flags |
 |---|---|---|
-| `tb install NAME` | Install a toolkit (registry name, `name@version`, or a local path) | `-u`, `-p`, `-e`, `-a/--activate`, `--version`, `--no-skills` |
-| `tb install FILE.yaml` | Install every toolkit an import file lists (one command provisions a project's set) | file-level `-u`/`-p` + prompt flags; per-toolkit options go on the entries |
+| `tb install NAME` | Install a toolkit into the cache (registry name, `name@version`, or a local path). Writes no manifest and takes no scope | `-e`, `-a/--activate`, `--version`, `--bundle`, `--rebuild`, `--no-skills` |
+| `tb install FILE.yaml` | Install every toolkit an import file lists (one command provisions a project's set) | prompt flags; per-toolkit options go on the entries |
 | `tb install FILE.tar.gz` | Install an exported toolkit tarball (registry-free distribution) | same flags as a path install; `-e` rejected |
 | `tb export [PATH]` | Package a toolkit dir as `<name>-<version>.tar.gz` (publish's packaging, no upload) | `-o/--output` |
 | `tb uninstall NAME` | Remove a toolkit — all versions, or one slot with `NAME@VERSION` (stale pins are cleaned up) | `-y`/`--no`/`--no-input` |
-| `tb use NAME@VERSION` | Choose which installed version serves — writes the pin only, no rebuild. Bare `NAME` clears the pin | `-u`, `-p` |
+| `tb use NAME@VERSION` | Choose which installed version serves — writes the pin only, no rebuild. Bare `NAME` clears the pin | `-u`, `-p`, `--private` |
 | `tb list` | List installed toolkits, active/inactive, and which version serves (`-v` groups tools by bundle) | `-v/--verbose`, `--json` |
 | `tb activate ITEM` | Expose a toolkit / `toolkit/bundle` / `toolkit__tool` | `-u`, `-p` |
 | `tb deactivate ITEM` | Hide a toolkit / bundle / tool | `-u`, `-p` |

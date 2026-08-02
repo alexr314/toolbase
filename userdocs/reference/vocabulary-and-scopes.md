@@ -40,18 +40,20 @@ profiles and harness configs have no gitignored variant.
 Resolution order where layers overlap: user, then project, then private,
 each overriding the last key by key.
 
-**Defaults differ by command**, which is the one wrinkle worth memorising:
+**`install` takes no scope keys at all.** It puts a toolkit in the shared
+user-level cache and writes no manifest, so there is never a question of
+which file an install touched. `tb use` is the only command that pins a
+version.
+
+Defaults for the commands that *are* scoped:
 
 | Command | Default scope |
 |---|---|
-| `install`, `use` | `--user` |
+| `use` | `--user` |
 | `activate`, `deactivate`, `profile *`, `config *`, `connect` | `--project` |
 
-So `tb install foo` pins user-wide while `tb activate foo` activates for this
-project only. Inside a repo with its own `.toolbase/`, a user-scope pin does
-not apply — the commands say so when that happens.
+Inside a repo with its own `.toolbase/`, a user-scope pin does not apply —
+`tb use` says so when that happens.
 
 `config` additionally accepts `--layer user|project|private` as a scriptable
-spelling of the same three. `install` is the exception to scoping generally:
-its binaries always go to the user-level cache, and the scope only picks which
-manifest records the pin.
+spelling of the same three.

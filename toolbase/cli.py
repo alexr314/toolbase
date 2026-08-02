@@ -3636,40 +3636,33 @@ def _warn_pin_scope_not_active(
         pass  # a heads-up must never break the command
 
 
-def _pin_after_install(
-    name: str, version: str, *,
-    scope: str,
-    bundles: Optional[List[str]] = None,
-) -> None:
-    """Pin (name, version) into the manifest for ``scope``.
+def _note_if_not_the_serving_version(name: str, version: str) -> None:
+    """Say so when the version just installed isn't the one that serves.
 
-    ``SCOPE_USER`` (the default) pins into the user-level
-    default-project. ``SCOPE_PROJECT`` / ``SCOPE_PRIVATE`` pin into the
-    active project, creating ``.toolbase/`` in cwd if no project is
-    found above it. Best-effort: a pin failure warns but doesn't fail
-    the install (the cache slot is already usable; serve falls back to
-    walking the cache).
-
-    ``bundles`` (when not None) records the subset of declared bundles
-    that was installed. ``None`` means "all bundles" — the manifest
-    entry omits the field.
+    Install no longer pins, so ``tb install foo@1.2.0`` alongside a
+    newer slot puts 1.2.0 in the cache and leaves 1.4.0 serving. That is
+    the intended split — install places bits, ``tb use`` chooses — but
+    unannounced it reads as the install having failed.
     """
     try:
-        from .envs import add_pin as _add_pin
-        manifest_path = _pin_manifest_path(scope)
-        _add_pin(manifest_path, name, version, bundles=bundles)
-        if scope == SCOPE_USER:
-            _warn_pin_scope_not_active(
-                _manifest_scope_root(scope), name, version)
-        else:
-            console.print(
-                f"[dim]Pinned to this project: "
-                f"{_display_path(manifest_path)}[/dim]"
-            )
-    except Exception as e:
-        console.print(
-            f"[dim]Note: could not pin {name} to the manifest: {e}[/dim]"
+        from .envs import (
+            list_versions as _list_versions, resolve_version, active_pins,
         )
+        resolution = resolve_version(
+            _list_versions(name), pin=active_pins().get(name),
+        )
+        if not resolution.ok or resolution.version == version:
+            return
+        console.print(
+            f"[yellow]Note: {resolution.version} is what serves here "
+            f"({resolution.describe()}), not the {version} you just "
+            f"installed.[/yellow]"
+        )
+        console.print(
+            f"  [dim]To use it: [/dim][cyan]tb use {name}@{version}[/cyan]"
+        )
+    except Exception:
+        pass  # a heads-up must never break an otherwise-good install
 
 
 def _ensure_toolbase_gitignore(tb_dir: Path) -> None:
@@ -3683,44 +3676,10 @@ def _ensure_toolbase_gitignore(tb_dir: Path) -> None:
         gitignore.write_text("manifest.local.yaml\nconfig/*.local.yaml\n")
 
 
-def _pin_editable_local(name: str, *, scope: str) -> None:
-    """Pin (name, "editable") into the machine-private manifest layer.
-
-    An editable slot points at a checkout only this machine has, so the
-    pin is always private regardless of the scope asked for — ``scope``
-    only picks which root's ``manifest.local.yaml`` it lands in. The
-    ``.gitignore`` that keeps it out of git is written alongside.
-    Best-effort like _pin_after_install: a failure warns, the install
-    stands.
-    """
-    try:
-        from .envs import (
-            project_manifest_path as _project_manifest_path,
-            local_manifest_path as _local_manifest_path,
-            add_pin as _add_pin,
-        )
-        local_path = _local_manifest_path(
-            _project_manifest_path(_manifest_scope_root(scope))
-        )
-        _add_pin(local_path, name, "editable")
-        _ensure_toolbase_gitignore(local_path.parent)
-        console.print(
-            f"[dim]Pinned editable in {local_path.name} "
-            f"(machine-local, gitignored).[/dim]"
-        )
-    except Exception as e:
-        console.print(
-            f"[dim]Note: could not write the local editable pin: {e} — "
-            f"without it, numbered slots outrank this checkout.[/dim]"
-        )
-
-
-
 def _install_from_path(
     source_path: Path,
     *,
     editable: bool,
-    scope: str,
     no_skills: bool,
     mode: str,
     requested_bundles: Optional[List[str]] = None,
@@ -3951,13 +3910,6 @@ def _install_from_path(
         prior = _installed_bundles(slot) or []
         union = sorted(set(prior) | set(new_bundles_to_install))
         _update_meta_bundles(slot, union)
-        # Update manifest entry too so the recorded bundle set stays
-        # consistent with what's actually installed.
-        if not editable:
-            _pin_after_install(
-                name, version,
-                scope=scope, bundles=union,
-            )
         console.print(
             f"\n[bold green]✓ Added bundle(s) "
             f"{', '.join(new_bundles_to_install)} to {name} "
@@ -4066,6 +4018,8 @@ def _install_from_path(
         f"{'(editable)' if editable else 'v' + version}[/bold green]\n"
     )
     _warn_install_name_collisions(name)
+    if not editable:
+        _note_if_not_the_serving_version(name, version)
     if editable:
         console.print(f"Source: [cyan]{source_path}[/cyan] (live link)")
         console.print(
@@ -4084,27 +4038,6 @@ def _install_from_path(
     # Reads from the slot, which for editable resolves through the symlink
     # to live source.
     _note_skills_available(name, slot, no_skills)
-
-    # Pinning. Editable installs deliberately stay OUT of the committed
-    # manifest — a machine-specific path won't resolve on a collaborator's
-    # clone. The editable: true + source_path in .install_meta.yaml is the
-    # only place an editable install is tracked.
-    if not editable:
-        _pin_after_install(
-            name, version,
-            scope=scope,
-            bundles=(
-                sorted(set(bundles_to_install))
-                if requested_bundles is not None else None
-            ),
-        )
-    else:
-        # Editable pins are machine state (they point at THIS machine's
-        # source checkout), so they go to the gitignored local layer —
-        # never the committed manifest. Without a pin the editable slot
-        # would lose version resolution to any numbered slot and the
-        # checkout would silently not serve.
-        _pin_editable_local(name, scope=scope)
 
     console.print(f"\n[bold]Ready to use! Try:[/bold]")
     console.print(f"  [cyan]tb activate {name}[/cyan]   # expose it to the agent")
@@ -4288,22 +4221,21 @@ def _note_skills_available(name: str, slot: Path, no_skills: bool = False) -> No
 
 
 def _post_install_activate(
-    name: str, *, scope: str
+    name: str,
 ) -> None:
     """Activate a just-installed toolkit in the default profile (``-a``).
 
-    Follows the install's scope: ``--user`` activates the user-level
-    profile, and both project scopes activate this project's (profiles
-    have no gitignored layer, so ``--private`` collapses to project
-    here). The install binary always lives in the user-level cache, but
-    *activation* is per-project -- you install a toolkit once, then
-    activate it where you want it. Best-effort; a failure here doesn't
-    fail the install (the toolkit is in the cache regardless).
+    Uses ``tb activate``'s own default — this project — because install
+    has no scope of its own to follow. The binary lives in the
+    user-level cache, but *activation* is per-project: you install a
+    toolkit once, then activate it where you want it. Pass ``-u`` to
+    ``tb activate`` afterwards for the user-level profile. Best-effort;
+    a failure here doesn't fail the install (the toolkit is in the cache
+    regardless).
     """
     from .serve.profile_scaffold import activate as _activate
     try:
-        scope, project_root = _resolve_profile_scope(
-            scope == SCOPE_USER, scope != SCOPE_USER)
+        scope, project_root = _resolve_profile_scope(False, False)
         result = _activate(name, scope=scope, project_root=project_root)
     except Exception as e:
         console.print(f"[yellow]Installed, but could not activate: {e}[/yellow]")
@@ -4440,12 +4372,12 @@ def _parse_import_file(path: Path) -> list:
     return entries
 
 
-def _install_from_import_file(ctx, path: Path, *, scope,
+def _install_from_import_file(ctx, path: Path, *,
                               no_skills, activate_after, rebuild,
                               yes, no_, no_input, invoke=None) -> None:
     """Install every toolkit an import file lists, via the normal
     per-toolkit install path (``ctx.invoke``), with the file-level
-    scope/prompt flags applied to each entry.
+    prompt flags applied to each entry.
 
     Per-entry failures do not abort the run — the remaining entries
     still install — but the command exits nonzero with a summary, so a
@@ -4466,7 +4398,6 @@ def _install_from_import_file(ctx, path: Path, *, scope,
         try:
             invoke(
                 name=e["target"], version=e["version"],
-                scope=scope,
                 editable=e["editable"], no_skills=no_skills,
                 activate_after=activate_after, bundle_flags=e["bundles"],
                 rebuild=rebuild, yes=yes, no_=no_, no_input=no_input,
@@ -4485,7 +4416,7 @@ def _install_from_import_file(ctx, path: Path, *, scope,
     click.echo(f"✓ {len(entries)} toolkit(s) installed from {path.name}")
 
 
-def _install_from_tarball(ctx, path: Path, *, version, scope,
+def _install_from_tarball(ctx, path: Path, *, version,
                           no_skills, activate_after,
                           bundle_flags, rebuild, yes, no_, no_input,
                           invoke=None) -> None:
@@ -4522,7 +4453,6 @@ def _install_from_tarball(ctx, path: Path, *, version, scope,
                 )
         invoke(
             name=str(root), version=version,
-            scope=scope,
             editable=False, no_skills=no_skills,
             activate_after=activate_after, bundle_flags=bundle_flags,
             rebuild=rebuild, yes=yes, no_=no_, no_input=no_input,
@@ -4533,28 +4463,10 @@ def _install_from_tarball(ctx, path: Path, *, version, scope,
 @click.argument('name')
 @click.option('--version', '-v', help='Specific version to install (default: latest)')
 @click.option(
-    '--user', '-u', 'user_scope', is_flag=True, default=False,
-    help=(
-        'Pin into the user-level default-project manifest (the default). '
-        'Accepts a registry name or a path to a toolkit dir.'
-    ),
-)
-@click.option(
-    '--project', '-p', 'project_scope', is_flag=True, default=False,
-    help=(
-        "Pin into THIS project's manifest "
-        "(<project>/.toolbase/manifest.yaml), creating the project if "
-        "needed. Binary still lives in the user-level cache. Accepts a "
-        "registry name or a path to a toolkit dir."
-    ),
-)
-@_private_option
-@click.option(
     '--editable', '-e', 'editable', is_flag=True, default=False,
     help=(
         'Editable install: symlink a local toolkit source dir into the '
-        'cache so serve loads tools live. Path only (no registry name). '
-        'Not pinned into the committed manifest.'
+        'cache so serve loads tools live. Path only (no registry name).'
     ),
 )
 @click.option(
@@ -4566,8 +4478,9 @@ def _install_from_tarball(ctx, path: Path, *, version, scope,
     help=(
         "Also activate the toolkit in the default profile after installing "
         "(adds it to what `tb serve` exposes). Activates the cwd's project "
-        "by default (creating .toolbase/ there), like `tb activate`; pass "
-        "-g to activate the user-level profile instead. Without -a, install "
+        "(creating .toolbase/ there), like `tb activate`; run "
+        "`tb activate -u <toolkit>` afterwards for the user-level profile "
+        "instead. Without -a, install "
         "only places the toolkit in the cache; nothing is served until you "
         "activate it."
     ),
@@ -4593,22 +4506,26 @@ def _install_from_tarball(ctx, path: Path, *, version, scope,
 )
 @_interactive_options
 @click.pass_context
-def install(ctx, name, version, user_scope, project_scope, private_scope, editable, no_skills, activate_after, bundle_flags, rebuild, yes, no_, no_input):
+def install(ctx, name, version, editable, no_skills, activate_after, bundle_flags, rebuild, yes, no_, no_input):
     """
     Install a toolkit — from the registry or a local source directory.
 
     \b
-    Scope/source flags (mutually exclusive; -u is the default):
-      -u / --user      Pin into the user-level default-project (default).
-      -p / --project   Pin into THIS project's manifest (.toolbase/).
-      --private        Pin into this project's gitignored layer.
-      -e / --editable  Live symlink to a local source dir (path only).
+    Install puts a toolkit in the cache and nothing else. It writes no
+    manifest and takes no scope, so there is never a question of which
+    file an install touched. Which version *serves* is decided
+    separately, by `tb use` — and until you say otherwise, the newest
+    installed version wins (an editable checkout ahead of all of them).
 
     \b
-    The toolkit binary (venv/conda env + tools) always lives in the
-    user-level cache at ~/.toolbase/cache/<name>/<version>/, regardless
-    of flag. The scope only changes which manifest gets the pin; -e
-    additionally points the cache slot at your live source folder.
+    So installing an older version does not switch to it:
+        tb install calculator@1.2.0   # 1.4.0 already installed -> 1.4.0 serves
+        tb use calculator@1.2.0       # now 1.2.0 serves, here
+
+    \b
+    The toolkit binary (venv/conda env + tools) lives in the user-level
+    cache at ~/.toolbase/cache/<name>/<version>/. `-e` points that cache
+    slot at your live source folder instead of a downloaded copy.
 
     \b
     The argument is a registry name OR a local path. It's treated as a
@@ -4622,16 +4539,15 @@ def install(ctx, name, version, user_scope, project_scope, private_scope, editab
       2. Create an isolated environment (venv or conda, auto-detected)
       3. Install dependencies, then orchestral-ai + mcp
       4. Surface the toolkit's skills into ~/.claude/skills/ (unless --no-skills)
-      5. Pin into the scoped manifest (-u default-project, -p this project)
 
     \b
     Examples:
-        toolbase install aster                   # user level, latest
-        toolbase install aster@1.2.0             # pin a version via @ syntax
-        toolbase install aster --version 1.2.0   # pin a version via flag
-        toolbase install -p aster                # pin into this project
-        toolbase install .                        # user-level install from cwd
+        toolbase install aster                   # latest
+        toolbase install aster@1.2.0             # a specific version
+        toolbase install aster --version 1.2.0   # same, flag form
+        toolbase install .                        # install from cwd
         toolbase install -e .                     # editable: live link to cwd
+        toolbase install aster -a                 # install and activate here
         toolbase install aster --no-skills        # don't touch ~/.claude/skills/
         toolbase install calculator[basic,symbolic]  # only those bundles
         toolbase install calculator --bundle basic   # flag form, same effect
@@ -4641,10 +4557,6 @@ def install(ctx, name, version, user_scope, project_scope, private_scope, editab
     import requests
 
     mode = _resolve_prompt_mode(yes, no_, no_input)
-    scope = _resolve_scope(
-        user_scope, project_scope, private_scope, default=SCOPE_USER,
-    )
-
     # Import-file mode: ``tb install <file>.yaml`` installs every
     # toolkit the file lists — the shareable counterpart to
     # per-toolkit installs, so a project can commit e.g. toolkits.yaml
@@ -4659,7 +4571,6 @@ def install(ctx, name, version, user_scope, project_scope, private_scope, editab
             )
         return _install_from_import_file(
             ctx, Path(name),
-            scope=scope,
             no_skills=no_skills, activate_after=activate_after,
             rebuild=rebuild, yes=yes, no_=no_, no_input=no_input,
         )
@@ -4675,19 +4586,9 @@ def install(ctx, name, version, user_scope, project_scope, private_scope, editab
             )
         return _install_from_tarball(
             ctx, Path(name), version=version,
-            scope=scope,
             no_skills=no_skills, activate_after=activate_after,
             bundle_flags=bundle_flags, rebuild=rebuild,
             yes=yes, no_=no_, no_input=no_input,
-        )
-
-    # Flag exclusivity. -e picks a source; the scope keys pick a
-    # destination, and -e implies the private layer, so combining them
-    # would be two answers to one question.
-    if editable and (user_scope or project_scope or private_scope):
-        raise click.UsageError(
-            "-e is mutually exclusive with --user/--project/--private: an "
-            "editable pin is always private to this machine."
         )
 
     # Strip any pip-extras suffix from the name (e.g. ``foo[a,b]``)
@@ -4719,13 +4620,12 @@ def install(ctx, name, version, user_scope, project_scope, private_scope, editab
             "version). Drop --version."
         )
 
-    # Path-source branch (covers -e always, and any scope when the arg is
-    # a path). Builds the cache slot from the local dir and pins per scope.
+    # Path-source branch (covers -e always, and a plain path install).
+    # Builds the cache slot from the local directory.
     if source_path is not None:
         installed_name = _install_from_path(
             source_path,
             editable=editable,
-            scope=scope,
             no_skills=no_skills,
             mode=mode,
             requested_bundles=requested_bundles,
@@ -4733,7 +4633,7 @@ def install(ctx, name, version, user_scope, project_scope, private_scope, editab
         )
         if activate_after and installed_name:
             _post_install_activate(
-                installed_name, scope=scope
+                installed_name
             )
         return
 
@@ -5111,24 +5011,14 @@ def install(ctx, name, version, user_scope, project_scope, private_scope, editab
     except Exception:
         pass
 
-    # Pin into the appropriate manifest. -g (default) pins into the
-    # global default-project; -l pins into THIS project's manifest
-    # (creating it if needed). The cache slot itself is always in the
-    # global cache and project-agnostic — only the pin is scoped. There
-    # is deliberately no "where do you want this?" prompt: the flag (or
-    # its -g default) carries that intent now.
-    _pin_after_install(
-        name, version, scope=scope,
-        bundles=_bundles_to_install,
-    )
-
     # Step 9: Success message
     console.print(f"\n[bold green]✓ Successfully installed {name} v{version}[/bold green]\n")
     _warn_install_name_collisions(name)
+    _note_if_not_the_serving_version(name, version)
 
     if activate_after:
         _post_install_activate(
-            name, scope=scope
+            name
         )
 
     if env_type == 'venv':

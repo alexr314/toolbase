@@ -137,17 +137,17 @@ binary) read it from three layers, later winning key-by-key:
 |---|---|---|
 | user | `~/.toolbase/config/<kit>.yaml` | your defaults and secrets, every project |
 | project | `<repo>/.toolbase/config/<kit>.yaml` | committed, shared with the team |
-| local | `<repo>/.toolbase/config/<kit>.local.yaml` | this project on *this* machine; gitignored |
+| private | `<repo>/.toolbase/config/<kit>.local.yaml` | this project on *this* machine; gitignored |
 
 ```bash
 tb config set calculator precision 10                  # committed
 tb config set calculator solver_path /opt/bin --private  # yours alone
 ```
 
-Toolkit versions split the same way: `manifest.yaml` is committed so a
-collaborator who clones the project and runs `tb install` gets the same
-toolkits at the same versions, while `manifest.local.yaml` holds machine-local
-pins like editable installs.
+Toolkit versions split the same way, via `tb use`: a pin written with `-p`
+lands in the committed `manifest.yaml`, one written with `--private` in the
+gitignored `manifest.local.yaml`. `tb install` writes neither — it only fills
+the shared cache, and without a pin the newest installed version serves.
 
 ---
 

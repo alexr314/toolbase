@@ -10,6 +10,25 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed (breaking)
 
+- **`tb install` writes no manifest and takes no scope.** It puts a toolkit in the shared cache and stops. Previously every install wrote a pin, so a manifest accumulated bookkeeping nobody chose and you couldn't tell deliberate entries from incidental ones — which is where the orphaned pins, the pins that didn't apply, and the install/uninstall scope mismatch all came from. `tb use` is now the only command that pins, so every entry in a manifest is one somebody typed.
+
+  Nothing is needed for the common case: with no pin, the newest installed version serves. Installing an older version therefore does not switch to it, and install says so rather than leaving you to notice:
+
+  ```console
+  $ tb install calculator@1.2.0
+  ✓ Successfully installed calculator v1.2.0
+  Note: 1.4.0 is what serves here (highest installed, no pin), not the 1.2.0 you just installed.
+    To use it: tb use calculator@1.2.0
+  ```
+
+  `-u`, `-p` and `--private` are gone from `install`. `-a/--activate` stays and now follows `tb activate`'s own default (this project); pass `-u` to `tb activate` afterwards for the user-level profile. `-e` no longer writes a private pin — see below.
+
+- **An editable slot outranks numbered versions.** `editable` isn't a parseable version, so it scored lowest and lost to every numbered slot; a developer who linked a checkout had to also pin it by hand or their own code silently didn't serve. It now heads the fallback ordering, so linking a checkout is enough.
+
+  The ordering only decides the fallback — an explicit pin still wins, including `tb use <toolkit>@editable`. That is what keeps a pinned version reproducible while someone has that toolkit checked out.
+
+  Because the cache is user-level, a winning editable slot serves in **every** directory. `tb list` and serve startup now say so when a checkout wins by fallback, and say the inverse ("overridden by the 2.4.0 pin") when a pin beats one. The old "editable slot shadowed — pin 'editable' to serve your checkout" advice is gone; the workaround it described is no longer needed.
+
 - **One scope vocabulary across every command: `--user` / `--project` / `--private`.** The CLI had grown two parallel spellings of the same axis — `-g/--global` and `-l/--local` on install/activate/connect, `--user`/`--project` on config — plus a `--local` that meant *committed project scope* in the first family and *gitignored machine layer* in the second. Same word, opposite answer to "will my teammates get this?"
 
   The three keys are now the same everywhere: `-u/--user` (`~/.toolbase/`), `-p/--project` (`<repo>/.toolbase/`, committed), and `--private` (`<repo>/.toolbase/*.local.yaml`, gitignored). `--global`, `-g`, `--local` and `-l` are **removed**, not deprecated. `--layer` takes `user|project|private`.

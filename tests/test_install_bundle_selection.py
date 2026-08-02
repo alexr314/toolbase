@@ -511,7 +511,7 @@ def test_install_rebuild_destructively_reinstalls(fake_env, tmp_path: Path):
     assert installed_bundles(slot) == ["alpha"]
 
 
-def test_install_records_bundles_in_manifest(fake_env, tmp_path: Path):
+def test_install_records_bundles_in_the_cache_slot(fake_env, tmp_path: Path):
     src = _make_source_toolkit(
         tmp_path / "src",
         bundles_block={
@@ -526,14 +526,17 @@ def test_install_records_bundles_in_manifest(fake_env, tmp_path: Path):
     )
     assert r.exit_code == 0, r.output
 
-    # Manifest entry should record the subset.
+    # The subset is recorded in the slot's install meta, which is what
+    # serve-time bundle gating actually reads. The manifest never gets
+    # one: install writes no manifest, and nothing read that field.
+    from toolbase.envs.cache import installed_bundles
+    from toolbase.envs.paths import cache_dir
+    assert installed_bundles(cache_dir("demo", "0.1.0")) == ["alpha"]
+
     from toolbase.envs.manifest import load_manifest
     from toolbase.envs.paths import project_manifest_path
     manifest_path = project_manifest_path(fake_env["home"] / "default-project")
-    m = load_manifest(manifest_path)
-    entry = m.find("demo")
-    assert entry is not None
-    assert entry.bundles == ["alpha"]
+    assert load_manifest(manifest_path).find("demo") is None
 
 
 # ────────────────────────────────────────────────────────────────────

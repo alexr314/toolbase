@@ -38,8 +38,21 @@ tb use calculator         # clear the pin; highest installed wins again
 slots stay in the cache, so switching back is another one-liner. It takes
 effect the next time `tb serve` starts, so restart your agent session.
 
-Scope mirrors `tb install`: `-u` (the default) chooses for the global
-default-project, `-p` chooses for this project only.
+**`tb install` never writes a pin.** It puts a version in the cache and
+stops; `tb use` is the only command that chooses. So installing an older
+version does not switch to it — install says so when that happens:
+
+```console
+$ tb install calculator@1.2.0
+✓ Successfully installed calculator v1.2.0
+Note: 1.4.0 is what serves here (highest installed, no pin), not the
+1.2.0 you just installed.
+  To use it: tb use calculator@1.2.0
+```
+
+`tb use` takes the scope keys: `-u` (the default) chooses for the
+user-level default-project, `-p` for this project, `--private` for this
+project's gitignored layer.
 
 ```bash
 tb use -p calculator@1.4.0   # pin 1.4.0 in <repo>/.toolbase/manifest.yaml
@@ -67,14 +80,23 @@ tb install -e . -a            # symlink + activate
 tb install -e .               # rebuild the env after changing dependencies
 ```
 
-Editable installs pin `editable` into `manifest.local.yaml` — the
-gitignored machine-local layer, never the committed manifest (the slot
-points at *your* checkout; no other machine has it). Without that pin an
-editable slot would lose version resolution to any numbered slot; if
-that ever happens (e.g. after deleting the local layer), `tb list` and
-serve startup warn that the editable slot is shadowed and show the
-one-line fix. `tb use calculator@editable` restores it (that choice also
-goes to the local layer, for the same reason). For the authoring loop, see
+**An editable slot outranks every numbered version**, so your checkout
+serves as soon as you link it — no pin needed. It writes no manifest
+either.
+
+Two things follow. First, the cache is user-level, so an editable slot
+serves in *every* directory, not only the repo you're developing in;
+`tb list` and serve startup say so, because a checkout linked months ago
+would otherwise keep serving with nothing to indicate it. Second, an
+explicit pin still wins:
+
+```bash
+tb use calculator@1.4.0   # a pinned loadout is safe from your checkout
+tb use calculator         # clear it; the checkout serves again
+```
+
+That's what keeps a pinned profile reproducible while someone has that
+toolkit checked out. For the authoring loop, see
 [Authoring → Validate & publish](../authoring/publish.md).
 
 ## Next
