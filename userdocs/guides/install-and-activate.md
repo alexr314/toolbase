@@ -59,7 +59,7 @@ tb activate calculator
 ✓ Activated calculator (whole toolkit).
 ```
 
-Activation is **project-local by default**: it writes a profile under the
+Activation is **project-local by default**: it writes a loadout under the
 current directory's `.toolbase/` (creating it if needed), so the toolkit is
 exposed only when you work here. Add `-u` to activate it **user-wide** (every
 session, any directory) instead:
@@ -80,7 +80,7 @@ tb list
 ```
 
 ```console
-Active profile: default
+Active loadout: default
 
 ✓ calculator   1.4.0   (active)
 ✗ units        0.9.0   (inactive)

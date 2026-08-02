@@ -43,7 +43,7 @@ but serves nothing — activation is what exposes it to the agent. The
 binary always lives in the shared cache (`~/.toolbase/cache/`); only
 the activation is scoped: `tb activate` writes to the current
 directory's `.toolbase/` by default, `-u` writes to the user-wide
-profile instead.
+loadout instead.
 
 **`tb connect` writes the MCP config for you.** Claude Code, Codex,
 OpenCode, Antigravity, and Orchestral are all supported (`tb connect
@@ -76,10 +76,10 @@ A `<toolkit>__<name>` item is a **skill** when it matches a surfaced
 skill and not a tool; otherwise it's a tool (a name that is both resolves
 to the tool). A **bundle** is a self-contained capability an author
 carves out of a toolkit, with its own deps and skills.
-`tb profile tools calculator` lists what's available. Power users can
-keep several named profiles (`tb profile create paper`,
-`tb connect claude-code --profile paper`) and switch between them; most
-users only ever touch the default profile.
+`tb loadout tools calculator` lists what's available. Power users can
+keep several named loadouts (`tb loadout create paper`,
+`tb connect claude-code --loadout paper`) and switch between them; most
+users only ever touch the default loadout.
 
 Tools are served namespaced as `<toolkit>__<tool>` by default, so two active
 toolkits that both define, say, an `add` tool stay distinct (`calculator__add`
@@ -144,10 +144,12 @@ tb config set calculator precision 10                  # committed
 tb config set calculator solver_path /opt/bin --private  # yours alone
 ```
 
-Toolkit versions split the same way, via `tb use`: a pin written with `-p`
-lands in the committed `manifest.yaml`, one written with `--private` in the
-gitignored `manifest.local.yaml`. `tb install` writes neither — it only fills
-the shared cache, and without a pin the newest installed version serves.
+Toolkit versions split the same way, via `tb use`, and they live in the
+loadout beside the tool selection — so one file says both which tools an
+agent gets and which build of them. `-p` writes the committed
+`loadouts/default.yaml`, `--private` the gitignored `default.local.yaml`.
+`tb install` writes neither: it only fills the shared cache, and without a
+pin the newest installed version serves.
 
 ---
 
@@ -201,7 +203,7 @@ Full reference with all flags: <https://toolbase-ai.com/docs/reference/commands>
 | `tb connect HARNESS` | Wire toolbase into Claude Code, Codex, OpenCode, Antigravity, or scaffold an Orchestral agent script (also surfaces skills; `--no-skills` to skip) |
 | `tb disconnect HARNESS` | Remove toolbase from a harness (and its surfaced skills) |
 | `tb logs` | Tail the serve log, live |
-| `tb profile …` | Manage named profiles: `list \| show \| create \| edit \| delete \| set-default \| path \| tools` |
+| `tb loadout …` | Manage named loadouts: `list \| show \| create \| edit \| delete \| set-default \| path \| tools` |
 | `tb config …` | Manage per-toolkit config: `show \| init \| set \| unset \| edit \| path \| validate` (`--user` / `--project` / `--private` pick the layer) |
 | `tb setup TOOLKIT` | Run a toolkit's `setup.py` (`--reset`, `--check`) |
 | `tb project init` | Create `.toolbase/` here |

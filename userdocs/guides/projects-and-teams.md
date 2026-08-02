@@ -15,12 +15,11 @@ tb use -p units@0.9.0
 ```
 
 ```yaml
-# <repo>/.toolbase/manifest.yaml
-schema_version: 1
+# <repo>/.toolbase/loadouts/default.yaml
 toolkits:
-  - name: calculator
+  calculator:
     version: 1.4.0
-  - name: units
+  units:
     version: 0.9.0
 ```
 
@@ -34,7 +33,7 @@ pin, the newest installed version serves, which is usually what you want.
 Inside the repo these default to the project, so no flags are needed:
 
 ```bash
-tb activate calculator/basic           # project profile
+tb activate calculator/basic           # project loadout
 tb config set calculator precision 10  # project config (committed, shared)
 tb connect claude-code                 # writes <repo>/.mcp.json (committed)
 ```
@@ -50,17 +49,17 @@ tb config set calculator cas_path /opt/sympy --user   # private, your machine
 
 ```
 <repo>/.toolbase/
-  manifest.yaml            # pinned toolkits + versions
-  serve.yaml               # default.profile + blocklists
+  loadouts/default.yaml    # curated tool set + versions
+  serve.yaml               # default.loadout + blocklists
   config/<toolkit>.yaml    # shared, non-secret config
-  profiles/default.yaml    # the project's curated tool set
+  loadouts/default.yaml    # the project's curated tool set
 <repo>/.mcp.json           # harness wiring (Claude Code)
 <repo>/toolkits.yaml       # optional import file (see below)
 ```
 
 Commit all of `.toolbase/` and `.mcp.json`. Keep per-user secrets in your user
 layer (`~/.toolbase/config/<toolkit>.yaml`), not in the repo. Pins that are
-only true on this machine go in `.toolbase/manifest.local.yaml` via
+only true on this machine go in `.toolbase/loadouts/default.local.yaml` via
 `tb use --private`, which auto-gitignores itself — commit the dependency, not
 your local resolution — including a checkout, which needs
 `tb use <toolkit>@editable` before it serves.
@@ -91,10 +90,10 @@ tb install toolkits.yaml
 
 Entries use `name:` (registry) or `source:` (a path — including an
 exported tarball from `tb export`, the registry-free way to move private
-toolkits between machines). The committed profile and project config
+toolkits between machines). The committed loadout and project config
 mean the agent then sees exactly what the project intends.
 
 ## Next
 
-- [Profiles](profiles-power-user.md): multiple named profiles per project
+- [Loadouts](loadouts-power-user.md): multiple named loadouts per project
 - [Multi-version & editable](multi-version-and-editable.md): version pinning in depth

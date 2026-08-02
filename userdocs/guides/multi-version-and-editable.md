@@ -22,10 +22,21 @@ tb list
 highest installed wins by default, and `tb list` says so rather than
 leaving you to infer it.
 
-Which version serves: the pin in the active project's manifest if there
-is one — with the machine-local layer (`manifest.local.yaml`, gitignored)
-overriding the committed `manifest.yaml` name-by-name — otherwise the
-highest installed.
+Which version serves: the `version:` on that toolkit's entry in the
+active loadout if there is one — with the private layer
+(`<name>.local.yaml`, gitignored) overriding the committed loadout
+toolkit-by-toolkit — otherwise the highest installed.
+
+Versions live in the loadout beside the tool selection, so one file says
+both which tools an agent gets and which build of them:
+
+```yaml
+# .toolbase/loadouts/default.yaml
+toolkits:
+  calculator:
+    version: 1.4.0        # omit to take the newest installed
+    bundles: [basic]
+```
 
 ## Switch versions
 
@@ -55,7 +66,7 @@ user-level default-project, `-p` for this project, `--private` for this
 project's gitignored layer.
 
 ```bash
-tb use -p calculator@1.4.0   # pin 1.4.0 in <repo>/.toolbase/manifest.yaml
+tb use -p calculator@1.4.0   # pin 1.4.0 in this project's loadout
 ```
 
 The project now serves 1.4.0 even if a newer version is installed globally.

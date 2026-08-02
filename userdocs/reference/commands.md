@@ -13,11 +13,12 @@
 | `tb export [PATH]` | Package a toolkit dir as `<name>-<version>.tar.gz` (publish's packaging, no upload) | `-o/--output` |
 | `tb uninstall NAME` | Remove a toolkit — all versions, or one slot with `NAME@VERSION` (stale pins are cleaned up) | `-y`/`--no`/`--no-input` |
 | `tb use NAME@VERSION` | Choose which installed version serves — writes the pin only, no rebuild. Bare `NAME` clears the pin | `-u`, `-p`, `--private` |
+| `tb status` | What applies here: project, loadout, what would serve, and anything broken | none |
 | `tb list` | List installed toolkits, active/inactive, and which version serves (`-v` groups tools by bundle) | `-v/--verbose`, `--json` |
 | `tb activate ITEM` | Expose a toolkit / `toolkit/bundle` / `toolkit__tool` | `-u`, `-p` |
 | `tb deactivate ITEM` | Hide a toolkit / bundle / tool | `-u`, `-p` |
-| `tb serve` | Serve the active profile over MCP (the harness runs this) | `--profile`, `--dry-run`, `--call-timeout`, `--bare`/`--qualified` |
-| `tb connect [HARNESS]` | Wire toolbase into a harness: `claude-code`/`codex` config, or scaffold an `orchestral` script | `-u`, `-p`, `--profile`, `--abspath`, `--remove`, `--dry-run`, `--list`, `--harnesses`, `--out`, `--force` |
+| `tb serve` | Serve the active loadout over MCP (the harness runs this) | `--loadout`, `--dry-run`, `--call-timeout`, `--bare`/`--qualified` |
+| `tb connect [HARNESS]` | Wire toolbase into a harness: `claude-code`/`codex` config, or scaffold an `orchestral` script | `-u`, `-p`, `--loadout`, `--abspath`, `--remove`, `--dry-run`, `--list`, `--harnesses`, `--out`, `--force` |
 | `tb disconnect HARNESS` | Remove toolbase from a harness | `-u`, `-p` |
 | `tb orchestral` | Run the agent script from `tb connect orchestral` | `--script` |
 | `tb logs` | Tail the serve log | `-n`, `-f/-F`, `--all`, `--raw` |
@@ -34,14 +35,14 @@
 | `tb config edit TOOLKIT` | Open the config file in `$EDITOR` | layer flags |
 | `tb config path TOOLKIT` | Print the config file path | layer flags |
 | `tb config validate TOOLKIT` | Check required fields/types | none |
-| `tb profile list` | List profiles (user + project), active marked | none |
-| `tb profile show [NAME]` | Print a profile (defaults to active) | none |
-| `tb profile create NAME` | New profile | `-u`, `-p`, `--from`, `--empty` |
-| `tb profile edit [NAME]` | Edit a profile in `$EDITOR` | `-u`, `-p` |
-| `tb profile delete NAME` | Delete a profile | `-u`, `-p` |
-| `tb profile set-default NAME` | Set the active profile (writes `serve.yaml`) | `-u`, `-p` |
-| `tb profile path NAME` | Print a profile's file path | none |
-| `tb profile tools [TOOLKIT]` | List available bundles + tools | none |
+| `tb loadout list` | List loadouts (user + project), active marked | none |
+| `tb loadout show [NAME]` | Print a loadout (defaults to active) | none |
+| `tb loadout create NAME` | New loadout | `-u`, `-p`, `--from`, `--empty` |
+| `tb loadout edit [NAME]` | Edit a loadout in `$EDITOR` | `-u`, `-p` |
+| `tb loadout delete NAME` | Delete a loadout | `-u`, `-p` |
+| `tb loadout set-default NAME` | Set the active loadout (writes `serve.yaml`) | `-u`, `-p` |
+| `tb loadout path NAME` | Print a loadout's file path | none |
+| `tb loadout tools [TOOLKIT]` | List available bundles + tools | none |
 | `tb setup TOOLKIT` | Run a toolkit's `setup.py` | `--check`, `--reset` |
 | `tb project init` | Create `.toolbase/` + empty manifest here | none |
 

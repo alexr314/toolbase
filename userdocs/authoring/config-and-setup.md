@@ -79,8 +79,8 @@ tools:
 ```
 
 A multi-bundle tool is served if **any** of its bundles is available
-(config-gating satisfied for at least one), and it counts as in-profile
-if any of its bundles is in the profile's allowlist. Use this for tools
+(config-gating satisfied for at least one), and it counts as in-loadout
+if any of its bundles is in the loadout's allowlist. Use this for tools
 that genuinely belong in more than one logical grouping — e.g. the
 calculator's `simplify` tool above is useful both as a basic operation
 and as part of the symbolic workflow.

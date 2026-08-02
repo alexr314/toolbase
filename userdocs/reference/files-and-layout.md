@@ -9,8 +9,8 @@ convenience over them.
 ~/.toolbase/
 ├── cache/<name>/<version>/   installed toolkit binaries (one slot per version)
 ├── config/<toolkit>.yaml     per-toolkit config values (user layer)
-├── profiles/<name>.yaml      your profiles (curated tool sets)
-├── serve.yaml                default.profile + default.disabled
+├── loadouts/<name>.yaml      your loadouts (curated tool sets)
+├── serve.yaml                default.loadout + default.disabled
 ├── logs/serve.log            tool-call log (tb logs)
 └── default-project/          fallback project used outside any repo
 ```
@@ -19,20 +19,20 @@ convenience over them.
 
 ```
 <repo>/.toolbase/
-├── manifest.yaml             pinned toolkits + versions (committed)
-├── manifest.local.yaml       machine-local pins (tb use --private; gitignored)
+├── loadouts/<name>.yaml      curated tool set + versions (committed)
+├── loadouts/<name>.local.yaml  machine-only overrides (gitignored)
 ├── .gitignore                written with the first private layer; ignores it
 ├── config/<toolkit>.yaml     per-toolkit config values (project layer, committed)
 ├── config/<toolkit>.local.yaml  machine paths etc. (project-local layer, gitignored)
-├── profiles/<name>.yaml      project profiles
-├── serve.yaml                project default.profile + default.disabled
+├── loadouts/<name>.yaml      project loadouts
+├── serve.yaml                project default.loadout + default.disabled
 └── agent.py                  Orchestral launcher (tb connect orchestral)
 <repo>/.mcp.json              Claude Code wiring (tb connect claude-code)
 <repo>/.codex/config.toml     Codex wiring (tb connect codex)
 ```
 
 Project files override user files where they overlap, and the two
-`.local` files override their committed siblings (`manifest.local.yaml`
+`.local` files override their committed siblings (`<name>.local.yaml`
 name-by-name for pins; `config/<toolkit>.local.yaml` key-by-key for
 config) — they're the home for state only true on this machine:
 absolute tool paths, a pin to a local build.
@@ -51,5 +51,5 @@ manifest layer auto-gitignores itself. Keep secrets in the user-layer
 Claude Code and Codex are MCP clients (each spawns `tb serve`). Orchestral is a
 library: `tb connect orchestral` scaffolds the script, `tb orchestral` runs it.
 
-See [Schemas](schemas.md) for the contents of `serve.yaml`, profiles, and the
+See [Schemas](schemas.md) for the contents of `serve.yaml`, loadouts, and the
 author's `toolkit.yaml`.

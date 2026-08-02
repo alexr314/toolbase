@@ -16,7 +16,7 @@ tb connect claude-code        # or: tb connect codex
 
 Then launch the harness. `claude` or `codex` starts a session with toolbase's
 tools wired in (an already-running session needs a restart to pick them up). The
-active profile's tools appear as `<toolkit>__<tool>`.
+active loadout's tools appear as `<toolkit>__<tool>`.
 
 **Scopes.** The default is project-local (committed, team-shared). `-u/--user`
 wires it into every session instead:
@@ -105,7 +105,7 @@ if __name__ == "__main__":
     main()
 ```
 
-It loads your active profile's tools and hands them to an Orchestral `Agent`.
+It loads your active loadout's tools and hands them to an Orchestral `Agent`.
 You supply the LLM and its API key. Tools load in-process, so there's no
 `tb serve`. The scaffold also ships commented-out headless and web-GUI launch
 modes.
@@ -128,7 +128,7 @@ Two details the scaffold gets right, worth keeping if you rewrite it:
 
 | Argument | Default | Effect |
 |---|---|---|
-| `profile` | active profile | Serve a named profile, like `tb serve --profile` |
+| `loadout` | active loadout | Serve a named loadout, like `tb serve --loadout` |
 | `project_root` | discovered from the cwd | Project whose `.toolbase/` config applies; `str` or `Path` |
 | `call_timeout_s` | `60` | Per-call upper bound |
 | `quiet` | `False` | Suppress the startup banner (it prints to stderr) |
@@ -144,14 +144,14 @@ names them. Keys a toolkit doesn't declare are ignored, so one
 
 ## Common operations
 
-Set the active profile while connecting:
+Set the active loadout while connecting:
 
 ```bash
-tb connect claude-code --profile analysis
+tb connect claude-code --loadout analysis
 ```
 
-Wires the harness and sets `analysis` as the active profile in one step. For
-Orchestral, `--profile analysis` bakes the profile into the script.
+Wires the harness and sets `analysis` as the active loadout in one step. For
+Orchestral, `--loadout analysis` bakes the loadout into the script.
 
 Inspect, pin the binary, or remove:
 
@@ -194,45 +194,45 @@ binary doesn't change which sessions get the tools.
 For the curious, here's what happens at runtime:
 
 1. **You wire it once.** `tb activate` writes the curated set to the project's
-   `.toolbase/profiles/<name>.yaml` (created in your cwd if there's none above),
+   `.toolbase/loadouts/<name>.yaml` (created in your cwd if there's none above),
    and `tb connect` writes the harness config.
 2. **The harness starts** and reads that config, launching `toolbase serve` as
    a stdio MCP server.
-3. **`serve` loads the active profile** and exposes its tools, spawning one
-   subprocess per toolkit. By default that's the `default` profile `tb activate`
+3. **`serve` loads the active loadout** and exposes its tools, spawning one
+   subprocess per toolkit. By default that's the `default` loadout `tb activate`
    filled.
 4. **The harness sees the tools** as `<toolkit>__<tool>`.
 
 ### Overriding the default with serve.yaml
 
-`serve.yaml` is the easy way to override which profile `serve` runs, and to
-blocklist tools across every profile, without editing a profile file. A command
+`serve.yaml` is the easy way to override which loadout `serve` runs, and to
+blocklist tools across every loadout, without editing a loadout file. A command
 writes it for you when you:
 
-- **serve a profile other than `default`.** The harness launches plain
-  `tb serve` (no `--profile`), so to make it serve a named profile you record
-  the choice: `tb profile set-default analysis` (or
-  `tb connect --profile analysis`) writes `default.profile: analysis`.
+- **serve a loadout other than `default`.** The harness launches plain
+  `tb serve` (no `--loadout`), so to make it serve a named loadout you record
+  the choice: `tb loadout set-default analysis` (or
+  `tb connect --loadout analysis`) writes `default.loadout: analysis`.
 - **blocklist a tool everywhere.** `tb serve disable-tool calculator__log`
-  hides it no matter which profile is active.
+  hides it no matter which loadout is active.
 - **commit a team default.** Being a project file, it carries the
-  active-profile choice and blocklist to collaborators on clone.
+  active-loadout choice and blocklist to collaborators on clone.
 
 The file is small and human-editable:
 
 ```yaml
 # <repo>/.toolbase/serve.yaml
 default:
-  profile: analysis        # which profile serve exposes
+  loadout: analysis        # which loadout serve exposes
   disabled:
     tools:
-      - calculator__log     # hidden everywhere, even if the profile includes it
+      - calculator__log     # hidden everywhere, even if the loadout includes it
 ```
 
-See [Profiles](profiles-power-user.md) for the full active-profile resolution
+See [Loadouts](loadouts-power-user.md) for the full active-loadout resolution
 order.
 
 ## Next
 
 - [Projects & teams](projects-and-teams.md): committed project setup, reproducible on clone
-- [Profiles](profiles-power-user.md): named profiles and `--profile`
+- [Loadouts](loadouts-power-user.md): named loadouts and `--loadout`

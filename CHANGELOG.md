@@ -10,6 +10,40 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ### Changed (breaking)
 
+- **Profiles are now loadouts, and they carry versions.** Two changes that only make sense together.
+
+  `tb profile` is `tb loadout`, `--profile` is `--loadout`, the directory is `loadouts/`, and serve.yaml's key is `default.loadout`. "Profile" is overloaded to near-meaninglessness — shell, browser, AWS, user profiles — and it's already the word toolbench uses for this concept, so the two systems stop needing a translation.
+
+  More substantially, a toolkit's entry in a loadout now takes an optional `version:` beside its `bundles` and `tools`. A loadout previously said which tools an agent got but not which build of them, so it was half a specification: share one and it resolves differently elsewhere, or drifts when someone bumps a toolkit. For a benchmark condition that's a silently invalid result. One file now answers both questions.
+
+  ```yaml
+  # .toolbase/loadouts/paper.yaml
+  toolkits:
+    heptapod:
+      version: 2.4.0        # omit to take the fallback (newest installed)
+      bundles: [pdg, analysis]
+  ```
+
+  `tb use` writes there rather than to a manifest, and `--private` gains a real destination: `<name>.local.yaml`, merged over its committed sibling toolkit by toolkit, field by field. That layer has to exist — an editable pin names a directory only your machine has, and committing one leaves a teammate with a dangling pin — so `tb use -p <toolkit>@editable` routes there by itself and says so.
+
+  Pre-0.12 state keeps working, unmigrated: loadout discovery falls back to `profiles/` per scope, `default.profile` is read when `default.loadout` is unset, and manifest pins resolve underneath loadout entries. None of the old names are ever written, so files convert as they're touched.
+
+### Added
+
+- **`tb status`** — one place that answers which context applies, what would serve, and what's broken. Sections appear only when they have content, so a healthy setup is four lines. Run against a real machine during development it immediately surfaced two pins naming toolkits that were never installed; serve skips those silently and nothing in `tb list` said so.
+
+  ```console
+  $ tb status
+  On project  ~/.toolbase/default-project   (no .toolbase/ above cwd — user default)
+  Loadout     default   (implicit default loadout)
+
+  Active — served to agents
+    heptapod               2.4.0      pinned
+
+  Issues
+    skilltk                0.1.0      pinned, not installed
+  ```
+
 - **`tb install` writes no manifest and takes no scope.** It puts a toolkit in the shared cache and stops. Previously every install wrote a pin, so a manifest accumulated bookkeeping nobody chose and you couldn't tell deliberate entries from incidental ones — which is where the orphaned pins, the pins that didn't apply, and the install/uninstall scope mismatch all came from. `tb use` is now the only command that pins, so every entry in a manifest is one somebody typed.
 
   Nothing is needed for the common case: with no pin, the newest installed version serves. Installing an older version therefore does not switch to it, and install says so rather than leaving you to notice:

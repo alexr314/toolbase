@@ -9,8 +9,8 @@ Quick lookup. For the narrative, see [Concepts](../explanation.md).
 | **toolkit** | The installable unit: one isolated environment, published by an author. |
 | **bundle** | An author-defined group of tools within a toolkit. |
 | **tool** | A single callable the agent invokes; namespaced `<toolkit>__<tool>`. |
-| **profile** | A user-defined set of tools the agent sees, across toolkits. |
-| **active profile** | The profile `tb serve` currently exposes. |
+| **loadout** | A user-defined set of tools the agent sees, across toolkits. |
+| **active loadout** | The loadout `tb serve` currently exposes. |
 
 ## Reference forms
 
@@ -35,7 +35,7 @@ Three keys, the same three everywhere:
 an absolute tool path, or a pin to a local checkout. It's written to a
 `.local.yaml` sibling of the committed file, wins over it, and drops a
 `.toolbase/.gitignore` so it never reaches git. Not every command takes it —
-profiles and harness configs have no gitignored variant.
+harness configs have no gitignored variant.
 
 Resolution order where layers overlap: user, then project, then private,
 each overriding the last key by key.
@@ -50,7 +50,7 @@ Defaults for the commands that *are* scoped:
 | Command | Default scope |
 |---|---|
 | `use` | `--user` |
-| `activate`, `deactivate`, `profile *`, `config *`, `connect` | `--project` |
+| `activate`, `deactivate`, `loadout *`, `config *`, `connect` | `--project` |
 
 Inside a repo with its own `.toolbase/`, a user-scope pin does not apply —
 `tb use` says so when that happens.

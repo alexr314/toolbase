@@ -2,7 +2,7 @@
 
 Some toolkits need values to work: an API key, a path, a default setting.
 This is separate from curation. Configuration is the data a toolkit needs,
-profiles are which tools the agent sees.
+loadouts are which tools the agent sees.
 
 ## See what a toolkit needs
 

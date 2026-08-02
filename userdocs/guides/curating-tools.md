@@ -23,7 +23,7 @@ calculator
 ## See what's available
 
 ```bash
-tb profile tools calculator
+tb loadout tools calculator
 ```
 
 ## Narrow it down
@@ -85,4 +85,4 @@ that would clash if ever served un-namespaced. See
 ## Next
 
 - [Configuring toolkits](configuring-toolkits.md): unlock config-gated bundles
-- [Profiles](profiles-power-user.md): save and switch named tool sets
+- [Loadouts](loadouts-power-user.md): save and switch named tool sets

@@ -1,6 +1,6 @@
 # Schemas
 
-The YAML files toolbase reads and writes. User files (`serve.yaml`, profiles)
+The YAML files toolbase reads and writes. User files (`serve.yaml`, loadouts)
 are usually managed by the CLI; the author file (`toolkit.yaml`) you write by
 hand.
 
@@ -10,9 +10,9 @@ User: `~/.toolbase/serve.yaml`. Project: `<repo>/.toolbase/serve.yaml`.
 
 ```yaml
 default:
-  profile: paper            # the active profile
+  loadout: paper            # the active loadout
   bare: false               # true = serve <tool> instead of <toolkit>__<tool>
-  disabled:                 # absolute blocklist, on top of any profile
+  disabled:                 # absolute blocklist, on top of any loadout
     toolkits: [legacy]      # never serve these toolkits
     tools: [calc__noisy]    # never serve these tools (qualified)
 ```
@@ -21,9 +21,9 @@ With `bare: true` (or `tb serve --bare`) tools are advertised un-namespaced;
 a name exposed by two toolkits stays qualified (both remain callable) with a
 warning, while the rest are served bare.
 
-## Profile
+## Loadout
 
-One file per profile: `<scope>/.toolbase/profiles/<name>.yaml`.
+One file per loadout: `<scope>/.toolbase/loadouts/<name>.yaml`.
 
 ```yaml
 toolkits:
