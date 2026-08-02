@@ -133,6 +133,11 @@ def main() -> int:
     print(f"source dir: {SOURCE_DIR}")
     print(f"using toolbase: {' '.join(toolbase_cmd)}\n")
 
+    # Neutral cwd for the same reason as run_serve_e2e: the repo is a
+    # toolbase project and would shadow the fake home.
+    WORK_ROOT.mkdir(parents=True, exist_ok=True)
+    os.chdir(WORK_ROOT)
+
     # Step 1: editable install.
     print("--- toolbase install -e ---")
     install = subprocess.run(

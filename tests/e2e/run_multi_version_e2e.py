@@ -127,11 +127,12 @@ def _uninstall(target: str, *, yes: bool = True) -> int:
 
 
 def _use(target: str) -> int:
-    """Pin a version the way a user would — the only thing that writes
-    a manifest now that install doesn't."""
+    """Pin a version the way a user would. Explicitly user-scoped: the
+    default is this project, and the harness runs from the repo, which
+    would write the pin into the repo's own .toolbase/."""
     with mock.patch.object(config, "CONFIG_DIR", FAKE_HOME):
         result = CliRunner().invoke(
-            cli.main, ["use", target], catch_exceptions=False,
+            cli.main, ["use", "-u", target], catch_exceptions=False,
         )
     print(f"--- use {target}: exit {result.exit_code} ---")
     if result.exit_code != 0:

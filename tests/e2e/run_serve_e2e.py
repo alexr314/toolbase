@@ -70,6 +70,11 @@ def main() -> int:
     print(f"toolkits visible: {[p.name for p in INSTALL_CACHE.iterdir()]}")
     print(f"using toolbase: {' '.join(toolbase_cmd)}")
 
+    # Run from a neutral directory. The serve subprocess inherits cwd,
+    # and this repo is itself a toolbase project whose loadout would
+    # shadow the fake home's.
+    os.chdir(fake_home)
+
     # Under the nothing-active model, `tb serve` resolves an active loadout
     # (no "serve everything" fallback). Activate the synthetic toolkit by
     # writing the default loadout so serve has something to expose.
