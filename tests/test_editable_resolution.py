@@ -138,7 +138,7 @@ class TestListSurface:
         _slot("kit", EDITABLE, "/src/kit")
         r = CliRunner().invoke(cli.main, ["list"])
         assert r.exit_code == 0, r.output
-        assert "editable checkout is NOT what serves" in r.output
+        assert "checkout not served" in r.output
         # The fix is one command, and it's spelled out.
         assert "tb use kit@editable" in r.output
 
@@ -148,14 +148,14 @@ class TestListSurface:
         _pin("kit", EDITABLE)
         r = CliRunner().invoke(cli.main, ["list"])
         assert r.exit_code == 0, r.output
-        assert "NOT what serves" not in r.output
+        assert "checkout not served" not in r.output
 
     def test_no_warning_for_a_lone_editable_slot(self, env):
         """It serves; there's nothing to warn about."""
         _slot("kit", EDITABLE, "/src/kit")
         r = CliRunner().invoke(cli.main, ["list"])
         assert r.exit_code == 0, r.output
-        assert "NOT what serves" not in r.output
+        assert "checkout not served" not in r.output
 
     def test_no_warning_without_an_editable_slot(self, env):
         _slot("kit", "1.0.0")
@@ -171,8 +171,8 @@ class TestListSurface:
         lines = r.output.splitlines()
         numbered = next(l for l in lines if "1.0.0" in l and "serving" not in l)
         editable_row = next(l for l in lines if "editable" in l and "->" in l)
-        assert "<-" in numbered
-        assert "<-" not in editable_row
+        assert "●" in numbered
+        assert "●" not in editable_row
 
     def test_editable_row_sorts_last(self, env):
         _slot("kit", "1.0.0")

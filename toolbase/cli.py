@@ -230,8 +230,9 @@ def _display_path(path: Path) -> str:
         rel = path.relative_to(Path.cwd())
     except ValueError:
         return str(path)
-    # relative_to() gives "." for cwd itself; "./." reads as a typo.
-    return "." if str(rel) == "." else f"./{rel}"
+    # relative_to() gives "." for cwd itself, which is true and useless —
+    # name the directory so the reader knows *which* one.
+    return f"./{rel}" if str(rel) != "." else f"{path.name}/"
 
 
 def _require_input(
@@ -3566,22 +3567,19 @@ def _warn_pin_scope_not_active(
     for is not the one that will serve where they're standing.
     """
     try:
-        from .envs import project_manifest_path as _project_manifest_path
+        from .serve.loadout_scaffold import default_loadout_path
         active, _source = _resolve_active_project_root()
         if active.resolve() == manifest_root.resolve():
             return
-        active_manifest = _display_path(_project_manifest_path(active))
-        console.print(
-            f"[yellow]⚠ This global pin does not apply here: you're in a "
-            f"project with its own manifest ({active_manifest}).[/yellow]"
+        active_manifest = _display_path(
+            default_loadout_path("project", active)
         )
-        # `tb use -l` rather than `tb install -l`: the slot is already in
-        # the cache, so repeating the install would rebuild it to move a
-        # pin. Suggested for both callers for that reason.
+        console.print(
+            f"[yellow]⚠ Does not apply here — this project uses "
+            f"{active_manifest}[/yellow]"
+        )
         target = f"{name}@{version}" if version else f"{name}@<version>"
-        console.print(
-            f"  [dim]To pin for this project: `tb use -p {target}`[/dim]"
-        )
+        console.print(f"  [dim]Use `tb use {target}` instead.[/dim]")
     except Exception:
         pass  # a heads-up must never break the command
 
@@ -3605,17 +3603,13 @@ def _note_if_not_the_serving_version(name: str, version: str) -> None:
         )
         if not resolution.ok or resolution.version == version:
             return
-        tail = (
-            "not the editable checkout you just linked"
-            if version == EDITABLE_VERSION
-            else f"not the {version} you just installed"
+        what = "your checkout" if version == EDITABLE_VERSION else version
+        console.print(
+            f"[yellow]Note: {resolution.version} still serves here, "
+            f"not {what}.[/yellow]"
         )
         console.print(
-            f"[yellow]Note: {resolution.version} is what serves here "
-            f"({resolution.describe()}), {tail}.[/yellow]"
-        )
-        console.print(
-            f"  [dim]To use it: [/dim][cyan]tb use {name}@{version}[/cyan]"
+            f"  [dim]Switch with [/dim][cyan]tb use {name}@{version}[/cyan]"
         )
     except Exception:
         pass  # a heads-up must never break an otherwise-good install
@@ -5422,14 +5416,15 @@ def list_cmd(as_json, verbose):
         resolution = resolutions[name]
         multi_version = len(grouped[name]) > 1
         for entry in grouped[name]:
-            pinned = pin_map.get(name) == entry.version
-            if pinned:
+            if pin_map.get(name) == entry.version:
                 any_pin_applied = True
-            marker = " [yellow]*[/yellow]" if pinned else ""
-            # Only mark the serving slot when there's a choice to be
-            # made; on a single-version toolkit the arrow is noise.
-            if multi_version and entry.version == resolution.version:
-                marker += " [green]<-[/green]"
+            # A leading bullet on the slot that serves, so the column
+            # scans down a long list. Only when there's a choice to be
+            # made — on a single-version toolkit it would be noise. The
+            # reason line below says *why* it won, so no pin marker is
+            # needed on the row as well.
+            serving = multi_version and entry.version == resolution.version
+            bullet = "[green]●[/green]" if serving else " "
             last_used = _format_last_used(entry.last_used_iso)
             size = _format_disk_size(entry.disk_size_bytes)
             # Editable slots show a "-> <source>" indicator so it's
@@ -5455,16 +5450,16 @@ def list_cmd(as_json, verbose):
                 subset_tag = ""
             # Version column padded a little so the parenthetical
             # aligns across rows that have / don't have the pin marker.
-            ver_cell = f"{entry.version}{marker}"
+            ver_cell = f"{entry.version}"
             if editable_src:
                 console.print(
-                    f"  - {ver_cell}   "
+                    f"  {bullet} {ver_cell}   "
                     f"[dim](-> {editable_src}, used {last_used}, {size})[/dim]"
                     f"{subset_tag}"
                 )
             else:
                 console.print(
-                    f"  - {ver_cell}   "
+                    f"  {bullet} {ver_cell}   "
                     f"[dim](used {last_used}, {size})[/dim]"
                     f"{subset_tag}"
                 )
@@ -5474,8 +5469,7 @@ def list_cmd(as_json, verbose):
         # (highest wins) the user never asked for.
         if not resolution.ok:
             console.print(
-                f"    [yellow]⚠ not served: {resolution.describe()} — "
-                f"repoint with `tb use {name}@<version>`[/yellow]"
+                f"    [yellow]⚠ not served: {resolution.describe()}[/yellow]"
             )
         elif multi_version:
             any_ambiguous = any_ambiguous or resolution.is_ambiguous
@@ -5490,8 +5484,8 @@ def list_cmd(as_json, verbose):
         if (has_editable and resolution.ok
                 and resolution.version != EDITABLE_VERSION):
             console.print(
-                f"    [yellow]⚠ your editable checkout is NOT what serves — "
-                f"`tb use {name}@editable` to serve it[/yellow]"
+                f"    [yellow]⚠ checkout not served — "
+                f"`tb use {name}@editable`[/yellow]"
             )
         if verbose:
             _list_print_tools_verbose(
@@ -5501,42 +5495,17 @@ def list_cmd(as_json, verbose):
             )
 
     if any_pin_applied and manifest_path is not None:
-        # Render the manifest path relative to cwd when possible — keeps
-        # the legend readable in real-project usage. Falls back to the
-        # absolute path for default-project or when relative-resolution
-        # fails (e.g. across drive letters on Windows).
-        # "this project" is only true for a real project. The
-        # default-project is the global fallback used when there's no
-        # project above cwd, and calling that "this project" sends
-        # people looking for a .toolbase/ that isn't there. Its path is
-        # printed absolute for the same reason — rendered relative to a
-        # cwd that happens to be home, it reads like a local one.
-        from .envs import (
-            default_project_root as _default_project_root,
-            project_manifest_path as _project_manifest_path,
-        )
-        is_default = (
-            manifest_path == _project_manifest_path(_default_project_root())
-        )
+        # Where the versions came from. One line, no marker legend —
+        # the per-toolkit "serving X (pinned to X)" already says which.
         console.print()
-        if is_default:
-            console.print(
-                f"[dim]* = pinned globally ({manifest_path})[/dim]"
-            )
-        else:
-            console.print(
-                f"[dim]* = pinned in this project "
-                f"({_display_path(manifest_path)})[/dim]"
-            )
+        console.print(f"[dim]versions from {_display_path(manifest_path)}[/dim]")
 
     if any_ambiguous:
         # Printed once rather than per toolkit: with several unpinned
         # multi-version toolkits the same advice on every one is noise.
         console.print()
         console.print(
-            "[dim]<- = the version that serves. Where nothing is pinned "
-            "the highest wins by default; choose one with "
-            "`tb use <toolkit>@<version>`.[/dim]"
+            "[dim]● = serving. Choose with `tb use <toolkit>@<version>`.[/dim]"
         )
 
 
@@ -5818,7 +5787,7 @@ def _pin_source_path(project_root):
     try:
         from .serve.loadouts import resolve_loadout
         resolved = resolve_loadout(project_root)
-        if any(sel.version for sel in resolved.toolkits.values()):
+        if resolved.versions:
             from .serve.loadout_scaffold import default_loadout_path
             scope = "user" if _is_default_project_root(project_root) else "project"
             return default_loadout_path(scope, project_root)
@@ -5985,8 +5954,8 @@ def use_cmd(target, user_scope, project_scope, private_scope):
     if version == EDITABLE_VERSION and scope == SCOPE_PROJECT:
         scope = SCOPE_PRIVATE
         console.print(
-            "[dim]An editable pin names your checkout, so it goes to the "
-            "gitignored layer rather than the committed loadout.[/dim]"
+            "[dim]Editable pins are machine-only — writing the "
+            "gitignored layer.[/dim]"
         )
 
     loadout_root = None if scope == SCOPE_USER else _cwd_project_root()
@@ -6022,10 +5991,7 @@ def use_cmd(target, user_scope, project_scope, private_scope):
             f"[dim]{name} now resolves to {resolution.version} "
             f"({resolution.describe()}).[/dim]"
         )
-    console.print(
-        "[dim]Restart `tb serve` (or your agent session) to pick this "
-        "up.[/dim]"
-    )
+    console.print("[dim]Restart your agent session to pick this up.[/dim]")
 
 
 @main.command()
@@ -6191,10 +6157,15 @@ def uninstall(name, yes, no_, no_input):
                 _remove_pin(layer, name)
                 console.print(
                     f"[yellow]⚠ Removed stale pin {name}@{pinned} from "
-                    f"{_display_path(layer)} (slot uninstalled; remaining: "
-                    f"{', '.join(remaining)}). Choose one with "
-                    f"`tb use {name}@<version>` if needed.[/yellow]"
+                    f"{_display_path(layer)} — {', '.join(remaining)} "
+                    f"remain[/yellow]"
                 )
+
+        # And the loadouts, which is where versions actually live now.
+        # A version naming a slot we just deleted makes serve skip the
+        # toolkit outright, so it has to go the same way manifest pins
+        # do — same rule, newer file.
+        _clear_stale_loadout_versions(name, roots, remaining)
     except Exception as e:
         console.print(
             f"[dim]Note: could not update project manifest: {e}[/dim]"
@@ -6231,6 +6202,42 @@ def uninstall(name, yes, no_, no_input):
         _uninstall_cleanup_loadouts(name)
 
     console.print(f"\n[bold green]✓ Uninstalled {plural}[/bold green]")
+
+
+def _clear_stale_loadout_versions(name, roots, remaining) -> None:
+    """Drop a loadout ``versions:`` entry naming an uninstalled slot.
+
+    Same rule as the manifest pins beside it: a version pointing at a
+    slot that no longer exists makes serve skip the toolkit entirely,
+    which is worse than falling back to whatever remains. Covers the
+    committed and private layers of every root, plus the user loadout.
+    """
+    import yaml as _yaml
+    from .serve.loadout_scaffold import set_version, default_loadout_path
+
+    targets = [("user", None)]
+    targets += [(scope, root) for root in roots
+                for scope in ("project", "private")]
+    seen = set()
+    for scope, root in targets:
+        try:
+            path = default_loadout_path(scope, root)
+        except Exception:
+            continue
+        if path in seen or not path.exists():
+            continue
+        seen.add(path)
+        data = _yaml.safe_load(path.read_text()) or {}
+        pinned = (data.get("versions") or {}).get(name)
+        if pinned is None or (remaining and pinned in remaining):
+            continue
+        set_version(name, None, scope=scope, project_root=root)
+        if remaining:
+            console.print(
+                f"[yellow]⚠ Cleared {name} {pinned} from "
+                f"{_display_path(path)} — {', '.join(remaining)} "
+                f"remain[/yellow]"
+            )
 
 
 def _uninstall_cleanup_loadouts(name: str) -> None:

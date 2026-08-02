@@ -128,9 +128,8 @@ class TestPartialUninstall:
         assert r.exit_code == 0, r.output
         assert _pins(_global_manifest()) == {}
         assert "Removed stale pin kit@2.0.0" in r.output
-        # The message names the manifest, since two are in play.
+        # The message names the file, since several are in play.
         assert "manifest.yaml" in r.output
-        assert "tb use kit@<version>" in r.output
 
     def test_keeps_a_pin_that_still_names_an_installed_slot(self, in_project):
         _slot("kit", "1.0.0")
@@ -173,3 +172,47 @@ class TestOutsideAProject:
         assert _pins(_global_manifest()) == {}
         # Reported once, not once per resolved root.
         assert r.output.count("Uninstalled kit") == 1
+
+
+class TestLoadoutVersions:
+    """Versions live in loadouts now, and a version naming a removed
+    slot dangles exactly like a manifest pin did — serve skips the
+    toolkit outright rather than falling back."""
+
+    def _use(self, target, *args):
+        return CliRunner().invoke(cli.main, ["use", *args, target])
+
+    def test_full_uninstall_clears_the_loadout_version(self, in_project):
+        _slot("kit", "1.0.0")
+        self._use("kit@1.0.0", "-u")
+        r = _uninstall("kit")
+        assert r.exit_code == 0, r.output
+        from toolbase.envs.paths import user_loadouts_dir
+        import yaml as _yaml
+        lo = user_loadouts_dir() / "default.yaml"
+        data = _yaml.safe_load(lo.read_text()) if lo.exists() else {}
+        assert not (data.get("versions") or {})
+
+    def test_partial_uninstall_clears_only_a_dangling_version(self, in_project):
+        _slot("kit", "1.0.0")
+        _slot("kit", "2.0.0")
+        self._use("kit@2.0.0", "-u")
+        r = _uninstall("kit@2.0.0")
+        assert r.exit_code == 0, r.output
+        assert "Cleared kit 2.0.0" in r.output
+
+        from toolbase.envs.paths import user_loadouts_dir
+        import yaml as _yaml
+        data = _yaml.safe_load((user_loadouts_dir() / "default.yaml").read_text())
+        assert not (data.get("versions") or {})
+
+    def test_a_still_valid_version_is_left_alone(self, in_project):
+        _slot("kit", "1.0.0")
+        _slot("kit", "2.0.0")
+        self._use("kit@1.0.0", "-u")
+        r = _uninstall("kit@2.0.0")
+        assert r.exit_code == 0, r.output
+        from toolbase.envs.paths import user_loadouts_dir
+        import yaml as _yaml
+        data = _yaml.safe_load((user_loadouts_dir() / "default.yaml").read_text())
+        assert data["versions"]["kit"] == "1.0.0"

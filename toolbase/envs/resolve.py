@@ -152,11 +152,11 @@ def resolve_version(
 def active_pins(project_root=None) -> Dict[str, str]:
     """``{name: version}`` chosen for the active context.
 
-    Versions live in the active loadout: a ``version:`` on a toolkit's
-    entry pins it, and omitting one takes the cache fallback. Keeping
-    version and tool selection in one file is what makes a loadout a
-    complete specification — share it and it resolves the same way
-    elsewhere, which is the whole point for a benchmark condition.
+    Versions live in the active loadout's ``versions:`` block; a toolkit
+    without an entry takes the cache fallback. Keeping versions and tool
+    selection in one file is what makes a loadout a complete
+    specification — share it and it resolves the same way elsewhere,
+    which is the whole point for a benchmark condition.
 
     Falls back to the pre-0.12 project manifest for any toolkit the
     loadout doesn't pin, so existing ``manifest.yaml`` /
@@ -188,10 +188,7 @@ def active_pins(project_root=None) -> Dict[str, str]:
 
     try:
         from ..serve.loadouts import resolve_loadout
-        resolved = resolve_loadout(project_root)
-        for name, selection in resolved.toolkits.items():
-            if selection.version:
-                pins[name] = selection.version
+        pins.update(resolve_loadout(project_root).versions)
     except Exception:
         pass  # no loadout, or a malformed one: the fallback still applies
 

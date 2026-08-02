@@ -67,13 +67,13 @@ class NoActiveLoadoutError(ServeConfigError):
 
 @dataclass
 class ToolkitSelection:
-    """One toolkit's entry in a loadout: which build, and which of it.
+    """One toolkit's curation within a loadout: which of it is exposed.
 
-    - ``version is None`` -> resolve by the cache fallback (newest
-      installed). Naming a version pins it, and ``"editable"`` names a
-      linked checkout. A loadout that pins its versions is a complete,
-      reproducible specification — which is what makes it shareable and
-      what a benchmark condition needs.
+    Versions are NOT here — they live in the loadout's ``versions:``
+    block. The two have different lifetimes: ``tb deactivate`` removes
+    a toolkit's curation, and it must not take your version choice with
+    it.
+
     - ``bundles is None`` and ``enabled_tools is None`` -> include the
       whole toolkit (no allowlist).
     - Either set -> allowlist mode: the served set is the union of
@@ -81,7 +81,6 @@ class ToolkitSelection:
     - ``disabled_tools`` is always subtracted last.
     """
 
-    version: Optional[str] = None
     bundles: Optional[List[str]] = None
     enabled_tools: Optional[List[str]] = None
     disabled_tools: List[str] = field(default_factory=list)
@@ -170,6 +169,11 @@ class Loadout:
     path: Path
     scope: str  # "user" | "project"
     toolkits: Dict[str, ToolkitSelection] = field(default_factory=dict)
+    # {toolkit: version}. Separate from ``toolkits`` because choosing a
+    # version and exposing a toolkit are different acts with different
+    # lifetimes — `tb use` writes here, `tb activate` writes there, and
+    # deactivating must not discard a version you chose.
+    versions: Dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
@@ -184,6 +188,7 @@ class ResolvedLoadout:
     name: str
     source: str  # human-readable provenance, for --dry-run
     toolkits: Dict[str, ToolkitSelection]
+    versions: Dict[str, str] = field(default_factory=dict)
     disabled_toolkits: List[str] = field(default_factory=list)
     disabled_tools: List[str] = field(default_factory=list)  # qualified
     warnings: List[str] = field(default_factory=list)
@@ -203,20 +208,6 @@ def _parse_toolkit_selection(name: str, raw, path: Path) -> ToolkitSelection:
         )
 
     sel = ToolkitSelection()
-
-    if "version" in raw and raw["version"] is not None:
-        version = raw["version"]
-        # Accept a bare number from YAML (``version: 2`` parses as int)
-        # rather than rejecting what looks obviously right in a file
-        # someone hand-edited.
-        if isinstance(version, (int, float)):
-            version = str(version)
-        if not isinstance(version, str) or not version.strip():
-            raise ServeConfigError(
-                f"{path}: toolkit '{name}' version: must be a non-empty "
-                f"string (a version like '1.4.0', or 'editable')"
-            )
-        sel.version = version.strip()
 
     if "bundles" in raw and raw["bundles"] is not None:
         bundles = raw["bundles"]
@@ -280,14 +271,43 @@ def _parse_toolkit_selection(name: str, raw, path: Path) -> ToolkitSelection:
                 f"{sorted(unknown_skill_keys)}. Recognized: 'disabled'."
             )
 
+    # ``version`` is tolerated here for the brief window it lived in the
+    # toolkit entry; it is read by parse_loadout and never written back.
     unknown = set(raw.keys()) - {"version", "bundles", "tools", "skills"}
     if unknown:
         raise ServeConfigError(
             f"{path}: toolkit '{name}' has unknown key(s) {sorted(unknown)}. "
-            "Recognized: 'version', 'bundles', 'tools', 'skills'."
+            "Recognized: 'bundles', 'tools', 'skills'."
         )
 
     return sel
+
+
+def _parse_versions(raw, path: Path) -> Dict[str, str]:
+    """Parse a loadout's ``versions:`` block.
+
+    ``{toolkit: version}``. A version is a cache-slot name — a released
+    version like ``1.4.0``, or ``editable`` for a linked checkout.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise ServeConfigError(f"{path}: 'versions' must be a mapping")
+    out: Dict[str, str] = {}
+    for tk_name, version in raw.items():
+        if not isinstance(tk_name, str):
+            raise ServeConfigError(f"{path}: toolkit names must be strings")
+        # A bare number is what YAML makes of ``version: 2``; accept it
+        # rather than rejecting a file that looks obviously right.
+        if isinstance(version, (int, float)):
+            version = str(version)
+        if not isinstance(version, str) or not version.strip():
+            raise ServeConfigError(
+                f"{path}: versions.{tk_name} must be a non-empty string "
+                f"(a version like '1.4.0', or 'editable')"
+            )
+        out[tk_name] = version.strip()
+    return out
 
 
 def parse_loadout(data, name: str, path: Path, scope: str) -> Loadout:
@@ -302,11 +322,11 @@ def parse_loadout(data, name: str, path: Path, scope: str) -> Loadout:
     if not isinstance(toolkits_raw, dict):
         raise ServeConfigError(f"{path}: 'toolkits' must be a mapping")
 
-    unknown = set(data.keys()) - {"toolkits"}
+    unknown = set(data.keys()) - {"toolkits", "versions"}
     if unknown:
         raise ServeConfigError(
             f"{path}: unknown top-level key(s) {sorted(unknown)}. "
-            "A loadout only has a 'toolkits:' block."
+            "A loadout has 'toolkits:' and 'versions:' blocks."
         )
 
     toolkits: Dict[str, ToolkitSelection] = {}
@@ -315,7 +335,18 @@ def parse_loadout(data, name: str, path: Path, scope: str) -> Loadout:
             raise ServeConfigError(f"{path}: toolkit names must be strings")
         toolkits[tk_name] = _parse_toolkit_selection(tk_name, tk_raw, path)
 
-    return Loadout(name=name, path=path, scope=scope, toolkits=toolkits)
+    versions = _parse_versions(data.get("versions"), path)
+    # A ``version:`` inside a toolkit entry is the shape this briefly had
+    # before versions moved out. Read it so nobody's file breaks; it is
+    # never written back, so files convert as they are touched.
+    for tk_name, tk_raw in toolkits_raw.items():
+        if isinstance(tk_raw, dict) and tk_raw.get("version"):
+            versions.setdefault(tk_name, str(tk_raw["version"]).strip())
+
+    return Loadout(
+        name=name, path=path, scope=scope,
+        toolkits=toolkits, versions=versions,
+    )
 
 
 def load_loadout_file(path: Path, name: str, scope: str) -> Loadout:
@@ -415,8 +446,11 @@ def _merge_private_layer(base: Loadout, private: Loadout) -> Loadout:
                 overlay.disabled_skills or current.disabled_skills
             ),
         )
+    versions = dict(base.versions)
+    versions.update(private.versions)
     return Loadout(
-        name=base.name, path=base.path, scope=base.scope, toolkits=merged,
+        name=base.name, path=base.path, scope=base.scope,
+        toolkits=merged, versions=versions,
     )
 
 
@@ -503,6 +537,7 @@ def resolve_loadout(
         name=name,
         source=source,
         toolkits=dict(loadout.toolkits),
+        versions=dict(loadout.versions),
         disabled_toolkits=list(merged_cfg.default.disabled_toolkits),
         disabled_tools=list(merged_cfg.default.disabled_tools),
         warnings=[],

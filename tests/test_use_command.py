@@ -79,16 +79,21 @@ def _project_loadout(project: Path, private: bool = False) -> Path:
 
 
 def _pins(loadout: Path) -> dict:
-    """``{toolkit: version}`` recorded in a loadout file."""
+    """``{toolkit: version}`` from a loadout's ``versions:`` block."""
     import yaml as _yaml
     if not loadout.exists():
         return {}
     data = _yaml.safe_load(loadout.read_text()) or {}
-    return {
-        name: entry["version"]
-        for name, entry in (data.get("toolkits") or {}).items()
-        if isinstance(entry, dict) and entry.get("version")
-    }
+    return dict(data.get("versions") or {})
+
+
+def _curation(loadout: Path) -> dict:
+    """The ``toolkits:`` block — what the loadout exposes."""
+    import yaml as _yaml
+    if not loadout.exists():
+        return {}
+    data = _yaml.safe_load(loadout.read_text()) or {}
+    return dict(data.get("toolkits") or {})
 
 
 class TestPinWriting:
@@ -136,9 +141,8 @@ class TestPinWriting:
         _slot("kit", "2.0.0")
         CliRunner().invoke(cli.main, ["activate", "kit/alpha"])
         CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
-        entry = _yaml.safe_load(_cwd_loadout().read_text())["toolkits"]["kit"]
-        assert entry["version"] == "1.0.0"
-        assert entry["bundles"] == ["alpha"]
+        assert _pins(_cwd_loadout()) == {"kit": "1.0.0"}
+        assert _curation(_cwd_loadout())["kit"]["bundles"] == ["alpha"]
 
     def test_project_scope_writes_the_project_loadout(
         self, fake_home, tmp_path,
@@ -162,6 +166,51 @@ class TestPinWriting:
         assert "mutually exclusive" in r.output
 
 
+class TestVersionAndExposureAreSeparate:
+    """Choosing a version is not the same act as exposing a toolkit.
+
+    Versions live in the loadout's ``versions:`` block and curation in
+    ``toolkits:``. They were briefly the same entry, which meant
+    `tb use` silently activated a toolkit and `tb deactivate` silently
+    discarded the version you had chosen. Both were reported from live
+    use, and both are the same mistake: two facts with different
+    lifetimes sharing a container.
+    """
+
+    def test_use_does_not_activate(self, fake_home):
+        _slot("kit", "1.0.0")
+        _slot("kit", "2.0.0")
+        r = CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
+        assert r.exit_code == 0, r.output
+        assert _pins(_cwd_loadout()) == {"kit": "1.0.0"}
+        # Nothing exposed: choosing a build says nothing about exposure.
+        assert _curation(_cwd_loadout()) == {}
+        assert "inactive" in CliRunner().invoke(cli.main, ["list"]).output
+
+    def test_deactivate_keeps_the_version(self, fake_home):
+        _slot("kit", "1.0.0")
+        _slot("kit", "2.0.0")
+        CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
+        CliRunner().invoke(cli.main, ["activate", "kit"])
+        CliRunner().invoke(cli.main, ["deactivate", "kit"])
+
+        # The toolkit is hidden, but the version survives — otherwise
+        # re-activating would silently jump to the newest installed.
+        assert _curation(_cwd_loadout()) == {}
+        assert _pins(_cwd_loadout()) == {"kit": "1.0.0"}
+        out = CliRunner().invoke(cli.main, ["list"]).output
+        assert "serving 1.0.0 (pinned to 1.0.0)" in out
+
+    def test_activate_does_not_set_a_version(self, fake_home):
+        """The converse: exposing a toolkit leaves resolution alone."""
+        _slot("kit", "1.0.0")
+        _slot("kit", "2.0.0")
+        CliRunner().invoke(cli.main, ["activate", "kit"])
+        assert _pins(_cwd_loadout()) == {}
+        out = CliRunner().invoke(cli.main, ["list"]).output
+        assert "highest installed, no pin" in out
+
+
 class TestUserPinInsideAProject:
     """A project's own loadout governs cwd, so a `-u` pin written from
     inside one changes nothing there. Reporting plain success is a lie,
@@ -182,22 +231,22 @@ class TestUserPinInsideAProject:
         _slot("kit", "2.0.0")
         r = CliRunner().invoke(cli.main, ["use", "-u", "kit@1.0.0"])
         assert r.exit_code == 0, r.output
-        assert "does not apply here" in r.output
+        assert "Does not apply here" in r.output
         # The fix is spelled out, copy-pasteable, and doesn't rebuild.
-        assert "tb use -p kit@1.0.0" in r.output
+        assert "tb use kit@1.0.0" in r.output
 
     def test_default_scope_does_not_warn(self, project):
         _slot("kit", "1.0.0")
         r = CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
         assert r.exit_code == 0, r.output
-        assert "does not apply here" not in r.output
+        assert "Does not apply here" not in r.output
 
     def test_no_warning_outside_a_project(self, fake_home):
         """No project above cwd, so a -u pin is what governs."""
         _slot("kit", "1.0.0")
         r = CliRunner().invoke(cli.main, ["use", "-u", "kit@1.0.0"])
         assert r.exit_code == 0, r.output
-        assert "does not apply here" not in r.output
+        assert "Does not apply here" not in r.output
 
     def test_install_writes_no_manifest_at_all(self, project):
         """`tb install` used to pin, which is how a pin ended up in a
@@ -271,7 +320,7 @@ class TestPrivateLayerOverrides:
         assert _pins(_project_loadout(project)) == {"kit": "1.0.0"}
         assert _pins(_project_loadout(project, private=True)) == {"kit": "2.0.0"}
         merged = discover_loadouts(project, user_base=fake_home)
-        assert merged["default"].toolkits["kit"].version == "2.0.0"
+        assert merged["default"].versions["kit"] == "2.0.0"
 
     def test_private_layer_leaves_other_toolkits_alone(
         self, fake_home, tmp_path,
@@ -287,7 +336,7 @@ class TestPrivateLayerOverrides:
         CliRunner().invoke(cli.main, args + ["--private", "kit@1.0.0"])
 
         merged = discover_loadouts(project, user_base=fake_home)
-        assert merged["default"].toolkits["other"].version == "3.0.0"
+        assert merged["default"].versions["other"] == "3.0.0"
 
 
 class TestClearingAPin:
@@ -309,15 +358,14 @@ class TestClearingAPin:
         CliRunner().invoke(cli.main, ["activate", "kit/alpha"])
         CliRunner().invoke(cli.main, ["use", "kit@1.0.0"])
         CliRunner().invoke(cli.main, ["use", "kit"])
-        entry = _yaml.safe_load(_cwd_loadout().read_text())["toolkits"]["kit"]
-        assert "version" not in entry
-        assert entry["bundles"] == ["alpha"]
+        assert _pins(_cwd_loadout()) == {}
+        assert _curation(_cwd_loadout())["kit"]["bundles"] == ["alpha"]
 
     def test_clearing_an_unpinned_toolkit_is_not_an_error(self, fake_home):
         _slot("kit", "1.0.0")
         r = CliRunner().invoke(cli.main, ["use", "kit"])
         assert r.exit_code == 0
-        assert "no pinned version" in r.output
+        assert "no version set" in r.output
 
 
 class TestValidation:

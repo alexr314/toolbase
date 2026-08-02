@@ -178,41 +178,46 @@ def set_version(
 ) -> MutationResult:
     """Set (or clear) a toolkit's ``version:`` in the scope's loadout.
 
-    ``version=None`` removes the key, which returns that toolkit to the
-    cache fallback — newest installed wins. A toolkit that isn't in the
-    loadout gains an entry, because pinning a version is a statement
-    about what this loadout runs; the entry carries no curation, so the
-    whole toolkit is included.
+    ``version=None`` removes the entry, returning that toolkit to the
+    cache fallback — newest installed wins.
+
+    Writes the loadout's ``versions:`` block, never ``toolkits:``.
+    Choosing a version does not expose a toolkit (that is
+    ``tb activate``), and deactivating one does not discard the version
+    you chose — the two are different acts with different lifetimes.
 
     Round-trips through ruamel, so comments and ordering survive.
     """
     path = default_loadout_path(scope, project_root, user_base=user_base)
     data = _load(path)
-    toolkits = data["toolkits"]
+    versions = data.get("versions")
+    if versions is None:
+        versions = CommentedMap()
 
     if version is None:
-        entry = toolkits.get(toolkit)
-        if entry is None or "version" not in entry:
+        if toolkit not in versions:
             return MutationResult(
-                False, f"{toolkit} has no pinned version here.", path,
+                False, f"{toolkit} has no version set here.", path,
             )
-        previous = entry["version"]
-        del entry["version"]
+        previous = versions[toolkit]
+        del versions[toolkit]
+        if not versions and "versions" in data:
+            del data["versions"]        # don't leave an empty block
+        elif versions:
+            data["versions"] = versions
         _save(path, data)
         return MutationResult(
             True,
-            f"Cleared the {toolkit} version ({previous}); "
-            f"newest installed serves.",
+            f"Cleared {toolkit} {previous}; newest installed serves.",
             path,
         )
 
-    entry = _ensure_toolkit(toolkits, toolkit)
-    previous = entry.get("version")
-    if previous == version:
+    if versions.get(toolkit) == version:
         return MutationResult(
             False, f"{toolkit} already serves {version}.", path,
         )
-    entry["version"] = version
+    versions[toolkit] = version
+    data["versions"] = versions
     _save(path, data)
     return MutationResult(True, f"{toolkit} now serves {version}.", path)
 

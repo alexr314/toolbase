@@ -284,8 +284,8 @@ def test_editable_install_says_it_is_not_serving(fake_env, tmp_path, monkeypatch
     # Rich soft-wraps at the narrow test terminal; collapse whitespace
     # before matching phrases that can straddle a line break.
     flat = " ".join(result.output.split())
-    assert "9.9.9 is what serves here" in flat
-    assert "not the editable checkout you just linked" in flat
+    assert "9.9.9 still serves here" in flat
+    assert "not your checkout" in flat
     assert "tb use dualkit@editable" in flat
 
 
@@ -299,7 +299,7 @@ def test_lone_editable_install_says_nothing(fake_env, tmp_path, monkeypatch):
         catch_exceptions=False,
     )
     assert result.exit_code == 0, result.output
-    assert "is what serves here" not in " ".join(result.output.split())
+    assert "still serves here" not in " ".join(result.output.split())
 
 
 def test_older_numbered_install_says_it_is_not_serving(
@@ -320,8 +320,8 @@ def test_older_numbered_install_says_it_is_not_serving(
     )
     assert result.exit_code == 0, result.output
     flat = " ".join(result.output.split())
-    assert "9.9.9 is what serves here" in flat
-    assert "not the 0.1.0 you just installed" in flat
+    assert "9.9.9 still serves here" in flat
+    assert "not 0.1.0" in flat
     assert "tb use oldkit@0.1.0" in flat
 
 
