@@ -34,11 +34,16 @@ from typing import Dict, List, Optional, Sequence
 from ..versioning import parse_version
 
 
+# The cache-slot name for an editable install (a symlink to a source
+# checkout). Kept in sync with ``cli.EDITABLE_VERSION``.
+EDITABLE = "editable"
+
 # Why a version was (or wasn't) chosen. Callers branch on these, so they
 # are constants rather than inline strings.
 PINNED = "pinned"
 ONLY = "only"
 HIGHEST = "highest"
+EDITABLE_SLOT = "editable"
 PIN_MISSING = "pin-missing"
 NOT_INSTALLED = "not-installed"
 
@@ -73,6 +78,14 @@ class Resolution:
             return "only version installed"
         if self.reason == HIGHEST:
             return "highest installed, no pin"
+        if self.reason == EDITABLE_SLOT:
+            numbered = [v for v in self.available if v != EDITABLE]
+            if numbered:
+                return (
+                    "editable checkout, no pin "
+                    f"(outranks {', '.join(numbered)})"
+                )
+            return "editable checkout, no pin"
         if self.reason == PIN_MISSING:
             return (
                 f"pinned version {self.pin} is not installed "
@@ -81,13 +94,27 @@ class Resolution:
         return "not installed"
 
 
+def version_sort_key(version: str) -> tuple:
+    """Ordering key for cache-slot names; higher sorts later.
+
+    An ``editable`` slot outranks every numbered version. It is a live
+    symlink to a source checkout, and someone who links a checkout means
+    to run it — before this, ``editable`` parsed as unversioned, sorted
+    to the bottom, and lost to any numbered slot, so a developer's own
+    code silently didn't serve unless they also pinned it by hand.
+
+    An explicit pin still wins over this ordering: the ordering only
+    decides the *fallback*, so a profile that names a version (including
+    ``editable``) is unaffected. Explicit beats implicit.
+    """
+    if version == EDITABLE:
+        return (1, (0, 0, 0))
+    return (0, parse_version(version) or (0, 0, 0))
+
+
 def sort_versions(versions: Sequence[str]) -> List[str]:
-    """Installed versions, highest first. Unparseable names sort last."""
-    return sorted(
-        versions,
-        key=lambda v: parse_version(v) or (0, 0, 0),
-        reverse=True,
-    )
+    """Installed versions, highest first — ``editable`` ahead of all."""
+    return sorted(versions, key=version_sort_key, reverse=True)
 
 
 def resolve_version(
@@ -115,6 +142,16 @@ def resolve_version(
             )
         return Resolution(
             version=None, reason=PIN_MISSING, pin=pin, available=ordered,
+        )
+
+    # Unpinned: the ordering decides, and an editable slot heads it.
+    # Reported as its own reason rather than "highest" so callers can say
+    # "your checkout is what runs" — the one fallback worth noticing,
+    # since a forgotten editable install otherwise serves indefinitely.
+    if ordered[0] == EDITABLE:
+        return Resolution(
+            version=EDITABLE, reason=EDITABLE_SLOT, pin=None,
+            available=ordered,
         )
 
     if len(versions) == 1:

@@ -52,6 +52,7 @@ from rich.console import Console
 
 from ..config import CONFIG_DIR, LOGS_DIR, TOOLKITS_DIR
 from ..envs.cache import LEGACY_META_FILE
+from ..envs.resolve import EDITABLE, EDITABLE_SLOT
 from ..logging.logger import ToolLogger, get_logger
 
 
@@ -205,22 +206,31 @@ def discover_toolkits(toolkits_dir: Optional[Path] = None) -> List[ToolkitDiscov
             chosen = candidates[0]
             skip_extra = resolution.describe()
 
-        # An editable slot that lost selection is a likely surprise:
-        # the developer linked a source checkout, but a numbered slot
-        # (or a committed pin) outranks it, so their live code is NOT
-        # what serves. Selection stays deterministic; we just refuse
-        # to be quiet about it. Carried in meta so both the serve
-        # banner and `tb list` can surface it.
+        # Editable slots now outrank numbered ones, so both directions
+        # are worth a word. Serving one is the quiet risk — the cache is
+        # user-wide, so a checkout linked months ago serves in *every*
+        # directory until someone notices. Being overridden by a pin is
+        # deliberate but easy to forget mid-debug. Carried in meta so the
+        # serve banner and `tb list` can surface either.
         shadow_note = None
-        if chosen is not None and chosen.version != "editable" and skip_extra is None:
-            editable_slot = next(
-                (c for c in candidates if c.version == "editable"), None)
-            if editable_slot is not None:
-                src = (editable_slot.install_meta or {}).get("source_path", "?")
+        editable_slot = next(
+            (c for c in candidates if c.version == EDITABLE), None)
+        if editable_slot is not None and skip_extra is None:
+            src = (editable_slot.install_meta or {}).get("source_path", "?")
+            if chosen is not None and chosen.version == EDITABLE:
+                # Only when it won by the fallback ordering. Someone who
+                # pinned 'editable' already knows; the surprise is the
+                # checkout that wins because nothing said otherwise.
+                if resolution.reason == EDITABLE_SLOT and len(candidates) > 1:
+                    shadow_note = (
+                        f"serving your editable checkout (-> {src}) here and "
+                        f"everywhere; it outranks "
+                        f"{', '.join(c.version for c in candidates if c.version != EDITABLE)}"
+                    )
+            else:
                 shadow_note = (
-                    f"editable slot (-> {src}) is shadowed by "
-                    f"{chosen.version} — pin 'editable' in "
-                    f".toolbase/manifest.local.yaml to serve your checkout"
+                    f"editable checkout (-> {src}) is overridden by the "
+                    f"{chosen.version} pin — clear it to serve your checkout"
                 )
 
         # Build the legacy-shaped meta dict that the rest of the

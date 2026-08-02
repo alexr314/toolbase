@@ -96,15 +96,42 @@ def test_local_editable_pin_overrides_committed(discovered, tmp_path):
     assert "shadow_note" not in d["heptapod"].meta
 
 
-def test_shadowed_editable_gets_note(discovered, tmp_path):
-    # No pins at all: numbered wins, note explains how to flip it.
+def test_unpinned_editable_wins_and_says_it_serves_everywhere(
+    discovered, tmp_path,
+):
+    """No pins: the checkout wins the fallback. The cache is user-wide,
+    so it serves in every directory — worth saying unprompted, because a
+    checkout linked months ago otherwise keeps serving silently."""
+    d = discovered([_cache_entry("heptapod", "2.3.0"),
+                    _cache_entry("heptapod", "editable", "/src/heptapod")])
+    assert d["heptapod"].path.name == "editable"
+    note = d["heptapod"].meta.get("shadow_note", "")
+    assert "everywhere" in note
+    assert "/src/heptapod" in note
+    assert "2.3.0" in note
+
+
+def test_pin_overriding_editable_gets_the_inverse_note(discovered, tmp_path):
+    """A pin beats the checkout — deliberate, but easy to forget when
+    you're mid-debug and wondering why your edits do nothing."""
+    add_pin(tmp_path / "manifest.yaml", "heptapod", "2.3.0")
     d = discovered([_cache_entry("heptapod", "2.3.0"),
                     _cache_entry("heptapod", "editable", "/src/heptapod")])
     assert d["heptapod"].path.name == "2.3.0"
     note = d["heptapod"].meta.get("shadow_note", "")
-    assert "shadowed by 2.3.0" in note
-    assert "manifest.local.yaml" in note
+    assert "overridden by the 2.3.0 pin" in note
     assert "/src/heptapod" in note
+
+
+def test_no_everywhere_note_when_editable_was_pinned(discovered, tmp_path):
+    """Someone who pinned 'editable' already knows; the warning is for
+    the checkout that wins because nothing said otherwise."""
+    add_pin(local_manifest_path(tmp_path / "manifest.yaml"),
+            "heptapod", "editable")
+    d = discovered([_cache_entry("heptapod", "2.3.0"),
+                    _cache_entry("heptapod", "editable", "/src/heptapod")])
+    assert d["heptapod"].path.name == "editable"
+    assert "shadow_note" not in d["heptapod"].meta
 
 
 def test_no_note_without_editable_slot(discovered, tmp_path):

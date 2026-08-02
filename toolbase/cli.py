@@ -5428,15 +5428,14 @@ def list_cmd(as_json, verbose):
         )
 
     # Group entries by toolkit name; within a name, sort by version desc.
-    from .versioning import parse_version
+    from .envs import version_sort_key, EDITABLE_SLOT as _EDITABLE_SLOT
     grouped: dict[str, list] = {}
     for e in entries:
         grouped.setdefault(e.name, []).append(e)
     for k in grouped:
-        grouped[k].sort(
-            key=lambda e: parse_version(e.version) or (0, 0, 0),
-            reverse=True,
-        )
+        # Same ordering resolution uses, so the row order and the
+        # serving marker can't tell different stories.
+        grouped[k].sort(key=lambda e: version_sort_key(e.version), reverse=True)
 
     any_pin_applied = False
     any_ambiguous = False
@@ -5509,16 +5508,26 @@ def list_cmd(as_json, verbose):
                 f"    [dim]serving {resolution.version} "
                 f"({resolution.describe()})[/dim]"
             )
-        # Editable-shadow warning: a live-linked checkout exists but
-        # resolution picks a numbered slot — the developer's code is
-        # not what serves. Same condition as discovery's shadow_note.
-        has_editable = any(e.version == "editable" for e in grouped[name])
-        if has_editable and resolution.version != "editable":
-            console.print(
-                "    [yellow]⚠ editable slot shadowed by "
-                f"{resolution.version} — pin 'editable' in "
-                ".toolbase/manifest.local.yaml to serve your checkout[/yellow]"
-            )
+        # Editable notices, both directions — same conditions as
+        # discovery's shadow_note, so the two views agree. An editable
+        # slot that serves does so in every directory (the cache is
+        # user-wide), which is the one worth flagging unprompted.
+        has_editable = any(e.version == EDITABLE_VERSION for e in grouped[name])
+        if has_editable and resolution.ok:
+            if resolution.version == EDITABLE_VERSION:
+                # Only when it won by fallback — an explicit pin to
+                # 'editable' is a choice the user already knows about.
+                if resolution.reason == _EDITABLE_SLOT and multi_version:
+                    console.print(
+                        "    [yellow]⚠ your editable checkout serves here "
+                        "and in every other directory[/yellow]"
+                    )
+            else:
+                console.print(
+                    f"    [dim]editable checkout overridden by the "
+                    f"{resolution.version} pin — `tb use {name}` to clear "
+                    f"it[/dim]"
+                )
         if verbose:
             _list_print_tools_verbose(
                 name, resolved_profile, _name_collisions,
@@ -5800,15 +5809,16 @@ def _list_print_tools_verbose(
 
 
 def _list_sorted_entries(entries):
-    """Return entries deterministically sorted by (name asc, version desc)."""
-    from .versioning import parse_version
-    return sorted(
-        entries,
-        key=lambda e: (
-            e.name,
-            tuple(-x for x in (parse_version(e.version) or (0, 0, 0))),
-        ),
+    """Return entries deterministically sorted by (name asc, version desc).
+
+    Two stable passes rather than one composite key: the version key is a
+    nested tuple (rank, parts) that can't be negated to invert it.
+    """
+    from .envs import version_sort_key
+    by_version = sorted(
+        entries, key=lambda e: version_sort_key(e.version), reverse=True,
     )
+    return sorted(by_version, key=lambda e: e.name)
 
 
 def _list_resolve_pin_map(entries):
