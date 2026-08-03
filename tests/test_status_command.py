@@ -207,10 +207,16 @@ class TestHarnesses:
         status = _run().output
         assert ("claude-code" in listed) == ("Wired harnesses" in status)
 
-    def test_the_section_is_absent_when_nothing_is_wired(self, env):
+    def test_the_section_says_none_rather_than_vanishing(self, env):
+        """Unlike Issues, this section is always shown. "Nothing is
+        wired" answers "why does the agent see no tools" as often as an
+        empty loadout does, and a section that disappears exactly when
+        it matters is no help."""
         _slot("kit", "1.0.0")
         r = _run()
-        assert "Wired harnesses" not in r.output
+        assert "Wired harnesses" in r.output
+        assert "(none)" in r.output
+        assert "tb connect <harness>" in _flat(r)
 
 
 class TestReadOnly:

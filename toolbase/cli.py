@@ -5236,15 +5236,23 @@ def status_cmd():
     # Serving is only half the picture: tools reach an agent through a
     # harness, and "the agent sees no tools" is as often an unwired
     # harness as an empty loadout.
+    # Always shown, empty or not. "Nothing is wired" is the answer to
+    # "why does the agent see no tools" as often as an empty loadout is,
+    # and a section that vanishes when it matters most is no help.
     wired = _wired_harnesses()
+    console.print()
+    console.print("[bold]Wired harnesses[/bold]")
     if wired:
-        console.print()
-        console.print("[bold]Wired harnesses[/bold]")
         for entry in wired:
             console.print(
                 f"  {entry.harness:<22} {entry.scope:<10} "
                 f"[dim]{_display_path(entry.path)}[/dim]"
             )
+    else:
+        console.print("  [dim](none)[/dim]")
+        console.print(
+            '    [dim](use "tb connect <harness>" to wire one)[/dim]'
+        )
 
     # ── Issues ───────────────────────────────────────────────────────
     issues: list = []
@@ -5477,7 +5485,7 @@ def list_cmd(as_json, verbose):
             # reason line below says *why* it won, so no pin marker is
             # needed on the row as well.
             serving = multi_version and entry.version == resolution.version
-            bullet = "[green]▸[/green]" if serving else " "
+            bullet = "[green]➤[/green]" if serving else " "
             last_used = _format_last_used(entry.last_used_iso)
             size = _format_disk_size(entry.disk_size_bytes)
             # Editable slots show a "-> <source>" indicator so it's
@@ -5558,7 +5566,7 @@ def list_cmd(as_json, verbose):
         # multi-version toolkits the same advice on every one is noise.
         console.print()
         console.print(
-            "[dim]▸ = serving. Choose with `tb use <toolkit>@<version>`.[/dim]"
+            "[dim]➤ = serving. Choose with `tb use <toolkit>@<version>`.[/dim]"
         )
 
 
