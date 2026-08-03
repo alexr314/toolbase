@@ -159,10 +159,10 @@ def test_integer_prompt_gives_up_after_3_failures(fake_prompt):
 
 def test_path_prompt_expands_tilde(fake_prompt, monkeypatch, tmp_path):
     monkeypatch.setenv("HOME", str(tmp_path))
-    fake_prompt.queue(["~/aster-data"])
+    fake_prompt.queue(["~/calculator-data"])
     f = _field(type="path")
     out = prompts.prompt_for_field(f, mode="ask")
-    assert out.value == str(tmp_path / "aster-data")
+    assert out.value == str(tmp_path / "calculator-data")
 
 
 # ── boolean prompt ──────────────────────────────────────────────────

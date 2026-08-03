@@ -136,7 +136,7 @@ def _write_loadout(base: Path, scope_dir: str, name: str, body: dict) -> Path:
 
 def test_discover_user_only(tmp_path: Path):
     user_base = tmp_path / "user"
-    _write_loadout(user_base, ".", "alpha", {"toolkits": {"aster": {}}})
+    _write_loadout(user_base, ".", "alpha", {"toolkits": {"calculator": {}}})
     found = discover_loadouts(None, user_base=user_base)
     assert set(found) == {"alpha"}
     assert found["alpha"].scope == "user"
@@ -145,7 +145,7 @@ def test_discover_user_only(tmp_path: Path):
 def test_discover_project_shadows_user(tmp_path: Path):
     user_base = tmp_path / "user"
     proj = tmp_path / "proj"
-    _write_loadout(user_base, ".", "shared", {"toolkits": {"aster": {}}})
+    _write_loadout(user_base, ".", "shared", {"toolkits": {"calculator": {}}})
     # project loadout of the same basename, different content
     pdir = proj / ".toolbase" / "loadouts"
     pdir.mkdir(parents=True)
@@ -153,10 +153,10 @@ def test_discover_project_shadows_user(tmp_path: Path):
         yaml.safe_dump({"toolkits": {"heptapod": {"bundles": ["pythia"]}}})
     )
     found = discover_loadouts(proj, user_base=user_base)
-    # project wins whole — heptapod, not aster
+    # project wins whole — heptapod, not calculator
     assert found["shared"].scope == "project"
     assert "heptapod" in found["shared"].toolkits
-    assert "aster" not in found["shared"].toolkits
+    assert "calculator" not in found["shared"].toolkits
 
 
 # ── active-loadout resolution chain ───────────────────────────────────
@@ -218,7 +218,7 @@ def test_resolve_loadout_folds_disabled(tmp_path: Path):
     (user_base / "serve.yaml").write_text(yaml.safe_dump({
         "default": {
             "loadout": "work",
-            "disabled": {"toolkits": ["legacy"], "tools": ["aster__noisy"]},
+            "disabled": {"toolkits": ["legacy"], "tools": ["calculator__noisy"]},
         }
     }))
     _write_loadout(user_base, ".", "work", {
@@ -228,7 +228,7 @@ def test_resolve_loadout_folds_disabled(tmp_path: Path):
     assert resolved.name == "work"
     assert resolved.toolkits["heptapod"].bundles == ["pythia"]
     assert resolved.disabled_toolkits == ["legacy"]
-    assert resolved.disabled_tools == ["aster__noisy"]
+    assert resolved.disabled_tools == ["calculator__noisy"]
 
 
 def test_resolve_loadout_no_active_raises(tmp_path: Path):

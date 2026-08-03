@@ -49,14 +49,14 @@ def test_load_loadout_and_blocklists(tmp_path: Path):
             "loadout": "paper",
             "disabled": {
                 "toolkits": ["heptapod"],
-                "tools": ["aster__heavy"],
+                "tools": ["calculator__heavy"],
             },
         }
     }))
     cfg = load_serve_config(p)
     assert cfg.default.loadout == "paper"
     assert cfg.default.disabled_toolkits == ["heptapod"]
-    assert cfg.default.disabled_tools == ["aster__heavy"]
+    assert cfg.default.disabled_tools == ["calculator__heavy"]
 
 
 def test_load_loadout_must_be_nonempty_string(tmp_path: Path):
@@ -68,7 +68,7 @@ def test_load_loadout_must_be_nonempty_string(tmp_path: Path):
 
 def test_load_rejects_retired_groups_block(tmp_path: Path):
     p = tmp_path / "serve.yaml"
-    p.write_text(yaml.safe_dump({"groups": {"exo": {"toolkits": ["aster"]}}}))
+    p.write_text(yaml.safe_dump({"groups": {"exo": {"toolkits": ["calculator"]}}}))
     with pytest.raises(ServeConfigError) as ei:
         load_serve_config(p)
     assert "groups" in str(ei.value)
@@ -96,14 +96,14 @@ def test_save_and_reload_roundtrip(tmp_path: Path):
         default=DefaultBlock(
             loadout="paper",
             disabled_toolkits=["heptapod"],
-            disabled_tools=["aster__heavy"],
+            disabled_tools=["calculator__heavy"],
         ),
     )
     save_serve_config(cfg, p)
     reloaded = load_serve_config(p)
     assert reloaded.default.loadout == "paper"
     assert reloaded.default.disabled_toolkits == ["heptapod"]
-    assert reloaded.default.disabled_tools == ["aster__heavy"]
+    assert reloaded.default.disabled_tools == ["calculator__heavy"]
 
 
 def test_save_empty_config_drops_empty_keys(tmp_path: Path):
@@ -150,7 +150,7 @@ def test_merge_disabled_lists_union():
 
 
 def test_split_tool_valid():
-    assert _split_tool("aster__transit") == ("aster", "transit")
+    assert _split_tool("calculator__transit") == ("calculator", "transit")
 
 
 @pytest.mark.parametrize("bad", ["no-delimiter", "__tool", "toolkit__", "__"])

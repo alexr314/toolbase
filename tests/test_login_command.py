@@ -49,10 +49,10 @@ def test_login_legacy_with_token_flag(isolated_config: Path):
     runner = CliRunner()
     result = runner.invoke(
         cli.main,
-        ["login", "aster", "--token", "stk_legacy_abc"],
+        ["login", "calculator", "--token", "stk_legacy_abc"],
     )
     assert result.exit_code == 0, result.output
-    legacy = isolated_config / "aster" / "token"
+    legacy = isolated_config / "calculator" / "token"
     assert legacy.exists()
     assert legacy.read_text() == "stk_legacy_abc"
     # Deprecation hint surfaced.
@@ -64,10 +64,10 @@ def test_login_legacy_accepts_old_toolkit_prefix(isolated_config: Path):
     runner = CliRunner()
     result = runner.invoke(
         cli.main,
-        ["login", "aster", "--token", "toolkit_abc"],
+        ["login", "calculator", "--token", "toolkit_abc"],
     )
     assert result.exit_code == 0, result.output
-    assert (isolated_config / "aster" / "token").read_text() == "toolkit_abc"
+    assert (isolated_config / "calculator" / "token").read_text() == "toolkit_abc"
 
 
 def test_login_legacy_rejects_user_token_pasted_into_legacy_form(isolated_config: Path):
@@ -75,12 +75,12 @@ def test_login_legacy_rejects_user_token_pasted_into_legacy_form(isolated_config
     runner = CliRunner()
     result = runner.invoke(
         cli.main,
-        ["login", "aster", "--token", "tb_user_abc"],
+        ["login", "calculator", "--token", "tb_user_abc"],
     )
     assert result.exit_code == 1
     assert "per-user token" in result.output.lower()
     # No file should have been written.
-    assert not (isolated_config / "aster" / "token").exists()
+    assert not (isolated_config / "calculator" / "token").exists()
 
 
 def test_login_legacy_rejects_retired_user_token_pasted_into_legacy_form(
@@ -91,14 +91,14 @@ def test_login_legacy_rejects_retired_user_token_pasted_into_legacy_form(
     runner = CliRunner()
     result = runner.invoke(
         cli.main,
-        ["login", "aster", "--token", "stk_user_old"],
+        ["login", "calculator", "--token", "stk_user_old"],
     )
     assert result.exit_code == 1
     # Stale-token message references the recovery flow.
     assert "tb_user_" in result.output
     assert "toolbase logout" in result.output
     assert "toolbase login" in result.output
-    assert not (isolated_config / "aster" / "token").exists()
+    assert not (isolated_config / "calculator" / "token").exists()
 
 
 def test_login_legacy_unknown_prefix_rejected_in_no_mode(isolated_config: Path):
@@ -106,11 +106,11 @@ def test_login_legacy_unknown_prefix_rejected_in_no_mode(isolated_config: Path):
     runner = CliRunner()
     result = runner.invoke(
         cli.main,
-        ["login", "aster", "--token", "weird_xyz", "--no"],
+        ["login", "calculator", "--token", "weird_xyz", "--no"],
     )
     assert result.exit_code == 0  # confirmed-no exits cleanly per existing UX
     # But no file should have been written.
-    assert not (isolated_config / "aster" / "token").exists()
+    assert not (isolated_config / "calculator" / "token").exists()
 
 
 # ── login: per-user paste mode ───────────────────────────────────────
@@ -245,7 +245,7 @@ def test_login_migration_prompt_detects_legacy_files(
     isolated_config: Path, monkeypatch,
 ):
     """When legacy tokens exist, login surfaces a migration prompt before browser-flow."""
-    auth.save_legacy_toolkit_token("aster", "stk_a")
+    auth.save_legacy_toolkit_token("calculator", "stk_a")
     auth.save_legacy_toolkit_token("heptapod", "stk_h")
 
     _patch_browser_flow(
@@ -259,17 +259,17 @@ def test_login_migration_prompt_detects_legacy_files(
     result = runner.invoke(cli.main, ["login", "--yes"])
     assert result.exit_code == 0, result.output
     assert "Detected legacy per-toolkit tokens" in result.output
-    assert "aster" in result.output and "heptapod" in result.output
+    assert "calculator" in result.output and "heptapod" in result.output
     assert auth.load_user_token() == "tb_user_consolidated"
     # Legacy files preserved (cleanup is logout --clean-legacy's job).
-    assert (isolated_config / "aster" / "token").exists()
+    assert (isolated_config / "calculator" / "token").exists()
     assert (isolated_config / "heptapod" / "token").exists()
 
 
 def test_login_migration_prompt_user_declines_exits_zero(
     isolated_config: Path, monkeypatch,
 ):
-    auth.save_legacy_toolkit_token("aster", "stk_a")
+    auth.save_legacy_toolkit_token("calculator", "stk_a")
 
     runner = CliRunner()
     result = runner.invoke(cli.main, ["login", "--no"])
@@ -300,17 +300,17 @@ def test_logout_no_user_but_legacy_present_hints_at_clean_legacy(
     isolated_config: Path,
 ):
     """If only legacy tokens exist, logout (no flag) suggests --clean-legacy."""
-    auth.save_legacy_toolkit_token("aster", "stk_a")
+    auth.save_legacy_toolkit_token("calculator", "stk_a")
     runner = CliRunner()
     result = runner.invoke(cli.main, ["logout"])
     assert result.exit_code == 0
     assert "--clean-legacy" in result.output
-    assert auth.load_legacy_toolkit_token("aster") == "stk_a"  # untouched
+    assert auth.load_legacy_toolkit_token("calculator") == "stk_a"  # untouched
 
 
 def test_logout_clean_legacy_removes_both(isolated_config: Path):
     auth.save_user_token("tb_user_x")
-    auth.save_legacy_toolkit_token("aster", "stk_a")
+    auth.save_legacy_toolkit_token("calculator", "stk_a")
     auth.save_legacy_toolkit_token("heptapod", "stk_h")
 
     runner = CliRunner()
@@ -323,14 +323,14 @@ def test_logout_clean_legacy_removes_both(isolated_config: Path):
 def test_logout_clean_legacy_no_to_prompt_keeps_files(isolated_config: Path):
     """--clean-legacy --no aborts the cleanup confirmation."""
     auth.save_user_token("tb_user_x")
-    auth.save_legacy_toolkit_token("aster", "stk_a")
+    auth.save_legacy_toolkit_token("calculator", "stk_a")
 
     runner = CliRunner()
     result = runner.invoke(cli.main, ["logout", "--clean-legacy", "--no"])
     assert result.exit_code == 0
     # User token IS removed (no confirmation needed). Legacy stays.
     assert auth.load_user_token() is None
-    assert auth.load_legacy_toolkit_token("aster", base=isolated_config) == "stk_a"
+    assert auth.load_legacy_toolkit_token("calculator", base=isolated_config) == "stk_a"
 
 
 # ── whoami ────────────────────────────────────────────────────────
@@ -344,7 +344,7 @@ def test_whoami_no_token_exits_nonzero(isolated_config: Path):
 
 
 def test_whoami_legacy_only_hints_at_consolidation(isolated_config: Path):
-    auth.save_legacy_toolkit_token("aster", "stk_a")
+    auth.save_legacy_toolkit_token("calculator", "stk_a")
     runner = CliRunner()
     result = runner.invoke(cli.main, ["whoami"])
     assert result.exit_code == 1

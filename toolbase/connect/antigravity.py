@@ -70,7 +70,7 @@ class AntigravityAdapter(HarnessAdapter):
         return (
             "the agy CLI does not load a workspace .agents/mcp_config.json — "
             "only the IDE and SDK are documented to. Use "
-            "`tb connect antigravity -g` if you're on the CLI."
+            "`tb connect antigravity -u` if you're on the CLI."
         )
 
     # ── detection ────────────────────────────────────────────────────

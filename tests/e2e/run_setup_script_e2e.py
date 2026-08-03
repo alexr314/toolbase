@@ -222,7 +222,7 @@ def main() -> int:
     print(f"  ✓ toolkit loaded: state={rt.state.name}")
 
     proxies = {p.get_name(): p for p in orch._proxy_tools}
-    qualified = f"{TOOLKIT_NAME}__get_state"
+    qualified = f"{TOOLKIT_NAME}__GetState"
     if qualified not in proxies:
         print(f"!!! proxy tool {qualified} missing from {sorted(proxies)}")
         orch.shutdown()

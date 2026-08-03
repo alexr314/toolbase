@@ -144,13 +144,13 @@ def test_delete_user_token_missing_returns_false(tmp_path: Path):
 
 
 def test_legacy_token_path_is_per_toolkit(tmp_path: Path):
-    expected = tmp_path / "aster" / "token"
-    assert auth.legacy_token_path("aster", base=tmp_path) == expected
+    expected = tmp_path / "calculator" / "token"
+    assert auth.legacy_token_path("calculator", base=tmp_path) == expected
 
 
 def test_save_and_load_legacy_token(tmp_path: Path):
-    auth.save_legacy_toolkit_token("aster", "stk_abc", base=tmp_path)
-    assert auth.load_legacy_toolkit_token("aster", base=tmp_path) == "stk_abc"
+    auth.save_legacy_toolkit_token("calculator", "stk_abc", base=tmp_path)
+    assert auth.load_legacy_toolkit_token("calculator", base=tmp_path) == "stk_abc"
 
 
 def test_load_legacy_token_missing_returns_none(tmp_path: Path):
@@ -158,11 +158,11 @@ def test_load_legacy_token_missing_returns_none(tmp_path: Path):
 
 
 def test_find_legacy_token_files_lists_each_toolkit(tmp_path: Path):
-    auth.save_legacy_toolkit_token("aster", "stk_a", base=tmp_path)
+    auth.save_legacy_toolkit_token("calculator", "stk_a", base=tmp_path)
     auth.save_legacy_toolkit_token("heptapod", "stk_h", base=tmp_path)
     found = auth.find_legacy_token_files(base=tmp_path)
     names = {n for n, _ in found}
-    assert names == {"aster", "heptapod"}
+    assert names == {"calculator", "heptapod"}
 
 
 def test_find_legacy_token_files_skips_known_subdirs(tmp_path: Path):
@@ -171,11 +171,11 @@ def test_find_legacy_token_files_skips_known_subdirs(tmp_path: Path):
     (tmp_path / "toolkits" / "ghost" / "token").write_text("not-a-real-token")
     (tmp_path / "logs").mkdir()
     (tmp_path / "logs" / "token").write_text("ghost")
-    auth.save_legacy_toolkit_token("aster", "stk_a", base=tmp_path)
+    auth.save_legacy_toolkit_token("calculator", "stk_a", base=tmp_path)
 
     found = auth.find_legacy_token_files(base=tmp_path)
     names = {n for n, _ in found}
-    assert names == {"aster"}
+    assert names == {"calculator"}
 
 
 def test_find_legacy_token_files_empty_base(tmp_path: Path):
@@ -183,11 +183,11 @@ def test_find_legacy_token_files_empty_base(tmp_path: Path):
 
 
 def test_delete_legacy_token_files_removes_all(tmp_path: Path):
-    auth.save_legacy_toolkit_token("aster", "stk_a", base=tmp_path)
+    auth.save_legacy_toolkit_token("calculator", "stk_a", base=tmp_path)
     auth.save_legacy_toolkit_token("heptapod", "stk_h", base=tmp_path)
 
     removed = auth.delete_legacy_token_files(base=tmp_path)
-    assert sorted(removed) == ["aster", "heptapod"]
+    assert sorted(removed) == ["calculator", "heptapod"]
     assert auth.find_legacy_token_files(base=tmp_path) == []
 
 
@@ -197,10 +197,10 @@ def test_delete_legacy_token_files_removes_all(tmp_path: Path):
 def test_load_token_for_publish_prefers_user(tmp_path: Path):
     user_path = tmp_path / "token"
     auth.save_user_token("tb_user_x", path=user_path)
-    auth.save_legacy_toolkit_token("aster", "stk_a", base=tmp_path)
+    auth.save_legacy_toolkit_token("calculator", "stk_a", base=tmp_path)
 
     token, source = auth.load_token_for_publish(
-        "aster", base=tmp_path, user_path=user_path
+        "calculator", base=tmp_path, user_path=user_path
     )
     assert token == "tb_user_x"
     assert source == "user"
@@ -208,10 +208,10 @@ def test_load_token_for_publish_prefers_user(tmp_path: Path):
 
 def test_load_token_for_publish_falls_back_to_legacy(tmp_path: Path):
     user_path = tmp_path / "token"  # not created
-    auth.save_legacy_toolkit_token("aster", "stk_a", base=tmp_path)
+    auth.save_legacy_toolkit_token("calculator", "stk_a", base=tmp_path)
 
     token, source = auth.load_token_for_publish(
-        "aster", base=tmp_path, user_path=user_path
+        "calculator", base=tmp_path, user_path=user_path
     )
     assert token == "stk_a"
     assert source == "legacy"
@@ -220,7 +220,7 @@ def test_load_token_for_publish_falls_back_to_legacy(tmp_path: Path):
 def test_load_token_for_publish_returns_none_when_nothing_stored(tmp_path: Path):
     user_path = tmp_path / "token"
     token, source = auth.load_token_for_publish(
-        "aster", base=tmp_path, user_path=user_path
+        "calculator", base=tmp_path, user_path=user_path
     )
     assert token is None
     assert source == "none"

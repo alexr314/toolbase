@@ -99,9 +99,12 @@ def main() -> int:
     print("=" * 60)
     print("Step 1: set api_key at USER layer (default-project context)")
     print("=" * 60)
+    # -u is required now: every scoped command defaults to this project,
+    # so a bare `config set` from a directory with no project above it
+    # creates one in cwd rather than falling back to the user layer.
     r = runner.invoke(
         _cli.main,
-        ["config", "set", TOOLKIT_NAME, "api_key", "tb_user_USER_LAYER"],
+        ["config", "set", "-u", TOOLKIT_NAME, "api_key", "tb_user_USER_LAYER"],
     )
     print(r.output)
     if r.exit_code != 0:
@@ -131,9 +134,11 @@ def main() -> int:
     if r.exit_code != 0:
         print("!!! project init failed")
         return 5
-    manifest = project / ".toolbase" / "manifest.yaml"
-    if not manifest.exists():
-        print("!!! manifest not created")
+    # The .toolbase/ directory is the marker; init no longer writes an
+    # empty manifest.yaml alongside it.
+    marker = project / ".toolbase"
+    if not marker.is_dir():
+        print("!!! project marker not created")
         return 6
 
     # ── Step 3: set api_key from inside the project → project layer.

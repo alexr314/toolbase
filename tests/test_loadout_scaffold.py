@@ -228,6 +228,6 @@ def test_skill_and_tool_disabled_coexist(tmp_path: Path):
 
 def test_header_comment_survives_round_trip(tmp_path: Path):
     _act(tmp_path, "heptapod")
-    _act(tmp_path, "aster")
+    _act(tmp_path, "calculator")
     raw = default_loadout_path("user", user_base=tmp_path).read_text()
     assert "Loadout: default" in raw  # the scaffold header comment persists

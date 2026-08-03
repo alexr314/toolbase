@@ -126,8 +126,8 @@ def main() -> int:
         proxies_by_name = {
             p.get_name(): p for p in orch._proxy_tools
         }
-        crash_proxy = proxies_by_name[f"{TOOLKIT_NAME}__crash_now"]
-        alive_proxy = proxies_by_name[f"{TOOLKIT_NAME}__still_alive"]
+        crash_proxy = proxies_by_name[f"{TOOLKIT_NAME}__CrashNow"]
+        alive_proxy = proxies_by_name[f"{TOOLKIT_NAME}__StillAlive"]
 
         # Sanity: still_alive works pre-crash.
         result = alive_proxy.execute()
@@ -184,7 +184,7 @@ def main() -> int:
             return 6
 
         proxies_by_name = {p.get_name(): p for p in orch._proxy_tools}
-        crash_proxy = proxies_by_name[f"{TOOLKIT_NAME}__crash_now"]
+        crash_proxy = proxies_by_name[f"{TOOLKIT_NAME}__CrashNow"]
 
         # Crash four times. After each of the first three crashes, the
         # restart thread should bring the subprocess back up; the fourth

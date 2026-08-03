@@ -1,38 +1,38 @@
-"""End-to-end test for ASTER-readiness — Phase 3C-3.
+"""End-to-end test for the setup-with-large-download flow — Phase 3C-3.
 
-Models ASTER's install flow at small scale:
+Models the install of a toolkit that ships a big reference dataset, at
+small scale:
 
-1. Synthesize an installed ASTER-shaped toolkit
-   (test-aster-synthetic-toolkit/).
+1. Synthesize an installed calculator-shaped toolkit
+   (test-calculator-synthetic-toolkit/).
 2. Pre-fill the Tier-1 declared `api_key` (would be the user's
    prompt response at install in real life).
 3. Run setup.py via ``run_setup_script`` in skip mode. The
    ``choice`` prompt picks "download" (first option in skip mode);
    downloads a synthetic ~10 KB tarball from a localhost server
    with a sentinel `manifest.txt` inside; extracts; writes
-   `opacity_path` via ``ctx.set_config``.
+   `constants_path` via ``ctx.set_config``.
 4. Run ``validate(ctx)`` — passes (sentinel file exists).
 5. Spin up the orchestrator in-process; verify the tool sees
-   `api_key`, `workspace`, `opacity_path`, and `max_workers`
+   `api_key`, `workspace`, `constants_path`, and `max_workers`
    injected — the full mix of Tier-1 declared + Tier-2 derived
    state.
 6. Negative path: corrupt the extract (delete the sentinel),
    re-run validate, confirm it now fails and the orchestrator
    refuses to serve.
 
-Why "synthetic" instead of porting real ASTER:
+Why a synthetic toolkit rather than a real one:
 
-- ASTER source isn't checked in here (per CLAUDE.md it's at
-  /tmp/tb-demo/ on Alex's machine — ephemeral).
-- The download-flow code path is what's new in Phase 3C-2; a
-  10 KB synthetic blob exercises the same RPC + downloads.py +
-  extract + set_config path as a real 2.3 GB ASTER install
-  would. The remaining difference is wall-clock; that's not
-  coverage.
+- No real toolkit is checked in here, and depending on one would
+  make this test need the network and a published version.
+- The download flow is what's under test; a 10 KB blob exercises
+  the same RPC + downloads.py + extract + set_config path a
+  multi-GB dataset would. The only difference is wall-clock, and
+  that isn't coverage.
 
 Run from the repo root:
 
-    python tests/e2e/run_aster_synthetic_e2e.py
+    python tests/e2e/run_calculator_synthetic_e2e.py
 """
 
 from __future__ import annotations
@@ -53,18 +53,18 @@ from pathlib import Path
 
 
 THIS_DIR = Path(__file__).resolve().parent
-TOOLKIT_SRC = THIS_DIR / "test-aster-synthetic-toolkit"
-TOOLKIT_NAME = "tb-aster-synthetic"
+TOOLKIT_SRC = THIS_DIR / "test-calculator-synthetic-toolkit"
+TOOLKIT_NAME = "tb-calculator-synthetic"
 
-WORK_ROOT = Path(tempfile.gettempdir()) / "tb-aster-synthetic-e2e"
+WORK_ROOT = Path(tempfile.gettempdir()) / "tb-calculator-synthetic-e2e"
 INSTALL_ROOT = WORK_ROOT / "toolbase"
 
 
-# ── synthetic opacity tarball ─────────────────────────────────────────
+# ── synthetic constants tarball ─────────────────────────────────────────
 
 
-def _build_synthetic_opacity_tarball() -> tuple[bytes, str]:
-    """Build a tiny opacity-tarball with sentinel files inside.
+def _build_synthetic_constants_tarball() -> tuple[bytes, str]:
+    """Build a tiny constants tarball with sentinel files inside.
 
     Returns ``(payload_bytes, sha256_hex)``. The sentinel
     ``manifest.txt`` lets the toolkit's validate(ctx) prove the
@@ -73,10 +73,10 @@ def _build_synthetic_opacity_tarball() -> tuple[bytes, str]:
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as tar:
         for fname, content in [
-            ("manifest.txt", b"# ASTER opacity manifest (synthetic)\n"
+            ("manifest.txt", b"# calculator constants manifest (synthetic)\n"
              b"version: 1.0\nfiles: 3\n"),
-            ("opacity_h2o.h5", b"\x89HDF\r\n\x1a\n" + b"\x00" * 256),
-            ("opacity_co2.h5", b"\x89HDF\r\n\x1a\n" + b"\x00" * 256),
+            ("constants_si.h5", b"\x89HDF\r\n\x1a\n" + b"\x00" * 256),
+            ("constants_cgs.h5", b"\x89HDF\r\n\x1a\n" + b"\x00" * 256),
         ]:
             info = tarfile.TarInfo(name=fname)
             info.size = len(content)
@@ -108,7 +108,7 @@ def _start_server(payload: bytes) -> str:
 
     httpd = HTTPServer(("127.0.0.1", port), Handler)
     threading.Thread(target=httpd.serve_forever, daemon=True).start()
-    return f"http://127.0.0.1:{port}/opacity.tar.gz"
+    return f"http://127.0.0.1:{port}/constants.tar.gz"
 
 
 # ── isolated install dir ──────────────────────────────────────────────
@@ -167,18 +167,18 @@ def _refresh_imports():
 
 def main() -> int:
     if not TOOLKIT_SRC.exists():
-        print(f"!!! synthetic ASTER toolkit missing at {TOOLKIT_SRC}")
+        print(f"!!! synthetic calculator toolkit missing at {TOOLKIT_SRC}")
         return 1
 
     _setup_synthetic_install()
     os.environ["HOME"] = str(WORK_ROOT)
 
-    payload, sha = _build_synthetic_opacity_tarball()
-    print(f"Built synthetic opacity tarball: {len(payload)} bytes, SHA256={sha[:16]}...")
+    payload, sha = _build_synthetic_constants_tarball()
+    print(f"Built synthetic constants tarball: {len(payload)} bytes, SHA256={sha[:16]}...")
 
     url = _start_server(payload)
-    os.environ["STK_E2E_OPACITY_URL"] = url
-    os.environ["STK_E2E_OPACITY_SHA256"] = sha
+    os.environ["STK_E2E_CONSTANTS_URL"] = url
+    os.environ["STK_E2E_CONSTANTS_SHA256"] = sha
 
     orchestrator = _refresh_imports()
 
@@ -188,7 +188,7 @@ def main() -> int:
     print("Step 1: pre-fill api_key (Tier-1 simulated install prompt)")
     print("=" * 64)
     from toolbase.setup import set_config_value
-    set_config_value(TOOLKIT_NAME, "api_key", "fake-nasa-key-12345")
+    set_config_value(TOOLKIT_NAME, "api_key", "fake-units-key-12345")
     print("  ✓ api_key set")
 
     # ── Step 2: run setup.py (download path) ─────────────────────
@@ -212,16 +212,16 @@ def main() -> int:
         if result.traceback:
             print(result.traceback)
         return 2
-    print("  ✓ setup.py completed; opacity downloaded + extracted")
+    print("  ✓ setup.py completed; constants downloaded + extracted")
 
     from toolbase.setup import load_config
     cfg = load_config(TOOLKIT_NAME)
-    if "opacity_path" not in cfg:
-        print(f"!!! opacity_path not persisted: {dict(cfg)}")
+    if "constants_path" not in cfg:
+        print(f"!!! constants_path not persisted: {dict(cfg)}")
         return 3
-    op_path = Path(cfg["opacity_path"])
+    op_path = Path(cfg["constants_path"])
     if not op_path.exists():
-        print(f"!!! opacity dir does not exist: {op_path}")
+        print(f"!!! constants dir does not exist: {op_path}")
         return 4
     if not (op_path / "manifest.txt").exists():
         print(f"!!! manifest.txt missing from {op_path}")
@@ -255,21 +255,25 @@ def main() -> int:
     print(f"  ✓ toolkit loaded: state={rt.state.name}")
 
     proxies = {p.get_name(): p for p in orch._proxy_tools}
-    qualified = f"{TOOLKIT_NAME}__get_observation"
+    # PascalCase: orchestral's MCP layer converts a tool's snake_case
+    # name for the wire (orchestral/mcp/adapters.py), so `calculate` is
+    # served as `Calculate`. The name on the wire is what an agent sees,
+    # so that is what this asserts.
+    qualified = f"{TOOLKIT_NAME}__Calculate"
     if qualified not in proxies:
         print(f"!!! proxy tool missing: have {sorted(proxies)}")
         orch.shutdown()
         return 8
 
-    raw = proxies[qualified].execute(star_name="HD 209458")
+    raw = proxies[qualified].execute(expression="2 + 2")
     print(f"  tool returned: {raw}")
     payload_dict = json.loads(raw)
 
-    # The agent passes `star_name`; the rest are state-injected.
+    # The agent passes `expression`; the rest are state-injected.
     assertions = [
-        ("star_name", "HD 209458"),       # runtime arg from agent
+        ("expression", "2 + 2"),           # runtime arg from agent
         ("api_key_set", True),             # Tier-1 declared
-        ("manifest_present", True),        # Tier-2 derived (opacity_path)
+        ("manifest_present", True),        # Tier-2 derived (constants_path)
         ("max_workers", 4),                # Tier-1 default
     ]
     for key, expected in assertions:
@@ -277,15 +281,15 @@ def main() -> int:
             print(f"!!! {key}: expected {expected!r}, got {payload_dict.get(key)!r}")
             orch.shutdown()
             return 9
-    if "/opacity" not in payload_dict.get("opacity_path", ""):
-        print(f"!!! opacity_path didn't reach tool correctly: "
-              f"{payload_dict.get('opacity_path')!r}")
+    if "/constants" not in payload_dict.get("constants_path", ""):
+        print(f"!!! constants_path didn't reach tool correctly: "
+              f"{payload_dict.get('constants_path')!r}")
         orch.shutdown()
         return 10
     print("  ✓ all four state values reached the tool body:")
     print(f"      api_key (Tier-1 secret) → injected (masked)")
     print(f"      workspace (Tier-1 path) → {payload_dict['workspace']}")
-    print(f"      opacity_path (Tier-2 derived) → {payload_dict['opacity_path']}")
+    print(f"      constants_path (Tier-2 derived) → {payload_dict['constants_path']}")
     print(f"      max_workers (Tier-1 default) → {payload_dict['max_workers']}")
 
     orch.shutdown()
@@ -319,7 +323,7 @@ def main() -> int:
 
     print()
     print("=" * 64)
-    print("✓ ASTER-readiness e2e passed")
+    print("✓ setup-with-large-download e2e passed")
     print("=" * 64)
     return 0
 

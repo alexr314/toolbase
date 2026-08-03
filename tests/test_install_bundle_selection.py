@@ -28,33 +28,33 @@ from toolbase import cli
 
 
 def test_no_extras_returns_none():
-    name, bundles = cli._parse_bundle_extras("aster")
-    assert name == "aster"
+    name, bundles = cli._parse_bundle_extras("calculator")
+    assert name == "calculator"
     assert bundles is None
 
 
 def test_single_bundle_extras():
-    name, bundles = cli._parse_bundle_extras("aster[basic]")
-    assert name == "aster"
+    name, bundles = cli._parse_bundle_extras("calculator[basic]")
+    assert name == "calculator"
     assert bundles == ["basic"]
 
 
 def test_multi_bundle_extras():
-    name, bundles = cli._parse_bundle_extras("aster[basic,scientific]")
-    assert name == "aster"
+    name, bundles = cli._parse_bundle_extras("calculator[basic,scientific]")
+    assert name == "calculator"
     assert bundles == ["basic", "scientific"]
 
 
 def test_extras_with_spaces_around_commas():
-    name, bundles = cli._parse_bundle_extras("aster[ basic , scientific ]")
-    assert name == "aster"
+    name, bundles = cli._parse_bundle_extras("calculator[ basic , scientific ]")
+    assert name == "calculator"
     assert bundles == ["basic", "scientific"]
 
 
 def test_extras_empty_brackets_is_empty_list():
     """``foo[]`` is valid: base only, no optional bundles."""
-    name, bundles = cli._parse_bundle_extras("aster[]")
-    assert name == "aster"
+    name, bundles = cli._parse_bundle_extras("calculator[]")
+    assert name == "calculator"
     assert bundles == []
 
 
@@ -74,12 +74,12 @@ def test_empty_name_rejected():
 def test_invalid_bundle_name_rejected():
     import click
     with pytest.raises(click.UsageError, match="alphanumeric"):
-        cli._parse_bundle_extras("aster[bad name!]")
+        cli._parse_bundle_extras("calculator[bad name!]")
 
 
 def test_trailing_comma_tolerated():
     """``foo[a,b,]`` is the same as ``foo[a,b]`` — empty entries dropped."""
-    name, bundles = cli._parse_bundle_extras("aster[basic,]")
+    name, bundles = cli._parse_bundle_extras("calculator[basic,]")
     assert bundles == ["basic"]
 
 
@@ -88,7 +88,7 @@ def test_trailing_comma_tolerated():
 
 def test_manifest_entry_default_bundles_is_none():
     from toolbase.envs.manifest import ManifestEntry
-    e = ManifestEntry(name="aster", version="1.0.0")
+    e = ManifestEntry(name="calculator", version="1.0.0")
     assert e.bundles is None
     # to_dict omits the field for backward compat with existing manifests.
     assert "bundles" not in e.to_dict()
@@ -97,7 +97,7 @@ def test_manifest_entry_default_bundles_is_none():
 def test_manifest_entry_with_bundles_round_trip():
     from toolbase.envs.manifest import ManifestEntry
     e = ManifestEntry(
-        name="aster", version="1.0.0",
+        name="calculator", version="1.0.0",
         bundles=["scientific", "basic"],
     )
     d = e.to_dict()
@@ -111,7 +111,7 @@ def test_manifest_entry_bundles_empty_list_preserved():
     """``bundles: []`` means "base only, no optional bundles" — distinct
     from absent (which means "all bundles")."""
     from toolbase.envs.manifest import ManifestEntry
-    e = ManifestEntry(name="aster", version="1.0.0", bundles=[])
+    e = ManifestEntry(name="calculator", version="1.0.0", bundles=[])
     d = e.to_dict()
     assert d["bundles"] == []
     e2 = ManifestEntry.from_dict(d)
@@ -122,7 +122,7 @@ def test_manifest_entry_bundles_legacy_load_no_field():
     """Old manifest entries without a ``bundles`` field load with bundles=None."""
     from toolbase.envs.manifest import ManifestEntry
     e = ManifestEntry.from_dict({
-        "name": "aster", "version": "1.0.0", "pinned_at": "",
+        "name": "calculator", "version": "1.0.0", "pinned_at": "",
     })
     assert e.bundles is None
 
@@ -131,7 +131,7 @@ def test_manifest_entry_bundles_invalid_type_rejected():
     from toolbase.envs.manifest import ManifestEntry
     with pytest.raises(ValueError, match="must be a list"):
         ManifestEntry.from_dict({
-            "name": "aster", "version": "1.0.0", "bundles": "not-a-list",
+            "name": "calculator", "version": "1.0.0", "bundles": "not-a-list",
         })
 
 

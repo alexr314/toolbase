@@ -161,10 +161,18 @@ def main() -> int:
     if r.exit_code != 0:
         print("!!! project init failed")
         return 2
-    manifest = project / ".toolbase" / "manifest.yaml"
-    if not manifest.exists():
-        print(f"!!! manifest not created at {manifest}")
+    # The marker is the directory itself. `project init` no longer drops
+    # an empty manifest.yaml — pins live in the loadout now, and writing
+    # a file just to be discovered was what made "is this a project?"
+    # depend on which command you happened to run first.
+    marker = project / ".toolbase"
+    if not marker.is_dir():
+        print(f"!!! project marker not created at {marker}")
         return 3
+    # Still the path this harness writes legacy pins to below, to keep
+    # covering the pre-0.12 manifest layer that resolution reads under
+    # loadout versions. It just isn't created for us any more.
+    manifest = marker / "manifest.yaml"
 
     # ── 2. Synthetic install of two versions, pinned to the project ─
     # The integration question is "does the cache-plus-manifest substrate
@@ -225,11 +233,18 @@ def main() -> int:
     if "0.1.0" not in r.stdout or "0.2.0" not in r.stdout:
         print("!!! tb list should show both versions")
         return 6
-    # 0.2.0 is the pinned version; the indicator (*) must be on it.
-    # Be lax about row formatting — just check both versions and the
-    # asterisk are present.
-    if "*" not in r.stdout:
-        print("!!! tb list should include the pinned-version indicator (*)")
+    # 0.2.0 is what serves. The old `*` marked "pinned", which said
+    # nothing in the case that actually confuses people (nothing pinned,
+    # several installed, the fallback picking one silently). It was
+    # replaced by a marker on the version that serves, plus the reason.
+    # Be lax about row formatting; assert the reason line, which names
+    # both the version and why it won.
+    flat = " ".join(r.stdout.split())
+    if "serving 0.2.0" not in flat:
+        print("!!! tb list should report 0.2.0 as the serving version")
+        return 6
+    if "➤" not in r.stdout:
+        print("!!! tb list should mark the serving version with ➤")
         return 6
 
     step("Step 5b: tb list --json (parseable)")
@@ -254,16 +269,17 @@ def main() -> int:
     print(f"  JSON OK: 0.2.0 pinned, 0.1.0 unpinned, both with size_bytes")
 
     # ── 6. tb config set at user + project layers ─────────────────
-    # User layer: cd out to a no-project dir so the default-project
-    # context applies. (--user flag would also work; we exercise the
-    # default-resolution path here.)
-    step("Step 6a: tb config set api_key (user layer, from default-project)")
+    # User layer: -u is required. Standing outside any project used to be
+    # enough to fall back to the user layer, but every scoped command
+    # defaults to this project now, so a bare `config set` here would
+    # make `nowhere/` a project instead of writing where we're asserting.
+    step("Step 6a: tb config set -u api_key (user layer)")
     nowhere = WORK_ROOT / "nowhere"
     nowhere.mkdir()
     os.chdir(nowhere)
     r = runner.invoke(
         _cli.main,
-        ["config", "set", TOOLKIT_NAME, "api_key", "tb_user_USER_VALUE"],
+        ["config", "set", "-u", TOOLKIT_NAME, "api_key", "tb_user_USER_VALUE"],
     )
     print(r.output)
     if r.exit_code != 0:

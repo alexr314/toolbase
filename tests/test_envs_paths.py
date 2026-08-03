@@ -77,15 +77,15 @@ def test_project_manifest_path_for_default_project(fake_home):
 def test_project_config_path_for_real_project(tmp_path, fake_home):
     project = tmp_path / "myproj"
     project.mkdir()
-    assert paths.project_config_path(project, "aster") == (
-        project / ".toolbase" / "config" / "aster.yaml"
+    assert paths.project_config_path(project, "calculator") == (
+        project / ".toolbase" / "config" / "calculator.yaml"
     )
 
 
 def test_project_config_path_for_default_project(fake_home):
     dp = paths.default_project_root()
-    assert paths.project_config_path(dp, "aster") == (
-        dp / "config" / "aster.yaml"
+    assert paths.project_config_path(dp, "calculator") == (
+        dp / "config" / "calculator.yaml"
     )
 
 
