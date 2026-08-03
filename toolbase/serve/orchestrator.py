@@ -254,7 +254,7 @@ def discover_toolkits(toolkits_dir: Optional[Path] = None) -> List[ToolkitDiscov
             from ..envs import interpreter_problem
             problem = interpreter_problem(meta)
             if problem:
-                skip = f"{problem} — run `tb repair {name}`"
+                skip = f"{problem} — run `tb clean`, then reinstall"
 
         found.append(ToolkitDiscovery(
             name=name, path=chosen.path, meta=meta, skip_reason=skip,

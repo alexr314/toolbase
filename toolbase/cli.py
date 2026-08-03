@@ -5310,8 +5310,8 @@ def status_cmd():
             )
         if broken_interpreters:
             console.print(
-                f'    [dim]`tb repair {broken_interpreters[0]}` rebuilds the '
-                'environment without reinstalling[/dim]'
+                '    [dim]`tb clean` removes installs that can no longer '
+                'run, then reinstall them[/dim]'
             )
 
 
@@ -6081,190 +6081,6 @@ def use_cmd(target, user_scope, project_scope, private_scope):
     console.print("[dim]Restart your agent session to pick this up.[/dim]")
 
 
-# ── `toolbase repair` ───────────────────────────────────────────────────
-#
-# A venv holds no interpreter of its own: `python -m venv` symlinks the
-# one that built it, and `tb install` builds with whatever Python was
-# running it (see the venv creation in _install_venv). Delete that
-# environment later -- a conda env you were done with -- and every
-# toolkit installed from it is stranded, from everywhere at once, since
-# the cache holds one copy shared by all environments.
-#
-# What survives is everything expensive: the toolkit's files and the
-# whole of site-packages. Only the link to the base is gone. So the
-# repair is to re-point it, not to reinstall -- `venv --upgrade` swaps
-# the interpreter and leaves packages alone, turning a multi-minute
-# re-download into a second.
-#
-# The one hard constraint is the minor version. Compiled extensions in
-# site-packages are built against a specific ABI, so 3.12 packages under
-# a 3.13 interpreter would import and then fail obscurely. This refuses
-# rather than guessing, which is the difference between a repair and a
-# subtler break.
-
-
-def _repair_interpreter(minor: str) -> Optional[Path]:
-    """The interpreter to re-base a venv built on ``minor``, or None.
-
-    Only ever ``sys.executable``. Hunting the host for a Python -- under
-    /opt/homebrew, /usr/local, conda's env dirs -- means encoding a guess
-    about someone else's machine, and a guess that lands on the wrong
-    build fails more obscurely than the breakage it was fixing. The
-    interpreter running us needs no guess: it demonstrably exists and
-    demonstrably works.
-
-    It also keeps one rule for the whole CLI. ``tb install`` already
-    builds venvs with ``sys.executable``, so repair using anything else
-    would mean toolbase had two ideas about where Python comes from.
-    Issue #60 replaces that single source with a managed interpreter;
-    until then there is exactly one place to change.
-    """
-    running = f"{sys.version_info.major}.{sys.version_info.minor}"
-    return Path(sys.executable) if running == minor else None
-
-
-def _slot_minor(venv_dir: Path) -> Optional[str]:
-    """The Python minor a venv was built against, from pyvenv.cfg."""
-    cfg = venv_dir / "pyvenv.cfg"
-    if not cfg.exists():
-        return None
-    for line in cfg.read_text().splitlines():
-        if line.strip().startswith("version"):
-            parts = line.split("=", 1)[-1].strip().split(".")
-            if len(parts) >= 2:
-                return f"{parts[0]}.{parts[1]}"
-    return None
-
-
-@main.command(name="repair")
-@click.argument("target", required=False)
-@click.option("--all", "all_", is_flag=True, default=False,
-              help="Repair every installed toolkit that needs it.")
-@_interactive_options
-def repair_cmd(target, all_, yes, no_, no_input):
-    """Re-point a toolkit's environment at a working Python.
-
-    \b
-    For an install whose parent environment was deleted. A venv only
-    symlinks the interpreter that built it, so removing that conda env
-    (or upgrading the Python it came from) strands the toolkit — while
-    its files and installed packages sit there intact.
-
-    \b
-    This swaps the interpreter and keeps the packages, so it costs a
-    second rather than a full re-download. It will not cross a minor
-    version: 3.12 packages under 3.13 would import and then fail in
-    ways much harder to read than the error you have now. If no
-    matching Python is installed, it says so and stops.
-
-    \b
-      tb repair heptapod          # one toolkit (all its versions)
-      tb repair heptapod@2.4.0    # one version
-      tb repair --all             # everything that needs it
-    """
-    from .envs import walk_cache, interpreter_problem
-
-    if not target and not all_:
-        raise click.UsageError("Give a toolkit name, or --all.")
-
-    name, _, version = (target or "").partition("@")
-    entries = list(walk_cache())
-    if name:
-        entries = [e for e in entries if e.name == name]
-        if not entries:
-            console.print(f"[red]✗[/red] {name} is not installed.")
-            sys.exit(1)
-        if version:
-            entries = [e for e in entries if e.version == version]
-            if not entries:
-                console.print(
-                    f"[red]✗[/red] {name}@{version} is not installed.")
-                sys.exit(1)
-
-    broken = []
-    for e in entries:
-        meta = dict(e.install_meta or {})
-        meta.update(e.legacy_meta or {})
-        problem = interpreter_problem(meta)
-        if problem:
-            broken.append((e, meta, problem))
-
-    if not broken:
-        scope = "any installed toolkit" if all_ or not name else target
-        console.print(f"Nothing to repair — {scope} has a working Python.")
-        return
-
-    mode = _resolve_prompt_mode(yes, no_, no_input)
-    repaired, failed = 0, 0
-    for entry, meta, problem in broken:
-        label = f"{entry.name}@{entry.version}"
-        venv_dir = Path(meta["python_path"]).parent.parent
-        minor = _slot_minor(venv_dir)
-        if minor is None:
-            console.print(
-                f"[red]✗[/red] {label}: no pyvenv.cfg — cannot tell which "
-                f"Python it needs."
-            )
-            console.print(
-                f"    [dim]`tb clean` removes it; "
-                f"`tb install {entry.name}` puts it back.[/dim]"
-            )
-            failed += 1
-            continue
-
-        chosen = _repair_interpreter(minor)
-        if chosen is None:
-            running = f"{sys.version_info.major}.{sys.version_info.minor}"
-            console.print(
-                f"[red]✗[/red] {label}: built on Python {minor}, but "
-                f"toolbase is running {running}."
-            )
-            console.print(
-                f"    [dim]Re-run from a Python {minor} environment to keep "
-                f"its packages, or `tb clean` then "
-                f"`tb install {entry.name}` to rebuild on {running}.[/dim]"
-            )
-            failed += 1
-            continue
-        console.print(f"{label}: {problem} (needs Python {minor})")
-        console.print(f"    [dim]re-pointing at {chosen}[/dim]")
-        if not _confirm(f"Repair {label}?", default=True, mode=mode):
-            console.print("    [dim]skipped[/dim]")
-            continue
-
-        try:
-            # The dangling links have to go first: `venv --upgrade`
-            # copies onto these paths and errors out on a symlink whose
-            # target doesn't exist.
-            for stale in venv_dir.glob("bin/python*"):
-                if stale.is_symlink() and not stale.exists():
-                    stale.unlink()
-            subprocess.run(
-                [str(chosen), "-m", "venv", "--upgrade", str(venv_dir)],
-                check=True, capture_output=True, text=True,
-            )
-        except subprocess.CalledProcessError as exc:
-            console.print(f"[red]✗[/red] {label}: {exc.stderr.strip()}")
-            failed += 1
-            continue
-
-        recheck = interpreter_problem(meta)
-        if recheck:
-            console.print(f"[red]✗[/red] {label}: still broken ({recheck})")
-            failed += 1
-            continue
-        console.print(f"[green]✓[/green] {label} repaired")
-        repaired += 1
-
-    if repaired:
-        console.print(
-            f"\n[dim]Packages were left untouched; only the interpreter "
-            f"link changed.[/dim]"
-        )
-    if failed:
-        sys.exit(1)
-
-
 def _drop_stale_version_records(name: str) -> None:
     """Forget recorded versions of ``name`` whose slots are gone.
 
@@ -6349,10 +6165,14 @@ def clean_cmd(dry_run, yes, no_, no_input):
     """Remove installs that can no longer run.
 
     \b
-    For slots whose Python is gone and that `tb repair` can't re-point —
-    typically because they were built on a different minor version than
-    the one toolbase is running. Removing costs a reinstall; try
-    `tb repair` first, which keeps the packages.
+    For a toolkit whose Python is gone — usually because it was
+    installed from an environment (a conda env, say) that was later
+    deleted. A venv only symlinks the interpreter that built it, so
+    removing that environment strands the toolkit.
+
+    \b
+    Prints the command to put each one back. Reinstalling builds
+    against whatever Python is running toolbase now.
 
     \b
     Clears each toolkit's pins and loadout entries too, so nothing is
@@ -6360,9 +6180,10 @@ def clean_cmd(dry_run, yes, no_, no_input):
     serve skip the toolkit even after a good reinstall.
 
     \b
-    Editable installs are listed but never removed: the slot is a
-    symlink to your working copy, and rebuilding it needs the original
-    `tb install -e <path>`, which only you know.
+    Editable installs are reported but not removed: the slot is a
+    symlink to your working copy, and taking it away is a bigger call
+    than this command should make on its own. The exact `tb install -e`
+    to rebuild it is printed.
     """
     from .envs import walk_cache, interpreter_problem
 
@@ -6407,7 +6228,7 @@ def clean_cmd(dry_run, yes, no_, no_input):
         console.print("[dim]Nothing removed.[/dim]")
         return
 
-    removed = 0
+    removed, restore = 0, []
     for entry, _ in broken:
         try:
             shutil.rmtree(entry.path)
@@ -6425,13 +6246,21 @@ def clean_cmd(dry_run, yes, no_, no_input):
         _drop_stale_version_records(entry.name)
         _uninstall_cleanup_loadouts(entry.name)
         console.print(f"[green]✓[/green] removed {entry.name}@{entry.version}")
+        restore.append(f"tb install {entry.name}@{entry.version}")
         removed += 1
 
     if removed:
+        # Removing costs a reinstall, so hand back the exact commands
+        # rather than leaving the version to be remembered -- the pin
+        # naming it was just cleared, which is what made it safe to
+        # remove and also what erased the record of what was here.
+        running = f"{sys.version_info.major}.{sys.version_info.minor}"
+        console.print(f"\nPut them back with:")
+        for cmd in restore:
+            console.print(f"  {cmd}")
         console.print(
-            f"\n[dim]Reinstall with `tb install <toolkit>`; "
-            f"they will build against Python "
-            f"{sys.version_info.major}.{sys.version_info.minor}.[/dim]"
+            f"[dim]They will build against Python {running} — whatever "
+            f"toolbase is running now.[/dim]"
         )
 
 

@@ -12,14 +12,14 @@ startup, failing at connect with ``mcp connect failed: [Errno 2] No such
 file or directory``. Found on a real machine: an install from a conda env
 that had since been removed.
 
-What survives is everything expensive -- the toolkit and the whole of
-site-packages. Only the link to the base is gone, so the fix is to
-re-point it rather than reinstall.
+What survives the breakage is everything expensive -- the toolkit and
+the whole of site-packages -- but re-pointing the venv is not worth a
+command: it can only aim at the interpreter running toolbase, which is
+usually another environment that can be deleted in turn, so it buys a
+saved download rather than durability. ``tb clean`` removes what cannot
+run and prints how to put it back.
 
-These cover the detection rule, both surfaces that report it, and the
-repair, including its refusal to cross a minor version: 3.12 packages
-under a 3.13 interpreter would import and then fail far less legibly
-than the error being repaired.
+These cover the detection rule, both surfaces that report it, and clean.
 """
 
 from __future__ import annotations
@@ -131,15 +131,15 @@ class TestSurfaces:
         )
         d = {x.name: x for x in discover_toolkits()}
         assert "interpreter missing" in (d["demo-kit"].skip_reason or "")
-        assert "tb repair demo-kit" in d["demo-kit"].skip_reason
+        assert "tb clean" in d["demo-kit"].skip_reason
 
-    def test_status_reports_it_with_the_repair_hint(self, env):
+    def test_status_reports_it_and_names_the_way_out(self, env):
         _slot(python_path="/nonexistent/bin/python")
         r = CliRunner().invoke(cli.main, ["status"])
         assert r.exit_code == 0, r.output
         flat = " ".join(r.output.split())
         assert "interpreter missing" in flat
-        assert "tb repair demo-kit" in flat
+        assert "tb clean" in flat
 
     def test_status_does_not_offer_the_pin_fix_for_this(self, env):
         """Different problem, different fix: reinstalling a toolkit whose
@@ -157,109 +157,6 @@ class TestSurfaces:
         assert "interpreter missing" not in r.output
 
 
-# ── the repair ──────────────────────────────────────────────────────────
-
-
-def _real_venv(slot: Path, minor: str = None) -> Path:
-    """Build a real venv inside a slot, then strand it."""
-    minor = minor or f"{sys.version_info.major}.{sys.version_info.minor}"
-    venv = slot / ".venv"
-    subprocess.run([sys.executable, "-m", "venv", str(venv)],
-                   check=True, capture_output=True)
-    return venv
-
-
-def _strand(venv: Path, minor: str) -> None:
-    """Repoint the interpreter links at a path that doesn't exist --
-    exactly what deleting the parent environment leaves behind."""
-    for p in (venv / "bin").glob("python*"):
-        p.unlink()
-    (venv / "bin" / f"python{minor}").symlink_to(
-        f"/nonexistent/env/bin/python{minor}")
-    (venv / "bin" / "python").symlink_to(f"python{minor}")
-    cfg = venv / "pyvenv.cfg"
-    cfg.write_text(
-        f"home = /nonexistent/env/bin\nversion = {minor}.0\n"
-        "include-system-site-packages = false\n"
-    )
-
-
-class TestRepair:
-    def test_repairs_a_stranded_venv_in_place(self, env):
-        minor = f"{sys.version_info.major}.{sys.version_info.minor}"
-        slot = cache_dir("demo-kit", "1.0.0")
-        slot.mkdir(parents=True, exist_ok=True)
-        venv = _real_venv(slot)
-        marker = venv / "lib" / f"python{minor}" / "site-packages" / "proof.py"
-        marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text("VALUE = 42\n")
-        _strand(venv, minor)
-        _slot(python_path=str(venv / "bin" / "python"))
-
-        assert interpreter_problem(_meta(slot)) == "interpreter missing"
-        r = CliRunner().invoke(cli.main, ["repair", "demo-kit", "--yes"])
-        assert r.exit_code == 0, r.output
-        assert "repaired" in r.output
-        assert interpreter_problem(_meta(slot)) is None
-        # The point of repairing rather than reinstalling.
-        assert marker.exists(), "site-packages was destroyed"
-
-    def test_refuses_to_cross_a_minor_version(self, env):
-        """3.12 packages under a 3.13 interpreter import, then fail in
-        ways much harder to read than the error being repaired."""
-        slot = cache_dir("demo-kit", "1.0.0")
-        slot.mkdir(parents=True, exist_ok=True)
-        venv = _real_venv(slot)
-        _strand(venv, "3.4")            # long dead, certainly absent
-        _slot(python_path=str(venv / "bin" / "python"))
-
-        r = CliRunner().invoke(cli.main, ["repair", "demo-kit", "--yes"])
-        assert r.exit_code == 1
-        flat = " ".join(r.output.split())
-        assert "built on Python 3.4" in flat
-        # And it points at both ways out rather than leaving you stuck:
-        # re-run from a matching Python, or remove and reinstall.
-        assert "Python 3.4 environment" in flat
-        assert "tb clean" in flat
-
-    def test_says_so_when_there_is_nothing_to_repair(self, env, tmp_path):
-        py = tmp_path / "python"
-        py.write_text("#!/bin/sh\n")
-        py.chmod(0o755)
-        _slot(python_path=str(py))
-        r = CliRunner().invoke(cli.main, ["repair", "demo-kit", "--yes"])
-        assert r.exit_code == 0, r.output
-        assert "Nothing to repair" in r.output
-
-    def test_unknown_toolkit_is_an_error(self, env):
-        r = CliRunner().invoke(cli.main, ["repair", "nosuch", "--yes"])
-        assert r.exit_code == 1
-        assert "not installed" in r.output
-
-    def test_requires_a_target_or_all(self, env):
-        r = CliRunner().invoke(cli.main, ["repair"])
-        assert r.exit_code != 0
-        assert "toolkit name" in r.output or "--all" in r.output
-
-    def test_all_scans_every_toolkit(self, env, tmp_path):
-        healthy = tmp_path / "python"
-        healthy.write_text("#!/bin/sh\n")
-        healthy.chmod(0o755)
-        _slot("fine-kit", "1.0.0", python_path=str(healthy))
-        _slot("broken-kit", "1.0.0", python_path="/nonexistent/bin/python")
-        r = CliRunner().invoke(cli.main, ["repair", "--all", "--yes"])
-        assert "broken-kit" in r.output
-        assert "fine-kit" not in r.output
-
-    def test_a_version_can_be_targeted(self, env, tmp_path):
-        healthy = tmp_path / "python"
-        healthy.write_text("#!/bin/sh\n")
-        healthy.chmod(0o755)
-        _slot("demo-kit", "1.0.0", python_path="/nonexistent/bin/python")
-        _slot("demo-kit", "2.0.0", python_path=str(healthy))
-        r = CliRunner().invoke(cli.main, ["repair", "demo-kit@2.0.0", "--yes"])
-        assert r.exit_code == 0, r.output
-        assert "Nothing to repair" in r.output
 
 
 # ── tb clean ────────────────────────────────────────────────────────────
@@ -355,24 +252,3 @@ class TestClean:
         assert "demo-kit" not in pins
 
 
-class TestRepairUsesOnlyTheRunningInterpreter:
-    def test_matching_minor_resolves_to_sys_executable(self):
-        minor = f"{sys.version_info.major}.{sys.version_info.minor}"
-        assert cli._repair_interpreter(minor) == Path(sys.executable)
-
-    def test_a_different_minor_resolves_to_nothing(self):
-        """No host search: a guess that lands on the wrong build fails
-        more obscurely than the breakage it was fixing."""
-        assert cli._repair_interpreter("3.4") is None
-
-    def test_the_refusal_names_clean_as_the_way_out(self, env):
-        slot = cache_dir("demo-kit", "1.0.0")
-        slot.mkdir(parents=True, exist_ok=True)
-        venv = _real_venv(slot)
-        _strand(venv, "3.4")
-        _slot(python_path=str(venv / "bin" / "python"))
-        r = CliRunner().invoke(cli.main, ["repair", "demo-kit", "--yes"])
-        assert r.exit_code == 1
-        flat = " ".join(r.output.split())
-        assert "built on Python 3.4" in flat
-        assert "tb clean" in flat
