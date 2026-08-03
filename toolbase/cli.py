@@ -5236,7 +5236,7 @@ def status_cmd():
     # Serving is only half the picture: tools reach an agent through a
     # harness, and "the agent sees no tools" is as often an unwired
     # harness as an empty loadout.
-    wired = _wired_harnesses(project_root)
+    wired = _wired_harnesses()
     if wired:
         console.print()
         console.print("[bold]Wired harnesses[/bold]")
@@ -5277,13 +5277,24 @@ def status_cmd():
             )
 
 
-def _wired_harnesses(project_root):
+def _wired_harnesses():
     """Registrations that apply here, across every harness adapter.
+
+    Resolves the project the way ``connect`` *writes* — the nearest
+    ``.toolbase/`` above cwd, or cwd itself — not the read-side
+    default-project fallback. A harness config lives beside the code you
+    launch the agent from, so a ``.mcp.json`` in a directory with no
+    ``.toolbase/`` yet is exactly the case worth reporting, and looking
+    for it under ``~/.toolbase/default-project/`` finds nothing. Same
+    reasoning as ``tb connect --list``, which had the same trap.
 
     Best-effort: a harness whose config is unreadable is skipped rather
     than breaking a read-only status view.
     """
     from .connect import all_adapters
+    _scope, project_root = _resolve_connect_scope(
+        user_scope=False, project_scope=False
+    )
     found = []
     for adapter in all_adapters():
         try:

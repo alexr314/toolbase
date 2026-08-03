@@ -183,6 +183,30 @@ class TestHarnesses:
         assert "Wired harnesses" in r.output
         assert "claude-code" in r.output
 
+    def test_finds_a_harness_config_with_no_toolbase_dir(self, env):
+        """The case that slipped through: a `.mcp.json` in a directory
+        that isn't a toolbase project yet.
+
+        Harness configs live beside the code you launch the agent from,
+        so they must be looked for the way `connect` writes them — from
+        cwd — not via the read-side fallback to
+        ~/.toolbase/default-project/, which finds nothing.
+        """
+        CliRunner().invoke(cli.main, ["connect", "claude-code"])
+        assert (Path.cwd() / ".mcp.json").exists()
+        assert not (Path.cwd() / ".toolbase").exists()
+
+        r = _run()
+        assert "Wired harnesses" in r.output
+        assert "claude-code" in r.output
+
+    def test_agrees_with_connect_list(self, env):
+        """The two views answer the same question and must not drift."""
+        CliRunner().invoke(cli.main, ["connect", "claude-code"])
+        listed = CliRunner().invoke(cli.main, ["connect", "--list"]).output
+        status = _run().output
+        assert ("claude-code" in listed) == ("Wired harnesses" in status)
+
     def test_the_section_is_absent_when_nothing_is_wired(self, env):
         _slot("kit", "1.0.0")
         r = _run()
