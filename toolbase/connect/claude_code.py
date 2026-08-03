@@ -32,11 +32,9 @@ class ClaudeCodeAdapter(HarnessAdapter):
     name = "claude-code"
 
     def project_scope_note(self) -> str:
-        return (
-            "Claude Code shows a one-time approval prompt the first time a "
-            "project's .mcp.json is opened -- this is Claude's security model. "
-            "Teammates who clone the repo see it once."
-        )
+        # Kept to one line: it fires on every project-scope connect, and
+        # a paragraph there buries the line that says what happened.
+        return "Claude Code prompts once to approve a project's .mcp.json."
 
     # ── detection ────────────────────────────────────────────────────
 

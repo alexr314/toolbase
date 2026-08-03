@@ -152,9 +152,41 @@ class TestIssues:
     def test_the_section_is_absent_when_healthy(self, env):
         """A clean setup should not print an empty warning heading."""
         _slot("kit", "1.0.0")
-        CliRunner().invoke(cli.main, ["activate", "kit", "-u"])
+        CliRunner().invoke(cli.main, ["activate", "kit"])
+        CliRunner().invoke(cli.main, ["connect", "claude-code"])
         r = _run()
         assert "Issues" not in r.output
+
+    def test_active_toolkits_with_no_harness_is_an_issue(self, env):
+        """Serving is only half the path — tools reach an agent through
+        a harness, and an unwired one looks exactly like an empty
+        loadout from the agent's side."""
+        _slot("kit", "1.0.0")
+        CliRunner().invoke(cli.main, ["activate", "kit"])
+        r = _run()
+        assert "no harness wired here" in _flat(r)
+        assert "tb connect <harness>" in _flat(r)
+
+    def test_nothing_active_means_no_harness_complaint(self, env):
+        """Nothing to serve, so an unwired harness isn't the problem."""
+        _slot("kit", "1.0.0")
+        r = _run()
+        assert "no harness wired" not in _flat(r)
+
+
+class TestHarnesses:
+    def test_wired_harnesses_are_listed(self, env):
+        _slot("kit", "1.0.0")
+        CliRunner().invoke(cli.main, ["activate", "kit"])
+        CliRunner().invoke(cli.main, ["connect", "claude-code"])
+        r = _run()
+        assert "Wired harnesses" in r.output
+        assert "claude-code" in r.output
+
+    def test_the_section_is_absent_when_nothing_is_wired(self, env):
+        _slot("kit", "1.0.0")
+        r = _run()
+        assert "Wired harnesses" not in r.output
 
 
 class TestReadOnly:

@@ -227,7 +227,7 @@ class TestListTreeRendering:
         ]
         assert version_rows
         assert all(
-            l.lstrip().startswith(("● ", "0.")) for l in version_rows
+            l.lstrip().startswith(("▸ ", "0.")) for l in version_rows
         )
 
     def test_groups_sorted_alphabetically(self, fake_home):
@@ -622,8 +622,8 @@ class TestServingMarker:
         r = CliRunner().invoke(cli.main, ["list"])
         assert r.exit_code == 0, r.output
         lines = r.output.splitlines()
-        assert "●" in next(l for l in lines if "0.3.0" in l and "serving" not in l)
-        assert "●" not in next(l for l in lines if "0.1.0" in l)
+        assert "▸" in next(l for l in lines if "0.3.0" in l and "serving" not in l)
+        assert "▸" not in next(l for l in lines if "0.1.0" in l)
         assert "serving 0.3.0 (highest installed, no pin)" in r.output
         # The advice to pick explicitly is printed once, as a legend.
         assert r.output.count("tb use <toolkit>@<version>") == 1
@@ -638,8 +638,8 @@ class TestServingMarker:
         )
         assert r.exit_code == 0, r.output
         lines = r.output.splitlines()
-        assert "●" in next(l for l in lines if "0.1.0" in l)
-        assert "●" not in next(l for l in lines if "0.3.0" in l and "serving" not in l)
+        assert "▸" in next(l for l in lines if "0.1.0" in l)
+        assert "▸" not in next(l for l in lines if "0.3.0" in l and "serving" not in l)
         assert "serving 0.1.0 (pinned to 0.1.0)" in r.output
         # Nothing ambiguous here, so no legend.
         assert "tb use <toolkit>@<version>" not in r.output
@@ -651,7 +651,7 @@ class TestServingMarker:
                    size_bytes=1024)
         r = CliRunner().invoke(cli.main, ["list"])
         assert r.exit_code == 0
-        assert "●" not in r.output
+        assert "▸" not in r.output
         assert "serving" not in r.output
 
     def test_dangling_pin_reported_without_verbose(self, fake_home, tmp_path):
@@ -668,7 +668,7 @@ class TestServingMarker:
         assert "not served" in r.output
         assert "9.9.9" in r.output
         # Nothing claims to be serving.
-        assert "●" not in r.output
+        assert "▸" not in r.output
 
     def test_json_serving_field(self, fake_home):
         self._two_versions()
@@ -761,7 +761,7 @@ class TestPinIndicator:
         result = runner.invoke(cli.main, ["list"])
         assert result.exit_code == 0
         # No star, no legend.
-        assert "●" not in result.output
+        assert "▸" not in result.output
         assert "versions from" not in result.output
 
     def test_pinned_version_is_marked_as_serving(self, fake_home, tmp_path):
@@ -784,7 +784,7 @@ class TestPinIndicator:
             cli.main, ["--project-dir", str(project), "list"],
         )
         assert result.exit_code == 0, result.output
-        assert "●" in result.output
+        assert "▸" in result.output
         assert "serving 0.3.0 (pinned to 0.3.0)" in result.output
         # The source line names where the version came from.
         assert "versions from" in result.output
@@ -810,7 +810,7 @@ class TestPinIndicator:
         assert result.exit_code == 0, result.output
         # One version installed, so no serving bullet — there is no
         # choice to mark. The source line still names the file.
-        assert "●" not in result.output
+        assert "▸" not in result.output
         assert "versions from" in result.output
 
     def test_real_project_legend_still_says_this_project(
@@ -850,8 +850,8 @@ class TestPinIndicator:
         lines = result.output.splitlines()
         v3_line = next(l for l in lines if "0.3.0" in l and "serving" not in l)
         v1_line = next(l for l in lines if "0.1.0" in l)
-        assert "●" in v3_line
-        assert "●" not in v1_line
+        assert "▸" in v3_line
+        assert "▸" not in v1_line
 
 
 # ── --json output ───────────────────────────────────────────────────

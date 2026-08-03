@@ -171,8 +171,8 @@ class TestListSurface:
         lines = r.output.splitlines()
         numbered = next(l for l in lines if "1.0.0" in l and "serving" not in l)
         editable_row = next(l for l in lines if "editable" in l and "->" in l)
-        assert "●" in numbered
-        assert "●" not in editable_row
+        assert "▸" in numbered
+        assert "▸" not in editable_row
 
     def test_editable_row_sorts_last(self, env):
         _slot("kit", "1.0.0")

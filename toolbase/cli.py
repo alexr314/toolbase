@@ -229,7 +229,12 @@ def _display_path(path: Path) -> str:
     try:
         rel = path.relative_to(Path.cwd())
     except ValueError:
-        return str(path)
+        # Not below cwd. Shorten a home path to ~ rather than printing a
+        # line that soft-wraps across three rows and buries the message.
+        try:
+            return f"~/{path.relative_to(Path.home())}"
+        except ValueError:
+            return str(path)
     # relative_to() gives "." for cwd itself, which is true and useless —
     # name the directory so the reader knows *which* one.
     return f"./{rel}" if str(rel) != "." else f"{path.name}/"
@@ -5227,6 +5232,20 @@ def status_cmd():
         for name in idle_rows:
             console.print(_row(name))
 
+    # ── Harnesses ────────────────────────────────────────────────────
+    # Serving is only half the picture: tools reach an agent through a
+    # harness, and "the agent sees no tools" is as often an unwired
+    # harness as an empty loadout.
+    wired = _wired_harnesses(project_root)
+    if wired:
+        console.print()
+        console.print("[bold]Wired harnesses[/bold]")
+        for entry in wired:
+            console.print(
+                f"  {entry.harness:<22} {entry.scope:<10} "
+                f"[dim]{_display_path(entry.path)}[/dim]"
+            )
+
     # ── Issues ───────────────────────────────────────────────────────
     issues: list = []
     for name in sorted(by_name):
@@ -5240,15 +5259,38 @@ def status_cmd():
             issues.append(
                 f"  {name:<22} {version:<10} [dim]pinned, not installed[/dim]"
             )
+    pin_issues = list(issues)
+    if active_rows and not wired:
+        issues.append(
+            "  no harness wired here     [dim]`tb connect <harness>`[/dim]"
+        )
+
     if issues:
         console.print()
         console.print("[bold yellow]Issues[/bold yellow]")
         for line in issues:
             console.print(line)
-        console.print(
-            '    [dim](use "tb use <toolkit>" to clear a pin, or '
-            '"tb install <toolkit>@<version>")[/dim]'
-        )
+        if pin_issues:
+            console.print(
+                '    [dim]`tb use <toolkit>` clears a pin; '
+                '`tb install <toolkit>@<version>` restores it[/dim]'
+            )
+
+
+def _wired_harnesses(project_root):
+    """Registrations that apply here, across every harness adapter.
+
+    Best-effort: a harness whose config is unreadable is skipped rather
+    than breaking a read-only status view.
+    """
+    from .connect import all_adapters
+    found = []
+    for adapter in all_adapters():
+        try:
+            found.extend(e for e in adapter.status(project_root) if e.present)
+        except Exception:
+            continue
+    return found
 
 
 def _sorted_versions(versions):
@@ -5424,7 +5466,7 @@ def list_cmd(as_json, verbose):
             # reason line below says *why* it won, so no pin marker is
             # needed on the row as well.
             serving = multi_version and entry.version == resolution.version
-            bullet = "[green]●[/green]" if serving else " "
+            bullet = "[green]▸[/green]" if serving else " "
             last_used = _format_last_used(entry.last_used_iso)
             size = _format_disk_size(entry.disk_size_bytes)
             # Editable slots show a "-> <source>" indicator so it's
@@ -5505,7 +5547,7 @@ def list_cmd(as_json, verbose):
         # multi-version toolkits the same advice on every one is noise.
         console.print()
         console.print(
-            "[dim]● = serving. Choose with `tb use <toolkit>@<version>`.[/dim]"
+            "[dim]▸ = serving. Choose with `tb use <toolkit>@<version>`.[/dim]"
         )
 
 
@@ -6187,8 +6229,9 @@ def uninstall(name, yes, no_, no_input):
                 removed_skills = unsurface_skills(name, target)
                 if removed_skills:
                     console.print(
-                        f"[green]✓[/green] Removed {len(removed_skills)} skill"
-                        f"{'s' if len(removed_skills) != 1 else ''} from {target.root}/"
+                        f"[dim]  {len(removed_skills)} skill"
+                        f"{'s' if len(removed_skills) != 1 else ''} removed "
+                        f"from {_display_path(target.root)}/[/dim]"
                     )
         except Exception as e:
             console.print(
@@ -7351,8 +7394,9 @@ def _surface_skills_for_connect(adapter, *, no_skills: bool = False) -> None:
             )
     if surfaced:
         console.print(
-            f"[dim]Surfaced {surfaced} skill guide"
-            f"{'s' if surfaced != 1 else ''} to {target.root}/[/dim]"
+            f"[dim]  {surfaced} skill"
+            f"{'s' if surfaced != 1 else ''} -> "
+            f"{_display_path(target.root)}/[/dim]"
         )
 
 
@@ -7372,8 +7416,9 @@ def _unsurface_skills_for_connect(adapter) -> None:
         return
     if removed:
         console.print(
-            f"[dim]Removed {len(removed)} surfaced skill"
-            f"{'s' if len(removed) != 1 else ''} from {target.root}/[/dim]"
+            f"[dim]  {len(removed)} skill"
+            f"{'s' if len(removed) != 1 else ''} removed from "
+            f"{_display_path(target.root)}/[/dim]"
         )
 
 
@@ -7494,7 +7539,9 @@ def connect(harness, user_scope, project_scope, loadout_name, remove, dry_run,
             sys.exit(1)
         path = adapter.config_path(scope, project_root)
         if removed:
-            console.print(f"[green]✓[/green] Removed toolbase from {path}.")
+            console.print(
+                f"[green]✓[/green] Unwired [dim]{_display_path(path)}[/dim]"
+            )
         else:
             console.print(f"[dim]No toolbase entry in {path}; nothing to remove.[/dim]")
         _unsurface_skills_for_connect(adapter)
@@ -7517,7 +7564,9 @@ def connect(harness, user_scope, project_scope, loadout_name, remove, dry_run,
         console.print(f"[dim]Would write toolbase ({command} serve) to {path}.[/dim]")
         return
 
-    console.print(f"[green]✓[/green] Wired toolbase into {harness} at {path}.")
+    console.print(
+        f"[green]✓[/green] Wired {harness} [dim]{_display_path(path)}[/dim]"
+    )
 
     # --loadout: set the active loadout in the matching serve.yaml scope.
     if loadout_name is not None:
@@ -7529,7 +7578,7 @@ def connect(harness, user_scope, project_scope, loadout_name, remove, dry_run,
     if scope == "project":
         note = adapter.project_scope_note()
         if note:
-            console.print(f"[dim]Note: {note}[/dim]")
+            console.print(f"[dim]  {note}[/dim]")
 
 
 def _connect_set_loadout(loadout_name, scope, project_root) -> None:
@@ -7799,7 +7848,9 @@ def disconnect(harness, user_scope, project_scope, all_scopes):
             continue
         path = adapter.config_path(scope, project_root)
         if removed:
-            console.print(f"[green]✓[/green] Removed toolbase from {path}.")
+            console.print(
+                f"[green]✓[/green] Unwired [dim]{_display_path(path)}[/dim]"
+            )
         else:
             console.print(
                 f"[dim]No toolbase entry in {path}; nothing to remove.[/dim]"
