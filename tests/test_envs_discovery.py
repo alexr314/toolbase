@@ -105,25 +105,82 @@ def test_project_root_or_default_override_wins(tmp_path, fake_home):
     assert root == forced.resolve()
 
 
-def test_walk_treats_directory_manifest_as_no_match(tmp_path, fake_home):
-    """A ``.toolbase/manifest.yaml`` *directory* (not file) isn't a hit.
+def test_bare_dot_toolbase_is_a_project(tmp_path, fake_home):
+    """The directory is the marker.
 
-    Edge case: protects against weird layouts. We require a file.
+    It used to be ``manifest.yaml`` inside it, which meant a project
+    holding only config or a loadout wasn't discoverable, and every
+    command that wanted a project fabricated an empty manifest just to
+    be found — a versioning file written by commands with no opinion
+    about versions.
     """
-    project = tmp_path / "weird"
+    project = tmp_path / "repo"
+    (project / ".toolbase").mkdir(parents=True)
+    assert discovery.find_project_root(cwd=project) == project
+
+
+def test_project_with_only_a_loadout_is_found(tmp_path, fake_home):
+    project = tmp_path / "repo"
+    loadouts = project / ".toolbase" / "loadouts"
+    loadouts.mkdir(parents=True)
+    (loadouts / "default.yaml").write_text("toolkits: {}\n")
+    assert discovery.find_project_root(cwd=project) == project
+
+
+def test_legacy_manifest_still_marks_a_project(tmp_path, fake_home):
+    """Pre-0.12 layouts keep resolving."""
+    project = tmp_path / "old"
     sc = project / ".toolbase"
     sc.mkdir(parents=True)
-    # manifest.yaml is a directory, not a file.
-    (sc / "manifest.yaml").mkdir()
+    (sc / "manifest.yaml").write_text("toolkits: []\n")
+    assert discovery.find_project_root(cwd=project) == project
+
+
+def test_a_file_named_dot_toolbase_is_not_a_project(tmp_path, fake_home):
+    """Defends the walk against odd layouts: the marker must be a dir."""
+    project = tmp_path / "weird"
+    project.mkdir()
+    (project / ".toolbase").write_text("not a directory\n")
     assert discovery.find_project_root(cwd=project) is None
 
 
-def test_walk_skips_to_actual_match_not_just_dottoolbase(tmp_path, fake_home):
-    """A bare ``.toolbase/`` dir without ``manifest.yaml`` shouldn't match.
+def test_walk_stops_at_the_nearest_project(tmp_path, fake_home):
+    """Nested projects: the closest one wins."""
+    outer = tmp_path / "outer"
+    inner = outer / "sub" / "inner"
+    (outer / ".toolbase").mkdir(parents=True)
+    (inner / ".toolbase").mkdir(parents=True)
+    assert discovery.find_project_root(cwd=inner) == inner
 
-    Project-root only counts if the manifest file is present.
+
+def test_user_config_dir_is_never_a_project(tmp_path, monkeypatch):
+    """``~/.toolbase/`` is config, not a project.
+
+    It is a directory like any other, so once the marker became the
+    directory rather than a file inside it, nothing else stopped the
+    walk from calling the home directory a project — and every command
+    run anywhere beneath it would have resolved there instead of the
+    user default.
     """
-    project_no_manifest = tmp_path / "incomplete"
-    (project_no_manifest / ".toolbase").mkdir(parents=True)
-    # No manifest.yaml dropped.
-    assert discovery.find_project_root(cwd=project_no_manifest) is None
+    from toolbase import config as toolbase_config
+    home = tmp_path / "home"
+    (home / ".toolbase").mkdir(parents=True)
+    monkeypatch.setattr(toolbase_config, "CONFIG_DIR", home / ".toolbase")
+
+    assert discovery.find_project_root(cwd=home) is None
+    nested = home / "some" / "where"
+    nested.mkdir(parents=True)
+    assert discovery.find_project_root(cwd=nested) is None
+
+
+def test_a_real_project_under_home_is_still_found(tmp_path, monkeypatch):
+    """Excluding the config dir must not blind the walk to projects
+    that live beneath it on disk."""
+    from toolbase import config as toolbase_config
+    home = tmp_path / "home"
+    (home / ".toolbase").mkdir(parents=True)
+    monkeypatch.setattr(toolbase_config, "CONFIG_DIR", home / ".toolbase")
+
+    repo = home / "code" / "repo"
+    (repo / ".toolbase").mkdir(parents=True)
+    assert discovery.find_project_root(cwd=repo) == repo

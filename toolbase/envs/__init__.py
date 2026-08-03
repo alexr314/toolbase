@@ -36,6 +36,7 @@ Public surface (subset; full list in submodules):
 - ``Manifest``, ``ManifestEntry``
 - ``load_manifest(path)`` / ``save_manifest(path, manifest)``
 - ``add_pin``, ``remove_pin``, ``get_pin``
+- ``resolve_version(available, pin=...)`` / ``active_pins()``
 - ``resolve_toolkit_config(toolkit, project_root, user_base=..., ...)``
 """
 
@@ -77,6 +78,19 @@ from .config import (
     resolve_toolkit_config,
     load_user_config_layer,
     load_project_config_layer,
+)
+from .resolve import (
+    Resolution,
+    resolve_version,
+    sort_versions,
+    version_sort_key,
+    active_pins,
+    EDITABLE,
+    PINNED,
+    ONLY,
+    HIGHEST,
+    PIN_MISSING,
+    NOT_INSTALLED,
 )
 from .cache import (
     CacheEntry,
@@ -125,6 +139,18 @@ __all__ = [
     "add_pin",
     "remove_pin",
     "get_pin",
+    # version resolution
+    "Resolution",
+    "resolve_version",
+    "sort_versions",
+    "version_sort_key",
+    "active_pins",
+    "EDITABLE",
+    "PINNED",
+    "ONLY",
+    "HIGHEST",
+    "PIN_MISSING",
+    "NOT_INSTALLED",
     # config layers
     "resolve_toolkit_config",
     "load_user_config_layer",

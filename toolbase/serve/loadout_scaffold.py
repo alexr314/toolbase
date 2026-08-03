@@ -1,11 +1,11 @@
-"""Read/mutate/write profile files for ``tb activate`` / ``tb deactivate``
-and ``tb profile create``.
+"""Read/mutate/write loadout files for ``tb activate`` / ``tb deactivate``
+and ``tb loadout create``.
 
 Uses ruamel round-trip mode so user comments and ordering survive
 mutation (same discipline as ``setup/storage.py`` for ``<toolkit>.yaml``).
 
 The casual-tier commands (``tb activate`` / ``tb deactivate``) operate on
-the **default** profile in the chosen scope. ``<item>`` is one of:
+the **default** loadout in the chosen scope. ``<item>`` is one of:
 
 - ``<toolkit>``            -> whole toolkit
 - ``<toolkit>/<bundle>``   -> one bundle (slash = drill into the toolkit)
@@ -15,11 +15,11 @@ The ``<toolkit>__<name>`` form also addresses a **skill** when ``<name>``
 matches a surfaced skill slug (and not a tool). The CLI does that
 tool-vs-skill resolution — it needs the toolkit's real tool/skill lists —
 and then calls :func:`activate_skill` / :func:`deactivate_skill` here.
-Skills surface by default when the toolkit is active, so the profile only
+Skills surface by default when the toolkit is active, so the loadout only
 records a per-toolkit *blocklist* (``skills.disabled``); deactivate adds a
 slug, activate removes it.
 
-Mutations are profile-file edits with documented, shallow semantics
+Mutations are loadout-file edits with documented, shallow semantics
 (they don't consult the toolkit's actual tool/bundle list). The
 orchestrator and ``tb list`` are where a selection is expanded against
 real tools.
@@ -36,15 +36,15 @@ from ruamel.yaml.comments import CommentedMap
 
 from ..envs.paths import (
     default_project_root,
-    project_profiles_dir,
-    user_profiles_dir,
+    project_loadouts_dir,
+    user_loadouts_dir,
 )
 
 
 _DEFAULT_HEADER = (
-    "Profile: default\n"
+    "Loadout: default\n"
     "Toolkits below are what the agent sees. Edit with tb activate /\n"
-    "tb deactivate, or by hand. Run `tb profile tools` to see available\n"
+    "tb deactivate, or by hand. Run `tb loadout tools` to see available\n"
     "bundles + tools per toolkit.\n"
 )
 
@@ -58,7 +58,7 @@ def _new_yaml() -> YAML:
     return y
 
 
-class ProfileItemError(ValueError):
+class LoadoutItemError(ValueError):
     """Malformed ``<item>`` reference passed to activate/deactivate."""
 
 
@@ -79,49 +79,52 @@ def parse_item(item: str) -> Tuple[str, str, Optional[str]]:
     bundle / tool name (None for toolkit-granularity).
     """
     if "/" in item and "__" in item:
-        raise ProfileItemError(
+        raise LoadoutItemError(
             f"'{item}': use either '<toolkit>/<bundle>' or "
             "'<toolkit>__<tool>', not both."
         )
     if "/" in item:
         tk, _, bundle = item.partition("/")
         if not tk or not bundle:
-            raise ProfileItemError(
+            raise LoadoutItemError(
                 f"'{item}': bundle form must be '<toolkit>/<bundle>'."
             )
         return "bundle", tk, bundle
     if "__" in item:
         tk, _, tool = item.partition("__")
         if not tk or not tool:
-            raise ProfileItemError(
+            raise LoadoutItemError(
                 f"'{item}': tool form must be '<toolkit>__<tool>'."
             )
         return "tool", tk, tool
     if not item:
-        raise ProfileItemError("empty item reference")
+        raise LoadoutItemError("empty item reference")
     return "toolkit", item, None
 
 
-# ── scope -> default profile path ────────────────────────────────────
+# ── scope -> default loadout path ────────────────────────────────────
 
 
-def default_profile_path(
+def default_loadout_path(
     scope: str,
     project_root: Optional[Path] = None,
     *,
     user_base: Optional[Path] = None,
 ) -> Path:
-    """Return ``<scope>/.toolbase/profiles/default.yaml``.
+    """Return ``<scope>/.toolbase/loadouts/default.yaml``.
 
-    ``scope`` is ``"user"`` or ``"project"``. Project scope requires
-    ``project_root`` (the default-project root is used as a fallback by
-    callers that resolve it).
+    ``scope`` is ``"user"``, ``"project"``, or ``"private"``. The last
+    is the project's gitignored ``default.local.yaml`` layer, which
+    merges over the committed file toolkit by toolkit. Project scopes
+    require ``project_root`` (callers that resolve it pass the
+    default-project root as a fallback).
     """
     if scope == "user":
-        return user_profiles_dir(base=user_base) / "default.yaml"
-    if scope == "project":
+        return user_loadouts_dir(base=user_base) / "default.yaml"
+    if scope in ("project", "private"):
         root = project_root if project_root is not None else default_project_root(base=user_base)
-        return project_profiles_dir(root) / "default.yaml"
+        leaf = "default.local.yaml" if scope == "private" else "default.yaml"
+        return project_loadouts_dir(root) / leaf
     raise ValueError(f"unknown scope {scope!r}")
 
 
@@ -129,7 +132,7 @@ def default_profile_path(
 
 
 def _load(path: Path) -> CommentedMap:
-    """Load a profile file as a round-trippable mapping. Returns a fresh
+    """Load a loadout file as a round-trippable mapping. Returns a fresh
     scaffold (with header + empty ``toolkits:``) when the file is absent."""
     if not path.exists():
         data = CommentedMap()
@@ -162,6 +165,63 @@ def _ensure_toolkit(toolkits: CommentedMap, name: str) -> CommentedMap:
     return entry
 
 
+# ── version ──────────────────────────────────────────────────────────
+
+
+def set_version(
+    toolkit: str,
+    version: Optional[str],
+    *,
+    scope: str,
+    project_root: Optional[Path] = None,
+    user_base: Optional[Path] = None,
+) -> MutationResult:
+    """Set (or clear) a toolkit's ``version:`` in the scope's loadout.
+
+    ``version=None`` removes the entry, returning that toolkit to the
+    cache fallback — newest installed wins.
+
+    Writes the loadout's ``versions:`` block, never ``toolkits:``.
+    Choosing a version does not expose a toolkit (that is
+    ``tb activate``), and deactivating one does not discard the version
+    you chose — the two are different acts with different lifetimes.
+
+    Round-trips through ruamel, so comments and ordering survive.
+    """
+    path = default_loadout_path(scope, project_root, user_base=user_base)
+    data = _load(path)
+    versions = data.get("versions")
+    if versions is None:
+        versions = CommentedMap()
+
+    if version is None:
+        if toolkit not in versions:
+            return MutationResult(
+                False, f"{toolkit} has no version set here.", path,
+            )
+        previous = versions[toolkit]
+        del versions[toolkit]
+        if not versions and "versions" in data:
+            del data["versions"]        # don't leave an empty block
+        elif versions:
+            data["versions"] = versions
+        _save(path, data)
+        return MutationResult(
+            True,
+            f"Cleared {toolkit} {previous}; newest installed serves.",
+            path,
+        )
+
+    if versions.get(toolkit) == version:
+        return MutationResult(
+            False, f"{toolkit} already serves {version}.", path,
+        )
+    versions[toolkit] = version
+    data["versions"] = versions
+    _save(path, data)
+    return MutationResult(True, f"{toolkit} now serves {version}.", path)
+
+
 # ── activate ─────────────────────────────────────────────────────────
 
 
@@ -172,9 +232,9 @@ def activate(
     project_root: Optional[Path] = None,
     user_base: Optional[Path] = None,
 ) -> MutationResult:
-    """Activate a toolkit / bundle / tool in the scope's default profile."""
+    """Activate a toolkit / bundle / tool in the scope's default loadout."""
     kind, tk, sub = parse_item(item)
-    path = default_profile_path(scope, project_root, user_base=user_base)
+    path = default_loadout_path(scope, project_root, user_base=user_base)
     data = _load(path)
     toolkits: CommentedMap = data["toolkits"]
 
@@ -244,21 +304,21 @@ def deactivate(
     project_root: Optional[Path] = None,
     user_base: Optional[Path] = None,
 ) -> MutationResult:
-    """Deactivate a toolkit / bundle / tool in the scope's default profile."""
+    """Deactivate a toolkit / bundle / tool in the scope's default loadout."""
     kind, tk, sub = parse_item(item)
-    path = default_profile_path(scope, project_root, user_base=user_base)
+    path = default_loadout_path(scope, project_root, user_base=user_base)
     data = _load(path)
     toolkits: CommentedMap = data["toolkits"]
 
     if tk not in toolkits and kind != "toolkit":
-        return MutationResult(False, f"{tk} is not in the profile; nothing to deactivate.", path)
+        return MutationResult(False, f"{tk} is not in the loadout; nothing to deactivate.", path)
 
     if kind == "toolkit":
         if tk not in toolkits:
             return MutationResult(False, f"{tk} is not active; nothing to deactivate.", path)
         del toolkits[tk]
         _save(path, data)
-        return MutationResult(True, f"Deactivated {tk} (removed from profile).", path)
+        return MutationResult(True, f"Deactivated {tk} (removed from loadout).", path)
 
     # tk is guaranteed present here (the kind != "toolkit" guard above
     # returned early when absent). Use the stored entry directly — never
@@ -311,7 +371,7 @@ def deactivate(
 
 # ── skills (per-skill enable/disable) ─────────────────────────────────
 #
-# Skills surface by default when their toolkit is active, so the profile
+# Skills surface by default when their toolkit is active, so the loadout
 # stores a per-toolkit blocklist under ``skills.disabled`` (bare slugs).
 # ``deactivate_skill`` adds a slug; ``activate_skill`` removes it. The CLI
 # resolves whether a ``<tk>__<name>`` item is a skill before calling these.
@@ -325,11 +385,11 @@ def deactivate_skill(
     project_root: Optional[Path] = None,
     user_base: Optional[Path] = None,
 ) -> MutationResult:
-    """Blocklist skill ``<tk>__<slug>`` in the scope's default profile.
+    """Blocklist skill ``<tk>__<slug>`` in the scope's default loadout.
 
-    Requires ``tk`` to already be active (in the profile) — an inactive
+    Requires ``tk`` to already be active (in the loadout) — an inactive
     toolkit's skills aren't surfaced, so there's nothing to disable."""
-    path = default_profile_path(scope, project_root, user_base=user_base)
+    path = default_loadout_path(scope, project_root, user_base=user_base)
     data = _load(path)
     toolkits: CommentedMap = data["toolkits"]
     if tk not in toolkits:
@@ -369,7 +429,7 @@ def activate_skill(
     user_base: Optional[Path] = None,
 ) -> MutationResult:
     """Un-blocklist skill ``<tk>__<slug>`` (skills are on unless disabled)."""
-    path = default_profile_path(scope, project_root, user_base=user_base)
+    path = default_loadout_path(scope, project_root, user_base=user_base)
     data = _load(path)
     toolkits: CommentedMap = data["toolkits"]
     entry = toolkits.get(tk) if tk in toolkits else None

@@ -13,7 +13,7 @@ import subprocess
 import json
 from pathlib import Path
 from datetime import datetime
-from typing import Any, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 import yaml
 import tarfile
 import tempfile
@@ -154,6 +154,90 @@ def _format_bytes(n: int) -> str:
     if n < 1024 ** 3:
         return f"{n / (1024 ** 2):.2f} MB"
     return f"{n / (1024 ** 3):.2f} GB"
+
+
+# ── scope vocabulary ────────────────────────────────────────────────
+#
+# Every command that writes state picks one of three destinations. The
+# underlying storage is two axes — user vs project, and committed vs
+# gitignored — but the second only exists at project scope (nothing in
+# ~/.toolbase/ is in git to begin with), so three values cover it.
+#
+#   --user / -u      ~/.toolbase/            you, every project
+#   --project / -p   <repo>/.toolbase/       committed, shared
+#   --private        <repo>/.toolbase/*.local.yaml   gitignored machine state
+#
+# Commands differ only in which of the three they accept and which is
+# their default; the words never change meaning between commands.
+SCOPE_USER = "user"
+SCOPE_PROJECT = "project"
+SCOPE_PRIVATE = "private"
+
+
+def _private_option(f):
+    """Add ``--private`` to a command that writes a layerable file.
+
+    Only pins and per-toolkit config have a gitignored sibling; loadouts
+    and harness configs don't, so they don't take this.
+    """
+    return click.option(
+        '--private', 'private_scope', is_flag=True, default=False,
+        help=(
+            "Write this project's gitignored layer (*.local.yaml) — "
+            "machine truth like absolute paths or a local checkout, kept "
+            "out of git. Wins over the committed project layer."
+        ),
+    )(f)
+
+
+def _resolve_scope(
+    user_scope: bool,
+    project_scope: bool,
+    private_scope: bool = False,
+    *,
+    default: str,
+) -> str:
+    """Reduce the scope flags to one of SCOPE_USER/PROJECT/PRIVATE.
+
+    ``default`` is the command's own default, which still differs by
+    command family (install/use default to user; loadout and config
+    commands to project). Passing more than one flag is a usage error
+    rather than a silent precedence rule — with three destinations, a
+    precedence order nobody can see is how pins end up in the wrong file.
+    """
+    chosen = [
+        scope for scope, flag in (
+            (SCOPE_USER, user_scope),
+            (SCOPE_PROJECT, project_scope),
+            (SCOPE_PRIVATE, private_scope),
+        ) if flag
+    ]
+    if len(chosen) > 1:
+        raise click.UsageError(
+            "--user / --project / --private are mutually exclusive."
+        )
+    return chosen[0] if chosen else default
+
+
+def _display_path(path: Path) -> str:
+    """Render a path relative to cwd when it's below it, else absolute.
+
+    Keeps in-project paths short without ever printing a misleading
+    ``./..`` for one that lives elsewhere (the default-project, another
+    checkout, or another drive on Windows).
+    """
+    try:
+        rel = path.relative_to(Path.cwd())
+    except ValueError:
+        # Not below cwd. Shorten a home path to ~ rather than printing a
+        # line that soft-wraps across three rows and buries the message.
+        try:
+            return f"~/{path.relative_to(Path.home())}"
+        except ValueError:
+            return str(path)
+    # relative_to() gives "." for cwd itself, which is true and useless —
+    # name the directory so the reader knows *which* one.
+    return f"./{rel}" if str(rel) != "." else f"{path.name}/"
 
 
 def _require_input(
@@ -361,12 +445,13 @@ class _SectionedGroup(click.Group):
         ),
         (
             "Installing & serving",
-            ["search", "install", "uninstall", "list", "activate",
+            ["search", "install", "uninstall", "use", "status", "list",
+             "activate",
              "deactivate", "serve", "connect", "disconnect", "logs"],
         ),
         (
             "Configuration",
-            ["config", "profile", "setup", "project"],
+            ["config", "loadout", "setup", "project"],
         ),
         (
             "Maintenance",
@@ -550,22 +635,21 @@ def _resolve_active_project_root(*, cwd: Optional[Path] = None):
 
 
 def _materialize_project_dir(project_root: Path) -> Path:
-    """Create ``<project_root>/.toolbase/`` and an empty manifest.yaml.
+    """Create ``<project_root>/.toolbase/``. Idempotent.
 
-    Idempotent — if the dir / manifest already exists, leaves them alone.
-    Returns the path to the manifest file.
+    The directory is the marker, so nothing else needs writing. It used
+    to also drop an empty ``manifest.yaml`` because discovery keyed on
+    that file — which meant a command with no opinion about versions
+    created a versioning file, and after versions moved into loadouts
+    that file was legacy the moment it appeared.
+
+    Returns the ``.toolbase/`` path.
     """
-    from .envs import (
-        project_manifest_path as _project_manifest_path,
-        save_manifest as _save_manifest,
-        Manifest as _Manifest,
-    )
+    from .envs import project_manifest_path as _project_manifest_path
 
-    manifest_path = _project_manifest_path(project_root)
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    if not manifest_path.exists():
-        _save_manifest(manifest_path, _Manifest())
-    return manifest_path
+    tb_dir = _project_manifest_path(project_root).parent
+    tb_dir.mkdir(parents=True, exist_ok=True)
+    return tb_dir
 
 
 def _cwd_project_root() -> Path:
@@ -810,7 +894,9 @@ def create(name, category, description, organization, version, yes, no_, no_inpu
 @main.command()
 @click.argument('name', required=False)
 @click.option(
-    '--path', '-p', default=None,
+    # No -p short: -p is --project everywhere else, and one short flag
+    # meaning two things is what this vocabulary exists to avoid.
+    '--path', default=None,
     help='Parent directory to create the toolkit in (default: current dir).',
 )
 @click.option('--with-docker', is_flag=True, help='Include Dockerfile template')
@@ -1421,7 +1507,7 @@ def _login_paste_user_token(token: str, mode: str) -> None:
         console.print(
             "Use [cyan]toolbase login <toolkit-name> --token <token>[/cyan] "
             "for the legacy form, or generate a per-user token at "
-            "[link]https://toolbase-ai.com/profile/cli-tokens[/link]."
+            "[link]https://toolbase-ai.com/loadout/cli-tokens[/link]."
         )
         sys.exit(1)
     if not auth.is_user_token(token):
@@ -1483,7 +1569,7 @@ def _login_browser_flow(mode: str) -> None:
         raise click.UsageError(
             "Cannot run the browser-flow login non-interactively. "
             "Generate a per-user token at "
-            "https://toolbase-ai.com/profile/cli-tokens and pass it via "
+            "https://toolbase-ai.com/loadout/cli-tokens and pass it via "
             "--token <token>."
         )
 
@@ -1516,7 +1602,7 @@ def _login_browser_flow(mode: str) -> None:
         )
         console.print(
             "Try again, or generate a token manually at "
-            "[link]https://toolbase-ai.com/profile/cli-tokens[/link] and pass "
+            "[link]https://toolbase-ai.com/loadout/cli-tokens[/link] and pass "
             "it via [cyan]--token <token>[/cyan]."
         )
         sys.exit(1)
@@ -1587,11 +1673,11 @@ def project():
 )
 @_interactive_options
 def project_init(target_path, yes, no_, no_input):
-    """Create ``.toolbase/`` + empty ``manifest.yaml`` in this directory.
+    """Create ``.toolbase/`` in this directory, marking it a project.
 
     Idempotent — if a project already exists at the target, prints
-    where it is and exits cleanly. The created manifest is empty;
-    ``tb install <name>`` will populate it.
+    where it is and exits cleanly. The directory starts empty; state
+    lands in it as you activate toolkits and choose versions.
     """
     mode = _resolve_prompt_mode(yes, no_, no_input)
 
@@ -1608,24 +1694,24 @@ def project_init(target_path, yes, no_, no_input):
 
     from .envs import project_manifest_path as _project_manifest_path
 
-    manifest_path = _project_manifest_path(target)
-    if manifest_path.exists():
+    tb_dir = _project_manifest_path(target).parent
+    if tb_dir.is_dir():
         console.print(
             f"[yellow]Project already initialized.[/yellow] "
-            f"Manifest at: {manifest_path}"
+            f"Directory at: {tb_dir}"
         )
         return
 
-    # Materialize the project dir + empty manifest.
     _materialize_project_dir(target)
     console.print(
         f"[green]✓[/green] Initialized toolbase project at "
         f"[cyan]{target}[/cyan]"
     )
-    console.print(f"  Manifest: [dim]{manifest_path}[/dim]")
+    console.print(f"  Directory: [dim]{tb_dir}[/dim]")
     console.print(
-        "\nPin toolkits with [cyan]tb install <name>[/cyan] from inside "
-        "this directory."
+        "\nActivate toolkits with [cyan]tb activate <name>[/cyan] and "
+        "choose versions with [cyan]tb use <name>@<version>[/cyan] from "
+        "inside this directory."
     )
 
 
@@ -1680,7 +1766,7 @@ def logout(clean_legacy, yes, no_, no_input):
             )
             console.print(
                 "[dim]To revoke this token on the server side too, visit "
-                "[link]https://toolbase-ai.com/profile/cli-tokens[/link].[/dim]"
+                "[link]https://toolbase-ai.com/loadout/cli-tokens[/link].[/dim]"
             )
 
     if clean_legacy:
@@ -1849,25 +1935,29 @@ def _layer_option(f):
     default). Mutually exclusive — passing more than one is a usage error.
     """
     f = click.option(
-        "--project", "layer_project", is_flag=True, default=False,
-        help="Target the project layer explicitly.",
+        "--project", "-p", "layer_project", is_flag=True, default=False,
+        help="Target this project's committed layer (the default).",
     )(f)
     f = click.option(
-        "--user", "layer_user", is_flag=True, default=False,
-        help="Target the user layer explicitly.",
+        "--user", "-u", "layer_user", is_flag=True, default=False,
+        help="Target the user layer.",
     )(f)
     f = click.option(
-        "--local", "layer_local", is_flag=True, default=False,
+        "--private", "layer_private", is_flag=True, default=False,
         help=(
-            "Target the project-LOCAL layer: config/<toolkit>.local.yaml, "
-            "project-scoped but gitignored — machine truth like absolute "
+            "Target this project's gitignored layer: "
+            "config/<toolkit>.local.yaml — machine truth like absolute "
             "tool paths. Wins over the committed project layer."
         ),
     )(f)
     f = click.option(
         "--layer", "layer_explicit",
-        type=click.Choice(["user", "project", "local"]), default=None,
-        help="Target a specific config layer (alternative to --user/--project/--local).",
+        type=click.Choice([SCOPE_USER, SCOPE_PROJECT, SCOPE_PRIVATE]),
+        default=None,
+        help=(
+            "Target a specific layer (alternative to "
+            "--user/--project/--private)."
+        ),
     )(f)
     return f
 
@@ -1877,7 +1967,7 @@ def _resolve_config_layer(
     layer_explicit: Optional[str],
     layer_user: bool,
     layer_project: bool,
-    layer_local: bool = False,
+    layer_private: bool = False,
     default_context: str = "auto",
 ) -> Tuple[str, Optional[Path]]:
     """Resolve the per-command effective layer.
@@ -1900,32 +1990,32 @@ def _resolve_config_layer(
         explicit.append("user")
     if layer_project:
         explicit.append("project")
-    if layer_local:
-        explicit.append("local")
+    if layer_private:
+        explicit.append(SCOPE_PRIVATE)
     if len(explicit) > 1:
         raise click.UsageError(
-            "--layer / --user / --project / --local are mutually exclusive."
+            "--layer / --user / --project / --private are mutually exclusive."
         )
 
     if explicit:
         layer = explicit[0]
     else:
         # Default: the cwd's project (create .toolbase/ if there's none
-        # above, mirroring `tb activate` / `tb install -l`). --user targets
+        # above, mirroring `tb activate` / `tb install -p`). --user targets
         # the user layer.
-        return "project", _cwd_project_root()
+        return SCOPE_PROJECT, _cwd_project_root()
 
-    # Explicit layer specified. "local" is project-scoped too — same
+    # Explicit layer specified. "private" is project-scoped too — same
     # root discovery, different (gitignored) file.
-    if layer in ("project", "local"):
+    if layer in (SCOPE_PROJECT, SCOPE_PRIVATE):
         return layer, _cwd_project_root()
-    return "user", None
+    return SCOPE_USER, None
 
 
 @config.command(name="path")
 @click.argument("toolkit_name")
 @_layer_option
-def config_path_cmd(toolkit_name, layer_explicit, layer_user, layer_project, layer_local):
+def config_path_cmd(toolkit_name, layer_explicit, layer_user, layer_project, layer_private):
     """Print the absolute path to a toolkit's config file.
 
     Defaults to the active layer for the current context (project layer
@@ -1937,7 +2027,7 @@ def config_path_cmd(toolkit_name, layer_explicit, layer_user, layer_project, lay
     layer, project_root = _resolve_config_layer(
         layer_explicit=layer_explicit,
         layer_user=layer_user, layer_project=layer_project,
-        layer_local=layer_local,
+        layer_private=layer_private,
     )
     print(_cfg_path(toolkit_name, layer=layer, project_root=project_root))
 
@@ -1945,7 +2035,7 @@ def config_path_cmd(toolkit_name, layer_explicit, layer_user, layer_project, lay
 @config.command(name="show")
 @click.argument("toolkit_name")
 @_layer_option
-def config_show(toolkit_name, layer_explicit, layer_user, layer_project, layer_local):
+def config_show(toolkit_name, layer_explicit, layer_user, layer_project, layer_private):
     """Show a toolkit's effective configuration.
 
     Default (no flags): merged view of user + project layers, with each
@@ -2117,7 +2207,7 @@ def config_show(toolkit_name, layer_explicit, layer_user, layer_project, layer_l
 @config.command(name="edit")
 @click.argument("toolkit_name")
 @_layer_option
-def config_edit(toolkit_name, layer_explicit, layer_user, layer_project, layer_local):
+def config_edit(toolkit_name, layer_explicit, layer_user, layer_project, layer_private):
     """Open the toolkit's config file in $EDITOR.
 
     Defaults to the project layer in a project context, the user layer
@@ -2140,7 +2230,7 @@ def config_edit(toolkit_name, layer_explicit, layer_user, layer_project, layer_l
     layer, project_root = _resolve_config_layer(
         layer_explicit=layer_explicit,
         layer_user=layer_user, layer_project=layer_project,
-        layer_local=layer_local,
+        layer_private=layer_private,
     )
     cfg_file = _cfg_path(
         toolkit_name, layer=layer, project_root=project_root,
@@ -2210,7 +2300,7 @@ def config_edit(toolkit_name, layer_explicit, layer_user, layer_project, layer_l
 @_layer_option
 def config_set(
     toolkit_name, key, value,
-    layer_explicit, layer_user, layer_project, layer_local,
+    layer_explicit, layer_user, layer_project, layer_private,
 ):
     """Set one config field on a toolkit (preserves other fields/comments).
 
@@ -2252,14 +2342,14 @@ def config_set(
     layer, project_root = _resolve_config_layer(
         layer_explicit=layer_explicit,
         layer_user=layer_user, layer_project=layer_project,
-        layer_local=layer_local,
+        layer_private=layer_private,
     )
     cfg_written = set_config_value(
         toolkit_name, key, parsed,
         layer=layer, project_root=project_root,
     )
-    if layer == "local":
-        # config/ sits one level below .toolbase/ — keep the local
+    if layer == SCOPE_PRIVATE:
+        # config/ sits one level below .toolbase/ — keep the private
         # layer out of git the same way editable pins are.
         _ensure_toolbase_gitignore(cfg_written.parent.parent)
     cfg_file = _cfg_path(
@@ -2277,7 +2367,7 @@ def config_set(
 @_layer_option
 def config_unset(
     toolkit_name, key,
-    layer_explicit, layer_user, layer_project, layer_local,
+    layer_explicit, layer_user, layer_project, layer_private,
 ):
     """Remove one config field from a toolkit's config file.
 
@@ -2289,7 +2379,7 @@ def config_unset(
     layer, project_root = _resolve_config_layer(
         layer_explicit=layer_explicit,
         layer_user=layer_user, layer_project=layer_project,
-        layer_local=layer_local,
+        layer_private=layer_private,
     )
     removed = unset_config_value(
         toolkit_name, key, layer=layer, project_root=project_root,
@@ -2380,7 +2470,7 @@ def _render_config_scaffold(toolkit_name: str, schema, source_path: Path) -> str
     help="Overwrite an existing config file.",
 )
 def config_init(
-    toolkit_name, layer_explicit, layer_user, layer_project, layer_local, force,
+    toolkit_name, layer_explicit, layer_user, layer_project, layer_private, force,
 ):
     """Scaffold a commented YAML config file from the toolkit's ``config:`` schema.
 
@@ -2410,7 +2500,7 @@ def config_init(
     layer, project_root = _resolve_config_layer(
         layer_explicit=layer_explicit,
         layer_user=layer_user, layer_project=layer_project,
-        layer_local=layer_local,
+        layer_private=layer_private,
     )
     out_path = _cfg_path(
         toolkit_name, layer=layer, project_root=project_root,
@@ -3411,14 +3501,6 @@ _EDITABLE_SYMLINK_ENTRIES = (
 
 # Threshold at which ``tb list -v`` collapses install-gated tools into a
 # single summary line rather than rendering one row per skipped tool.
-# Hits when a many-bundle toolkit (e.g. heptapod with 50 tools across 8
-# bundles) is installed with a small subset: without collapse, ~45 of 50
-# rows are identical-shaped "skipped: bundle X not installed" entries
-# that drown the few tools actually served. Below this count the
-# per-tool view stays useful because each row carries different bundle
-# information; above it the noise dominates.
-_VERBOSE_INSTALL_GATED_COLLAPSE_THRESHOLD = 6
-
 # Cache-slot version sentinel for editable installs. Unparseable by
 # ``parse_version`` (so it sorts last in ``tb list``) and disjoint from
 # any real semver, so it can never collide with a registry version slot.
@@ -3478,57 +3560,64 @@ def _resolve_install_source_path(arg: str) -> Optional[Path]:
     return None
 
 
-def _pin_after_install(
-    name: str, version: str, *,
-    local_scope: bool,
-    bundles: Optional[List[str]] = None,
+def _warn_pin_scope_not_active(
+    manifest_root: Path, name: str, version: Optional[str] = None,
 ) -> None:
-    """Pin (name, version) into the global or active-project manifest.
+    """Warn when a pin was written somewhere that doesn't govern cwd.
 
-    ``local_scope=False`` (the -g default) pins into the global
-    default-project manifest. ``local_scope=True`` (-l) pins into the
-    active project's manifest, creating ``.toolbase/`` in cwd if no
-    project is found above it. Best-effort: a pin failure warns but
-    doesn't fail the install (the cache slot is already usable; serve
-    falls back to walking the cache).
+    ``-g`` (the default for install/use) writes the default-project,
+    but a cwd inside a project resolves pins from *that* project's
+    manifest — the global pin contributes nothing there. Without this
+    note the command reports success while the version the user asked
+    for is not the one that will serve where they're standing.
+    """
+    try:
+        from .serve.loadout_scaffold import default_loadout_path
+        active, _source = _resolve_active_project_root()
+        if active.resolve() == manifest_root.resolve():
+            return
+        active_manifest = _display_path(
+            default_loadout_path("project", active)
+        )
+        console.print(
+            f"[yellow]⚠ Does not apply here — this project uses "
+            f"{active_manifest}[/yellow]"
+        )
+        target = f"{name}@{version}" if version else f"{name}@<version>"
+        console.print(f"  [dim]Use `tb use {target}` instead.[/dim]")
+    except Exception:
+        pass  # a heads-up must never break the command
 
-    ``bundles`` (when not None) records the subset of declared bundles
-    that was installed. ``None`` means "all bundles" — the manifest
-    entry omits the field.
+
+def _note_if_not_the_serving_version(name: str, version: str) -> None:
+    """Say so when the version just installed isn't the one that serves.
+
+    Install never pins, so ``tb install foo@1.2.0`` alongside a newer
+    slot puts 1.2.0 in the cache and leaves 1.4.0 serving. Same for
+    ``-e``: linking a checkout doesn't make it serve, deliberately, since
+    the cache is user-wide and it would otherwise change every directory
+    at once. That is the intended split — install places bits, ``tb use``
+    chooses — but unannounced it reads as the install having failed.
     """
     try:
         from .envs import (
-            project_manifest_path as _project_manifest_path,
-            add_pin as _add_pin,
-            default_project_root as _default_project_root,
+            list_versions as _list_versions, resolve_version, active_pins,
         )
-        if local_scope:
-            # -l: pin into THIS project. find_project_root walks up for
-            # an existing .toolbase/; if none, create one in cwd.
-            from .envs import find_project_root as _find_project_root
-            found = _find_project_root(cwd=Path.cwd())
-            if found is None:
-                project_root = Path.cwd().resolve()
-                _materialize_project_dir(project_root)
-            else:
-                project_root = found
-            manifest_path = _project_manifest_path(project_root)
-            _add_pin(manifest_path, name, version, bundles=bundles)
-            try:
-                rel = manifest_path.relative_to(Path.cwd())
-                display = f"./{rel}"
-            except ValueError:
-                display = str(manifest_path)
-            console.print(f"[dim]Pinned to this project: {display}[/dim]")
-        else:
-            # -g (default): pin into the global default-project.
-            project_root = _default_project_root()
-            manifest_path = _project_manifest_path(project_root)
-            _add_pin(manifest_path, name, version, bundles=bundles)
-    except Exception as e:
+        resolution = resolve_version(
+            _list_versions(name), pin=active_pins().get(name),
+        )
+        if not resolution.ok or resolution.version == version:
+            return
+        what = "your checkout" if version == EDITABLE_VERSION else version
         console.print(
-            f"[dim]Note: could not pin {name} to the manifest: {e}[/dim]"
+            f"[yellow]Note: {resolution.version} still serves here, "
+            f"not {what}.[/yellow]"
         )
+        console.print(
+            f"  [dim]Switch with [/dim][cyan]tb use {name}@{version}[/cyan]"
+        )
+    except Exception:
+        pass  # a heads-up must never break an otherwise-good install
 
 
 def _ensure_toolbase_gitignore(tb_dir: Path) -> None:
@@ -3542,52 +3631,10 @@ def _ensure_toolbase_gitignore(tb_dir: Path) -> None:
         gitignore.write_text("manifest.local.yaml\nconfig/*.local.yaml\n")
 
 
-def _pin_editable_local(name: str, *, local_scope: bool) -> None:
-    """Pin (name, "editable") into the machine-local manifest layer.
-
-    Writes ``manifest.local.yaml`` next to the scoped project's
-    committed manifest and drops a ``.gitignore`` into ``.toolbase/``
-    (created only if absent) so the local layer never reaches git.
-    Best-effort like _pin_after_install: a failure warns, the install
-    stands.
-    """
-    try:
-        from .envs import (
-            project_manifest_path as _project_manifest_path,
-            local_manifest_path as _local_manifest_path,
-            add_pin as _add_pin,
-            default_project_root as _default_project_root,
-        )
-        if local_scope:
-            from .envs import find_project_root as _find_project_root
-            found = _find_project_root(cwd=Path.cwd())
-            if found is None:
-                project_root = Path.cwd().resolve()
-                _materialize_project_dir(project_root)
-            else:
-                project_root = found
-        else:
-            project_root = _default_project_root()
-        local_path = _local_manifest_path(_project_manifest_path(project_root))
-        _add_pin(local_path, name, "editable")
-        _ensure_toolbase_gitignore(local_path.parent)
-        console.print(
-            f"[dim]Pinned editable in {local_path.name} "
-            f"(machine-local, gitignored).[/dim]"
-        )
-    except Exception as e:
-        console.print(
-            f"[dim]Note: could not write the local editable pin: {e} — "
-            f"without it, numbered slots outrank this checkout.[/dim]"
-        )
-
-
-
 def _install_from_path(
     source_path: Path,
     *,
     editable: bool,
-    local_scope: bool,
     no_skills: bool,
     mode: str,
     requested_bundles: Optional[List[str]] = None,
@@ -3818,13 +3865,6 @@ def _install_from_path(
         prior = _installed_bundles(slot) or []
         union = sorted(set(prior) | set(new_bundles_to_install))
         _update_meta_bundles(slot, union)
-        # Update manifest entry too so the recorded bundle set stays
-        # consistent with what's actually installed.
-        if not editable:
-            _pin_after_install(
-                name, version,
-                local_scope=local_scope, bundles=union,
-            )
         console.print(
             f"\n[bold green]✓ Added bundle(s) "
             f"{', '.join(new_bundles_to_install)} to {name} "
@@ -3933,6 +3973,12 @@ def _install_from_path(
         f"{'(editable)' if editable else 'v' + version}[/bold green]\n"
     )
     _warn_install_name_collisions(name)
+    # Editable included: a linked checkout that loses to a numbered slot
+    # is exactly the "my edits do nothing" case, and this is the earliest
+    # possible place to say so.
+    _note_if_not_the_serving_version(
+        name, EDITABLE_VERSION if editable else version,
+    )
     if editable:
         console.print(f"Source: [cyan]{source_path}[/cyan] (live link)")
         console.print(
@@ -3951,27 +3997,6 @@ def _install_from_path(
     # Reads from the slot, which for editable resolves through the symlink
     # to live source.
     _note_skills_available(name, slot, no_skills)
-
-    # Pinning. Editable installs deliberately stay OUT of the committed
-    # manifest — a machine-specific path won't resolve on a collaborator's
-    # clone. The editable: true + source_path in .install_meta.yaml is the
-    # only place an editable install is tracked.
-    if not editable:
-        _pin_after_install(
-            name, version,
-            local_scope=local_scope,
-            bundles=(
-                sorted(set(bundles_to_install))
-                if requested_bundles is not None else None
-            ),
-        )
-    else:
-        # Editable pins are machine state (they point at THIS machine's
-        # source checkout), so they go to the gitignored local layer —
-        # never the committed manifest. Without a pin the editable slot
-        # would lose version resolution to any numbered slot and the
-        # checkout would silently not serve.
-        _pin_editable_local(name, local_scope=local_scope)
 
     console.print(f"\n[bold]Ready to use! Try:[/bold]")
     console.print(f"  [cyan]tb activate {name}[/cyan]   # expose it to the agent")
@@ -4155,20 +4180,21 @@ def _note_skills_available(name: str, slot: Path, no_skills: bool = False) -> No
 
 
 def _post_install_activate(
-    name: str, *, global_scope: bool, local_scope: bool
+    name: str,
 ) -> None:
-    """Activate a just-installed toolkit in the default profile (``-a``).
+    """Activate a just-installed toolkit in the default loadout (``-a``).
 
-    Uses the same project-first scope resolution as ``tb activate``: the
-    cwd's project by default (creating ``.toolbase/`` there if needed), or
-    the user layer with ``-g``. The install binary always lives in the global
-    cache, but *activation* is per-project -- you install a toolkit once, then
-    activate it where you want it. Best-effort; a failure here doesn't fail
-    the install (the toolkit is in the cache regardless).
+    Uses ``tb activate``'s own default — this project — because install
+    has no scope of its own to follow. The binary lives in the
+    user-level cache, but *activation* is per-project: you install a
+    toolkit once, then activate it where you want it. Pass ``-u`` to
+    ``tb activate`` afterwards for the user-level loadout. Best-effort;
+    a failure here doesn't fail the install (the toolkit is in the cache
+    regardless).
     """
-    from .serve.profile_scaffold import activate as _activate
+    from .serve.loadout_scaffold import activate as _activate
     try:
-        scope, project_root = _resolve_profile_scope(global_scope, local_scope)
+        scope, project_root = _resolve_loadout_scope(False, False)
         result = _activate(name, scope=scope, project_root=project_root)
     except Exception as e:
         console.print(f"[yellow]Installed, but could not activate: {e}[/yellow]")
@@ -4305,12 +4331,12 @@ def _parse_import_file(path: Path) -> list:
     return entries
 
 
-def _install_from_import_file(ctx, path: Path, *, global_scope, local_scope,
+def _install_from_import_file(ctx, path: Path, *,
                               no_skills, activate_after, rebuild,
                               yes, no_, no_input, invoke=None) -> None:
     """Install every toolkit an import file lists, via the normal
     per-toolkit install path (``ctx.invoke``), with the file-level
-    scope/prompt flags applied to each entry.
+    prompt flags applied to each entry.
 
     Per-entry failures do not abort the run — the remaining entries
     still install — but the command exits nonzero with a summary, so a
@@ -4331,7 +4357,6 @@ def _install_from_import_file(ctx, path: Path, *, global_scope, local_scope,
         try:
             invoke(
                 name=e["target"], version=e["version"],
-                global_scope=global_scope, local_scope=local_scope,
                 editable=e["editable"], no_skills=no_skills,
                 activate_after=activate_after, bundle_flags=e["bundles"],
                 rebuild=rebuild, yes=yes, no_=no_, no_input=no_input,
@@ -4350,8 +4375,8 @@ def _install_from_import_file(ctx, path: Path, *, global_scope, local_scope,
     click.echo(f"✓ {len(entries)} toolkit(s) installed from {path.name}")
 
 
-def _install_from_tarball(ctx, path: Path, *, version, global_scope,
-                          local_scope, no_skills, activate_after,
+def _install_from_tarball(ctx, path: Path, *, version,
+                          no_skills, activate_after,
                           bundle_flags, rebuild, yes, no_, no_input,
                           invoke=None) -> None:
     """Install an exported toolkit tarball (``tb export``'s output).
@@ -4387,7 +4412,6 @@ def _install_from_tarball(ctx, path: Path, *, version, global_scope,
                 )
         invoke(
             name=str(root), version=version,
-            global_scope=global_scope, local_scope=local_scope,
             editable=False, no_skills=no_skills,
             activate_after=activate_after, bundle_flags=bundle_flags,
             rebuild=rebuild, yes=yes, no_=no_, no_input=no_input,
@@ -4398,27 +4422,10 @@ def _install_from_tarball(ctx, path: Path, *, version, global_scope,
 @click.argument('name')
 @click.option('--version', '-v', help='Specific version to install (default: latest)')
 @click.option(
-    '--global', '-g', 'global_scope', is_flag=True, default=False,
-    help=(
-        'Global install (the default): pin into the global default-project '
-        'manifest. Accepts a registry name or a path to a toolkit dir.'
-    ),
-)
-@click.option(
-    '--local', '-l', 'local_scope', is_flag=True, default=False,
-    help=(
-        "Local install: pin into THIS project's manifest "
-        "(<project>/.toolbase/manifest.yaml), creating the project if "
-        "needed. Binary still lives in the global cache. Accepts a "
-        "registry name or a path to a toolkit dir."
-    ),
-)
-@click.option(
     '--editable', '-e', 'editable', is_flag=True, default=False,
     help=(
         'Editable install: symlink a local toolkit source dir into the '
-        'cache so serve loads tools live. Path only (no registry name). '
-        'Not pinned into the committed manifest.'
+        'cache so serve loads tools live. Path only (no registry name).'
     ),
 )
 @click.option(
@@ -4428,10 +4435,11 @@ def _install_from_tarball(ctx, path: Path, *, version, global_scope,
 @click.option(
     '--activate', '-a', 'activate_after', is_flag=True, default=False,
     help=(
-        "Also activate the toolkit in the default profile after installing "
+        "Also activate the toolkit in the default loadout after installing "
         "(adds it to what `tb serve` exposes). Activates the cwd's project "
-        "by default (creating .toolbase/ there), like `tb activate`; pass "
-        "-g to activate the user-level profile instead. Without -a, install "
+        "(creating .toolbase/ there), like `tb activate`; run "
+        "`tb activate -u <toolkit>` afterwards for the user-level loadout "
+        "instead. Without -a, install "
         "only places the toolkit in the cache; nothing is served until you "
         "activate it."
     ),
@@ -4457,21 +4465,26 @@ def _install_from_tarball(ctx, path: Path, *, version, global_scope,
 )
 @_interactive_options
 @click.pass_context
-def install(ctx, name, version, global_scope, local_scope, editable, no_skills, activate_after, bundle_flags, rebuild, yes, no_, no_input):
+def install(ctx, name, version, editable, no_skills, activate_after, bundle_flags, rebuild, yes, no_, no_input):
     """
     Install a toolkit — from the registry or a local source directory.
 
     \b
-    Scope/source flags (mutually exclusive; -g is the default):
-      -g / --global    Pin into the global default-project (the default).
-      -l / --local     Pin into THIS project's manifest (.toolbase/).
-      -e / --editable  Live symlink to a local source dir (path only).
+    Install puts a toolkit in the cache and nothing else. It writes no
+    manifest and takes no scope, so there is never a question of which
+    file an install touched. Which version *serves* is decided
+    separately, by `tb use` — and until you say otherwise, the newest
+    installed version wins (an editable checkout ahead of all of them).
 
     \b
-    The toolkit binary (venv/conda env + tools) always lives in the
-    global cache at ~/.toolbase/cache/<name>/<version>/, regardless
-    of flag. -g vs -l only changes which manifest gets the pin; -e
-    additionally points the cache slot at your live source folder.
+    So installing an older version does not switch to it:
+        tb install calculator@1.2.0   # 1.4.0 already installed -> 1.4.0 serves
+        tb use calculator@1.2.0       # now 1.2.0 serves, here
+
+    \b
+    The toolkit binary (venv/conda env + tools) lives in the user-level
+    cache at ~/.toolbase/cache/<name>/<version>/. `-e` points that cache
+    slot at your live source folder instead of a downloaded copy.
 
     \b
     The argument is a registry name OR a local path. It's treated as a
@@ -4485,16 +4498,15 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
       2. Create an isolated environment (venv or conda, auto-detected)
       3. Install dependencies, then orchestral-ai + mcp
       4. Surface the toolkit's skills into ~/.claude/skills/ (unless --no-skills)
-      5. Pin into the appropriate manifest (-g default-project, -l this project)
 
     \b
     Examples:
-        toolbase install aster                   # global, latest
-        toolbase install aster@1.2.0             # pin a version via @ syntax
-        toolbase install aster --version 1.2.0   # pin a version via flag
-        toolbase install -l aster                # pin into this project
-        toolbase install .                        # global install from cwd
+        toolbase install aster                   # latest
+        toolbase install aster@1.2.0             # a specific version
+        toolbase install aster --version 1.2.0   # same, flag form
+        toolbase install .                        # install from cwd
         toolbase install -e .                     # editable: live link to cwd
+        toolbase install aster -a                 # install and activate here
         toolbase install aster --no-skills        # don't touch ~/.claude/skills/
         toolbase install calculator[basic,symbolic]  # only those bundles
         toolbase install calculator --bundle basic   # flag form, same effect
@@ -4504,7 +4516,6 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
     import requests
 
     mode = _resolve_prompt_mode(yes, no_, no_input)
-
     # Import-file mode: ``tb install <file>.yaml`` installs every
     # toolkit the file lists — the shareable counterpart to
     # per-toolkit installs, so a project can commit e.g. toolkits.yaml
@@ -4519,7 +4530,6 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
             )
         return _install_from_import_file(
             ctx, Path(name),
-            global_scope=global_scope, local_scope=local_scope,
             no_skills=no_skills, activate_after=activate_after,
             rebuild=rebuild, yes=yes, no_=no_, no_input=no_input,
         )
@@ -4535,17 +4545,9 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
             )
         return _install_from_tarball(
             ctx, Path(name), version=version,
-            global_scope=global_scope, local_scope=local_scope,
             no_skills=no_skills, activate_after=activate_after,
             bundle_flags=bundle_flags, rebuild=rebuild,
             yes=yes, no_=no_, no_input=no_input,
-        )
-
-    # Flag exclusivity. -e/-l/-g pick one scope/source; -g is the
-    # default when none is given.
-    if sum(int(b) for b in (editable, local_scope, global_scope)) > 1:
-        raise click.UsageError(
-            "-e, -l, and -g are mutually exclusive. Pick one."
         )
 
     # Strip any pip-extras suffix from the name (e.g. ``foo[a,b]``)
@@ -4577,13 +4579,12 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
             "version). Drop --version."
         )
 
-    # Path-source branch (covers -e always, and -g/-l when the arg is a
-    # path). Builds the cache slot from the local dir and pins per scope.
+    # Path-source branch (covers -e always, and a plain path install).
+    # Builds the cache slot from the local directory.
     if source_path is not None:
         installed_name = _install_from_path(
             source_path,
             editable=editable,
-            local_scope=local_scope,
             no_skills=no_skills,
             mode=mode,
             requested_bundles=requested_bundles,
@@ -4591,7 +4592,7 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
         )
         if activate_after and installed_name:
             _post_install_activate(
-                installed_name, global_scope=global_scope, local_scope=local_scope
+                installed_name
             )
         return
 
@@ -4969,24 +4970,14 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
     except Exception:
         pass
 
-    # Pin into the appropriate manifest. -g (default) pins into the
-    # global default-project; -l pins into THIS project's manifest
-    # (creating it if needed). The cache slot itself is always in the
-    # global cache and project-agnostic — only the pin is scoped. There
-    # is deliberately no "where do you want this?" prompt: the flag (or
-    # its -g default) carries that intent now.
-    _pin_after_install(
-        name, version, local_scope=local_scope,
-        bundles=_bundles_to_install,
-    )
-
     # Step 9: Success message
     console.print(f"\n[bold green]✓ Successfully installed {name} v{version}[/bold green]\n")
     _warn_install_name_collisions(name)
+    _note_if_not_the_serving_version(name, version)
 
     if activate_after:
         _post_install_activate(
-            name, global_scope=global_scope, local_scope=local_scope
+            name
         )
 
     if env_type == 'venv':
@@ -5145,6 +5136,187 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
     console.print()
 
 
+@main.command(name="status")
+def status_cmd():
+    """Show what applies here: project, loadout, and what would serve.
+
+    \b
+    The three questions you otherwise have to ask three commands:
+    which context am I in, what would run, and what is broken. Sections
+    appear only when they have content, so a healthy setup is short.
+
+    Read-only. Never creates a project or writes a file.
+    """
+    from .envs import (
+        walk_cache as _walk_cache,
+        active_pins as _active_pins,
+        resolve_version as _resolve_version,
+        list_versions as _list_versions,
+    )
+
+    project_root, source = _resolve_active_project_root()
+    resolved, active = _list_resolve_active()
+
+    # ── Context ──────────────────────────────────────────────────────
+    where = {
+        "override": "--project-dir",
+        "walk": ".toolbase/ above cwd",
+        "fallback": "no .toolbase/ above cwd — user default",
+    }.get(source, source)
+    # The default-project is printed absolute: rendered relative to a cwd
+    # that happens to be your home directory it reads like a local one.
+    root_display = (
+        str(project_root) if _is_default_project_root(project_root)
+        else _display_path(project_root)
+    )
+    console.print(
+        f"[bold]On project[/bold]  {root_display}   [dim]({where})[/dim]"
+    )
+    if resolved is None:
+        console.print(
+            "[bold]Loadout[/bold]     [yellow]none resolved[/yellow]"
+            "   [dim](nothing is served)[/dim]"
+        )
+    else:
+        console.print(
+            f"[bold]Loadout[/bold]     {resolved.name}"
+            f"   [dim]({resolved.source})[/dim]"
+        )
+
+    entries = _walk_cache()
+    by_name: dict = {}
+    for e in entries:
+        by_name.setdefault(e.name, []).append(e)
+    pins = _active_pins(project_root)
+    resolutions = {
+        name: _resolve_version([c.version for c in cands], pin=pins.get(name))
+        for name, cands in by_name.items()
+    }
+
+    def _row(name: str) -> str:
+        r = resolutions[name]
+        version = r.version or "—"
+        reason = {
+            "pinned": "pinned", "only": "only", "highest": "latest",
+        }.get(r.reason, r.reason)
+        extra = ""
+        slot = next(
+            (c for c in by_name[name] if c.version == r.version), None)
+        src = (slot.install_meta or {}).get("source_path") if slot else None
+        if src:
+            extra = f"   [dim]→ {src}[/dim]"
+        others = [c.version for c in by_name[name] if c.version != r.version]
+        if r.reason == "highest" and others:
+            extra += f"   [dim]({', '.join(_sorted_versions(others))} also installed)[/dim]"
+        return f"  {name:<22} {version:<10} [dim]{reason}[/dim]{extra}"
+
+    # ── Active / installed ───────────────────────────────────────────
+    servable = [n for n in sorted(by_name) if resolutions[n].ok]
+    active_rows = [n for n in servable if n in active]
+    idle_rows = [n for n in servable if n not in active]
+
+    console.print()
+    console.print("[bold]Active[/bold] [dim]— served to agents[/dim]")
+    if active_rows:
+        for name in active_rows:
+            console.print(_row(name))
+    else:
+        console.print("  [dim](none)[/dim]")
+        console.print(
+            '    [dim](use "tb activate <toolkit>" to expose one)[/dim]'
+        )
+
+    if idle_rows:
+        console.print()
+        console.print("[bold]Installed, not active[/bold]")
+        for name in idle_rows:
+            console.print(_row(name))
+
+    # ── Harnesses ────────────────────────────────────────────────────
+    # Serving is only half the picture: tools reach an agent through a
+    # harness, and "the agent sees no tools" is as often an unwired
+    # harness as an empty loadout.
+    # Always shown, empty or not. "Nothing is wired" is the answer to
+    # "why does the agent see no tools" as often as an empty loadout is,
+    # and a section that vanishes when it matters most is no help.
+    wired = _wired_harnesses()
+    console.print()
+    console.print("[bold]Wired harnesses[/bold]")
+    if wired:
+        for entry in wired:
+            console.print(
+                f"  {entry.harness:<22} {entry.scope:<10} "
+                f"[dim]{_display_path(entry.path)}[/dim]"
+            )
+    else:
+        console.print("  [dim](none)[/dim]")
+        console.print(
+            '    [dim](use "tb connect <harness>" to wire one)[/dim]'
+        )
+
+    # ── Issues ───────────────────────────────────────────────────────
+    issues: list = []
+    for name in sorted(by_name):
+        r = resolutions[name]
+        if not r.ok:
+            issues.append(
+                f"  {name:<22} {str(r.pin):<10} [dim]{r.describe()}[/dim]"
+            )
+    for name, version in sorted(pins.items()):
+        if name not in by_name:
+            issues.append(
+                f"  {name:<22} {version:<10} [dim]pinned, not installed[/dim]"
+            )
+    pin_issues = list(issues)
+    if active_rows and not wired:
+        issues.append(
+            "  no harness wired here     [dim]`tb connect <harness>`[/dim]"
+        )
+
+    if issues:
+        console.print()
+        console.print("[bold yellow]Issues[/bold yellow]")
+        for line in issues:
+            console.print(line)
+        if pin_issues:
+            console.print(
+                '    [dim]`tb use <toolkit>` clears a pin; '
+                '`tb install <toolkit>@<version>` restores it[/dim]'
+            )
+
+
+def _wired_harnesses():
+    """Registrations that apply here, across every harness adapter.
+
+    Resolves the project the way ``connect`` *writes* — the nearest
+    ``.toolbase/`` above cwd, or cwd itself — not the read-side
+    default-project fallback. A harness config lives beside the code you
+    launch the agent from, so a ``.mcp.json`` in a directory with no
+    ``.toolbase/`` yet is exactly the case worth reporting, and looking
+    for it under ``~/.toolbase/default-project/`` finds nothing. Same
+    reasoning as ``tb connect --list``, which had the same trap.
+
+    Best-effort: a harness whose config is unreadable is skipped rather
+    than breaking a read-only status view.
+    """
+    from .connect import all_adapters
+    _scope, project_root = _resolve_connect_scope(
+        user_scope=False, project_scope=False
+    )
+    found = []
+    for adapter in all_adapters():
+        try:
+            found.extend(e for e in adapter.status(project_root) if e.present)
+        except Exception:
+            continue
+    return found
+
+
+def _sorted_versions(versions):
+    from .envs import sort_versions
+    return sort_versions(versions)
+
+
 @main.command(name='list')
 @click.option(
     "--json", "as_json", is_flag=True, default=False,
@@ -5157,8 +5329,9 @@ def install(ctx, name, version, global_scope, local_scope, editable, no_skills, 
 @click.option(
     "-v", "--verbose", "verbose", is_flag=True, default=False,
     help=(
-        "Show each toolkit's tools with served/hidden status and bundle "
-        "membership (relative to the active profile)."
+        "Show each toolkit's tools grouped by bundle, with served/hidden "
+        "status relative to the active loadout. Bundles that can't serve "
+        "carry the reason on the group header."
     ),
 )
 def list_cmd(as_json, verbose):
@@ -5171,10 +5344,11 @@ def list_cmd(as_json, verbose):
     \b
         $ tb list
         heptapod
-          - 0.1     (used 3 days ago, 8.2 GB)
-          - 0.3 *   (used yesterday, 8.4 GB)
+          - 0.3 * <-  (used yesterday, 8.4 GB)
+          - 0.1       (used 3 days ago, 8.2 GB)
+          serving 0.3 (pinned to 0.3)
         arxiv-search
-          - 0.2 *   (used 2 hours ago, 180 MB)
+          - 0.2 *     (used 2 hours ago, 180 MB)
 
         * = pinned in this project (./.toolbase/manifest.yaml)
 
@@ -5190,6 +5364,12 @@ def list_cmd(as_json, verbose):
         resolves to). Legend printed only when at least one pin
         applies. Default-project pins are flagged the same way; the
         legend points at the resolved manifest path.
+      - ``<-``: marks the version that would actually serve, shown
+        only when more than one is installed (with one slot there's
+        nothing to disambiguate). The line below the version rows
+        gives the reason — a pin, or the highest-wins fallback. A pin
+        naming a version that isn't installed is called out there too:
+        serve skips such a toolkit entirely.
 
     With ``--json``, output is a flat array of objects:
 
@@ -5197,7 +5377,8 @@ def list_cmd(as_json, verbose):
         [
           {"name": "heptapod", "version": "0.1.0",
            "last_used_iso": "2026-05-09T14:23:00", "size_bytes": 8200000000,
-           "pinned_in_project": false},
+           "pinned_in_project": false, "serving": false,
+           "serving_reason": "highest"},
           ...
         ]
 
@@ -5214,14 +5395,26 @@ def list_cmd(as_json, verbose):
     # default-project when no .toolbase/ is found.
     pin_map, manifest_path = _list_resolve_pin_map(entries)
 
-    # Resolve the active profile to mark which toolkits are active (served).
-    # Best-effort: no active profile => everything inactive, no error.
-    resolved_profile, active_set = _list_resolve_active()
+    # Which slot of each toolkit would actually serve, and why. Same call
+    # serve makes, so the markers can't disagree with what runs. Computed
+    # once here and shared by the JSON records and the tree.
+    from .envs import resolve_version
+    _versions_by_name: dict[str, list] = {}
+    for e in entries:
+        _versions_by_name.setdefault(e.name, []).append(e.version)
+    resolutions = {
+        n: resolve_version(vs, pin=pin_map.get(n))
+        for n, vs in _versions_by_name.items()
+    }
+
+    # Resolve the active loadout to mark which toolkits are active (served).
+    # Best-effort: no active loadout => everything inactive, no error.
+    resolved_loadout, active_set = _list_resolve_active()
     # Tool names shared by >1 active toolkit — annotated per row under -v so
     # overlap (harmless while namespaced, a clash if ever served bare) is
-    # visible. Only meaningful with an active multi-toolkit profile.
+    # visible. Only meaningful with an active multi-toolkit loadout.
     _name_collisions = _active_name_collisions(active_set) if verbose else {}
-    active_profile = resolved_profile.name if resolved_profile is not None else None
+    active_loadout = resolved_loadout.name if resolved_loadout is not None else None
 
     if as_json:
         payload = [
@@ -5231,6 +5424,12 @@ def list_cmd(as_json, verbose):
                 "last_used_iso": e.last_used_iso,
                 "size_bytes": e.disk_size_bytes,
                 "pinned_in_project": pin_map.get(e.name) == e.version,
+                # ``serving``: this is the slot serve would spawn. At most
+                # one entry per name is true; all false means a pin points
+                # at a version that isn't installed. Distinct from
+                # ``active``, which is about the loadout, not the version.
+                "serving": resolutions[e.name].version == e.version,
+                "serving_reason": resolutions[e.name].reason,
                 "active": e.name in active_set,
                 # ``installed_bundles``: ``null`` for a full install
                 # (every declared bundle), or a list (possibly empty) for
@@ -5250,36 +5449,43 @@ def list_cmd(as_json, verbose):
         )
         return
 
-    if active_profile is not None:
-        console.print(f"[dim]Active profile: {active_profile}[/dim]\n")
+    if active_loadout is not None:
+        console.print(f"[dim]Active loadout: {active_loadout}[/dim]\n")
     else:
         console.print(
-            "[dim]No active profile — nothing is served. "
+            "[dim]No active loadout — nothing is served. "
             "Run `tb activate <toolkit>` to expose tools.[/dim]\n"
         )
 
     # Group entries by toolkit name; within a name, sort by version desc.
-    from .versioning import parse_version
+    from .envs import version_sort_key
     grouped: dict[str, list] = {}
     for e in entries:
         grouped.setdefault(e.name, []).append(e)
     for k in grouped:
-        grouped[k].sort(
-            key=lambda e: parse_version(e.version) or (0, 0, 0),
-            reverse=True,
-        )
+        # Same ordering resolution uses, so the row order and the
+        # serving marker can't tell different stories.
+        grouped[k].sort(key=lambda e: version_sort_key(e.version), reverse=True)
 
     any_pin_applied = False
+    any_ambiguous = False
     for name in sorted(grouped):
         is_active = name in active_set
         mark = "[green]✓[/green]" if is_active else "[red]✗[/red]"
         status = "active" if is_active else "inactive"
         console.print(f"{mark} [cyan]{name}[/cyan] [dim]({status})[/dim]")
+        resolution = resolutions[name]
+        multi_version = len(grouped[name]) > 1
         for entry in grouped[name]:
-            pinned = pin_map.get(name) == entry.version
-            if pinned:
+            if pin_map.get(name) == entry.version:
                 any_pin_applied = True
-            marker = " [yellow]*[/yellow]" if pinned else ""
+            # A leading bullet on the slot that serves, so the column
+            # scans down a long list. Only when there's a choice to be
+            # made — on a single-version toolkit it would be noise. The
+            # reason line below says *why* it won, so no pin marker is
+            # needed on the row as well.
+            serving = multi_version and entry.version == resolution.version
+            bullet = "[green]➤[/green]" if serving else " "
             last_used = _format_last_used(entry.last_used_iso)
             size = _format_disk_size(entry.disk_size_bytes)
             # Editable slots show a "-> <source>" indicator so it's
@@ -5305,66 +5511,78 @@ def list_cmd(as_json, verbose):
                 subset_tag = ""
             # Version column padded a little so the parenthetical
             # aligns across rows that have / don't have the pin marker.
-            ver_cell = f"{entry.version}{marker}"
+            ver_cell = f"{entry.version}"
             if editable_src:
                 console.print(
-                    f"  - {ver_cell}   "
-                    f"[dim](-> {editable_src}, used {last_used}, {size})[/dim]"
+                    f"  {bullet} {ver_cell}   "
+                    f"[dim](→ {editable_src}, used {last_used}, {size})[/dim]"
                     f"{subset_tag}"
                 )
             else:
                 console.print(
-                    f"  - {ver_cell}   "
+                    f"  {bullet} {ver_cell}   "
                     f"[dim](used {last_used}, {size})[/dim]"
                     f"{subset_tag}"
                 )
-        # Editable-shadow warning: a live-linked checkout exists but
-        # resolution picks a numbered slot — the developer's code is
-        # not what serves. Same condition as discovery's shadow_note.
-        selected = pin_map.get(name) or (
-            max((e.version for e in grouped[name]),
-                key=lambda v: parse_version(v) or (0, 0, 0))
-            if len(grouped[name]) > 1 else grouped[name][0].version
-        )
-        has_editable = any(e.version == "editable" for e in grouped[name])
-        if has_editable and selected != "editable":
+        # State the resolution outright. A dangling pin means serve skips
+        # the toolkit entirely, which no marker on a version row conveys;
+        # an unpinned multi-version toolkit is being resolved by a rule
+        # (highest wins) the user never asked for.
+        if not resolution.ok:
             console.print(
-                "    [yellow]⚠ editable slot shadowed by "
-                f"{selected} — pin 'editable' in "
-                ".toolbase/manifest.local.yaml to serve your checkout[/yellow]"
+                f"    [yellow]⚠ not served: {resolution.describe()}[/yellow]"
+            )
+        elif multi_version:
+            any_ambiguous = any_ambiguous or resolution.is_ambiguous
+            console.print(
+                f"    [dim]serving {resolution.version} "
+                f"({resolution.describe()})[/dim]"
+            )
+        # An editable checkout that isn't serving: same condition as
+        # discovery's shadow_note, so the two views agree. This is the
+        # "my edits do nothing" symptom, and the fix is one command.
+        has_editable = any(e.version == EDITABLE_VERSION for e in grouped[name])
+        if (has_editable and resolution.ok
+                and resolution.version != EDITABLE_VERSION):
+            console.print(
+                f"    [yellow]⚠ checkout not served — "
+                f"`tb use {name}@editable`[/yellow]"
             )
         if verbose:
-            _list_print_tools_verbose(name, resolved_profile, _name_collisions)
+            _list_print_tools_verbose(
+                name, resolved_loadout, _name_collisions,
+                resolution=resolution,
+                multi_version=multi_version,
+            )
 
     if any_pin_applied and manifest_path is not None:
-        # Render the manifest path relative to cwd when possible — keeps
-        # the legend readable in real-project usage. Falls back to the
-        # absolute path for default-project or when relative-resolution
-        # fails (e.g. across drive letters on Windows).
-        try:
-            rel = manifest_path.relative_to(Path.cwd())
-            display = f"./{rel}"
-        except ValueError:
-            display = str(manifest_path)
+        # Where the versions came from. One line, no marker legend —
+        # the per-toolkit "serving X (pinned to X)" already says which.
+        console.print()
+        console.print(f"[dim]versions from {_display_path(manifest_path)}[/dim]")
+
+    if any_ambiguous:
+        # Printed once rather than per toolkit: with several unpinned
+        # multi-version toolkits the same advice on every one is noise.
         console.print()
         console.print(
-            f"[dim]* = pinned in this project ({display})[/dim]"
+            "[dim]➤ = serving. Choose with `tb use <toolkit>@<version>`.[/dim]"
         )
 
 
 def _list_resolve_active():
-    """Best-effort active-profile resolution for ``tb list``.
+    """Best-effort active-loadout resolution for ``tb list``.
 
-    Returns ``(resolved_profile_or_None, active_toolkit_names)``. A toolkit
-    is "active" when the active profile names it and serve.yaml doesn't
-    blocklist it. No active profile (or a malformed one) yields
+    Returns ``(resolved_loadout_or_None, active_toolkit_names)``. A toolkit
+    is "active" when the active loadout names it and serve.yaml doesn't
+    blocklist it. No active loadout (or a malformed one) yields
     ``(None, set())`` — list never errors over serve config.
     """
-    from .serve.profiles import resolve_profile
+    from .serve.loadouts import resolve_loadout
     from .serve.config import ServeConfigError
     try:
         project_root, _src = _resolve_active_project_root()
-        resolved = resolve_profile(project_root)
+        resolved = resolve_loadout(project_root)
     except (ServeConfigError, Exception):
         return None, set()
     disabled = set(resolved.disabled_toolkits)
@@ -5433,22 +5651,36 @@ def _warn_install_name_collisions(new_toolkit: str) -> None:
         pass  # a heads-up must never break install
 
 
-def _list_print_tools_verbose(name, resolved_profile, collisions=None) -> None:
+def _list_print_tools_verbose(
+    name, resolved_loadout, collisions=None, *,
+    resolution=None, multi_version=False,
+) -> None:
     """Print a toolkit's declared tools with served/hidden status.
 
     Tool list comes from the toolkit.yaml declaration (explicit form);
     implicit-form toolkits don't enumerate tools there, so we say so.
+
+    ``resolution`` is the caller's already-computed version resolution;
+    when it failed the caller has printed the reason, so we don't repeat
+    it. ``multi_version`` captions the tool block with the version it
+    describes — with several slots installed, an uncaptioned list looks
+    like it belongs to the last version row printed above it.
     """
     from .serve.orchestrator import discover_toolkits, _resolve_bundle_availability
-    from .serve.profiles import tool_is_served
+    from .serve.loadouts import tool_is_served
     from .envs.cache import installed_bundles as _installed_bundles
 
-    disc = next(
-        (d for d in discover_toolkits()
-         if d.name == name and d.skip_reason is None),
-        None,
-    )
+    disc = next((d for d in discover_toolkits() if d.name == name), None)
     if disc is None:
+        return
+    if disc.skip_reason:
+        # The toolkit is installed but serve would refuse to spawn it.
+        # Silence here reads as "this toolkit has no tools" — say why
+        # instead, unless the caller already reported the same problem.
+        if resolution is None or resolution.ok:
+            console.print(
+                f"    [yellow]⚠ not served: {disc.skip_reason}[/yellow]"
+            )
         return
     availability, name_to_bundles = _resolve_bundle_availability(disc)
     if not name_to_bundles:
@@ -5457,6 +5689,8 @@ def _list_print_tools_verbose(name, resolved_profile, collisions=None) -> None:
             "is available at serve time)[/dim]"
         )
         return
+    if multi_version:
+        console.print(f"    [dim]tools in {disc.path.name}:[/dim]")
 
     # Subset-install scope. ``None`` (legacy / full install) means
     # nothing is gated by install scope here; a set means tools whose
@@ -5470,135 +5704,165 @@ def _list_print_tools_verbose(name, resolved_profile, collisions=None) -> None:
 
     sel = None
     global_disabled: set = set()
-    if resolved_profile is not None:
-        sel = resolved_profile.toolkits.get(name)
+    if resolved_loadout is not None:
+        sel = resolved_loadout.toolkits.get(name)
         prefix = f"{name}__"
         global_disabled = {
             q.split("__", 1)[1]
-            for q in resolved_profile.disabled_tools
+            for q in resolved_loadout.disabled_tools
             if q.startswith(prefix)
         }
-        # A toolkit absent from the active profile serves nothing.
-        toolkit_active = name in resolved_profile.toolkits
+        # A toolkit absent from the active loadout serves nothing.
+        toolkit_active = name in resolved_loadout.toolkits
     else:
         toolkit_active = False
 
-    # Install-gated tools (their bundle isn't in the install set) are
-    # collected and either rendered inline (small count) or collapsed
-    # into a single summary line (many). For a 50-tool toolkit installed
-    # with 2 bundles, the per-tool entries previously dominated the view
-    # and added no actionable information beyond "this bundle wasn't
-    # selected at install time." Config-gated tools stay inline because
-    # they're one ``tb config set`` away — meaningfully more actionable
-    # than reinstalling a bundle.
-    install_gated: List[Tuple[str, List[str]]] = []
+    # Tools are grouped under the bundle they belong to. A 60-tool
+    # toolkit across 12 bundles is unreadable as one alphabetical list,
+    # and the gating annotations repeat identically on every row of a
+    # gated bundle; as a group header each is stated once, next to the
+    # command that clears it.
+    by_bundle: Dict[Optional[str], List[str]] = {}
     for tool in sorted(name_to_bundles):
-        bundles = name_to_bundles[tool]
-        install_scope_excludes = (
-            bool(bundles)
-            and installed_set is not None
-            and not any(b in installed_set for b in bundles)
-        )
-        if install_scope_excludes:
-            install_gated.append((tool, bundles))
-            continue
-        # Inline render for tools that aren't install-gated. Config-
-        # gating annotation surfaces here for tools whose bundles are
-        # all dropped at config-evaluation time.
-        served = toolkit_active and tool_is_served(
-            tool, bundles, sel, availability, global_disabled,
-            installed_bundles=installed_set,
-        )
-        mk = "[green]✓[/green]" if served else "[red]✗[/red]"
-        btag = ""
-        if bundles:
-            blabel = "bundle" if len(bundles) == 1 else "bundles"
-            btag = f" [dim][{blabel}: {', '.join(bundles)}][/dim]"
-        gate = ""
-        if bundles and all(b in availability.dropped_bundles for b in bundles):
-            missing_per_bundle = [
-                ", ".join(availability.dropped_bundles[b]) for b in bundles
-            ]
-            gate = (
-                f" [yellow](needs config: "
-                f"{'; '.join(missing_per_bundle)})[/yellow]"
-            )
-        clash = ""
-        others = [tk for tk in (collisions or {}).get(tool, []) if tk != name]
-        if others:
-            clash = f" [yellow](also in: {', '.join(others)})[/yellow]"
-        console.print(f"    {mk} {tool}{btag}{gate}{clash}")
+        # A tool in several bundles is listed under each of them (rare,
+        # and less confusing than picking one arbitrarily); a tool with
+        # no bundle goes in the trailing ``None`` group.
+        for bundle in name_to_bundles[tool] or [None]:
+            by_bundle.setdefault(bundle, []).append(tool)
 
-    if install_gated:
-        if len(install_gated) >= _VERBOSE_INSTALL_GATED_COLLAPSE_THRESHOLD:
-            absent_bundles = sorted({
-                b for _, bundles in install_gated
-                for b in bundles if b not in installed_set
-            })
-            blabel = "bundles" if len(absent_bundles) != 1 else "bundle"
-            console.print(
-                f"    [dim](+{len(install_gated)} tools in uninstalled "
-                f"{blabel}: {', '.join(absent_bundles)} — add with "
-                f"`tb install {name}[<bundle>]`)[/dim]"
-            )
+    def _gated(bundle: Optional[str]) -> bool:
+        if bundle is None:
+            return False
+        return (
+            (installed_set is not None and bundle not in installed_set)
+            or bundle in availability.dropped_bundles
+        )
+
+    # Usable bundles first, then gated ones, ungrouped tools last.
+    ordered = sorted(
+        by_bundle,
+        key=lambda b: (b is None, _gated(b), b or ""),
+    )
+
+    for bundle in ordered:
+        tools = by_bundle[bundle]
+        if bundle is None:
+            # A toolkit that declares no bundles at all has nothing to
+            # group by; the header would be the only one printed.
+            if len(ordered) > 1:
+                console.print("    [dim](no bundle)[/dim]")
         else:
-            for tool, bundles in install_gated:
-                absent = [b for b in bundles if b not in installed_set]
-                btag_label = "bundles" if len(bundles) > 1 else "bundle"
-                glabel = "bundle" if len(absent) == 1 else "bundles"
-                console.print(
-                    f"    [red]✗[/red] {tool}"
-                    f" [dim][{btag_label}: {', '.join(bundles)}][/dim]"
-                    f" [yellow](skipped: {glabel} "
-                    f"{', '.join(absent)} not installed)[/yellow]"
+            not_installed = (
+                installed_set is not None and bundle not in installed_set
+            )
+            missing_cfg = availability.dropped_bundles.get(bundle)
+            if not_installed:
+                # Deps for this bundle were never pip-installed, so none
+                # of its tools can be served whatever the loadout says.
+                # Escaped: Rich would read the bracketed bundle name in
+                # the install command as a style tag and swallow it.
+                header_note = (
+                    f"  [yellow]✗ not installed[/yellow] "
+                    f"[dim]— add with `tb install {name}\\[{bundle}]`[/dim]"
                 )
+            elif missing_cfg:
+                header_note = (
+                    f"  [yellow]⚠ needs config: "
+                    f"{', '.join(missing_cfg)}[/yellow]"
+                )
+            else:
+                header_note = ""
+            console.print(f"    [cyan]\\[{bundle}][/cyan]{header_note}")
+            if not_installed:
+                # Names only. Per-tool status would be a column of ✗ all
+                # explained by the header, but dropping the names makes
+                # the tools undiscoverable until the bundle is installed.
+                console.print(f"      [dim]{', '.join(tools)}[/dim]")
+                continue
+
+        for tool in tools:
+            bundles = name_to_bundles[tool]
+            served = toolkit_active and tool_is_served(
+                tool, bundles, sel, availability, global_disabled,
+                installed_bundles=installed_set,
+            )
+            mk = "[green]✓[/green]" if served else "[red]✗[/red]"
+            # Only the *other* bundles are worth naming — this one is the
+            # header the tool is printed under.
+            others_b = [b for b in bundles if b != bundle]
+            btag = (
+                f" [dim](also in: {', '.join(others_b)})[/dim]"
+                if others_b else ""
+            )
+            clash = ""
+            others = [tk for tk in (collisions or {}).get(tool, []) if tk != name]
+            if others:
+                clash = (
+                    f" [yellow](name also in: {', '.join(others)})[/yellow]"
+                )
+            console.print(f"      {mk} {tool}{btag}{clash}")
 
 
 def _list_sorted_entries(entries):
-    """Return entries deterministically sorted by (name asc, version desc)."""
-    from .versioning import parse_version
-    return sorted(
-        entries,
-        key=lambda e: (
-            e.name,
-            tuple(-x for x in (parse_version(e.version) or (0, 0, 0))),
-        ),
+    """Return entries deterministically sorted by (name asc, version desc).
+
+    Two stable passes rather than one composite key: the version key is a
+    nested tuple (rank, parts) that can't be negated to invert it.
+    """
+    from .envs import version_sort_key
+    by_version = sorted(
+        entries, key=lambda e: version_sort_key(e.version), reverse=True,
     )
+    return sorted(by_version, key=lambda e: e.name)
 
 
 def _list_resolve_pin_map(entries):
-    """Return ``(pin_map, manifest_path)`` for the active project.
+    """Return ``(pin_map, source_path)`` for the active context.
 
-    ``pin_map`` is ``{toolkit_name: pinned_version}`` for every entry
-    pinned in the active project's manifest. Returns an empty dict
-    (and ``None`` manifest path) when no entries are pinned or the
-    manifest is unreadable. Read-only; never creates a project dir.
+    ``pin_map`` is ``{toolkit_name: pinned_version}``. It comes from
+    ``active_pins`` — the same call serve and setup make — so the ``*``
+    markers can never disagree with what actually runs. That means the
+    active loadout's ``version:`` entries, with any legacy manifest pins
+    underneath. ``source_path`` is the file to name in the legend.
+
+    Read-only; never creates a project dir. Unreadable state degrades to
+    "no pins" rather than breaking the listing.
     """
     if not entries:
         return {}, None
     try:
-        from .envs import (
-            project_manifest_path as _project_manifest_path,
-            load_manifest as _load_manifest,
-        )
+        from .envs import active_pins as _active_pins
         project_root, _source = _resolve_active_project_root()
-        from .envs import (
-            load_merged_pins as _load_merged_pins,
-            local_manifest_path as _local_manifest_path,
-        )
-        manifest_path = _project_manifest_path(project_root)
-        if (not manifest_path.exists()
-                and not _local_manifest_path(manifest_path).exists()):
+        pins = _active_pins(project_root)
+        if not pins:
             return {}, None
-        # Merged view: committed manifest + machine-local layer
-        # (manifest.local.yaml), local wins — the same resolution
-        # discover_toolkits uses, so the * markers never disagree
-        # with what actually serves.
-        return _load_merged_pins(manifest_path), manifest_path
+        return pins, _pin_source_path(project_root)
     except Exception:
-        # Manifest read errors (schema-too-new, malformed) shouldn't
-        # break list. Skip the pin indicator and proceed.
         return {}, None
+
+
+def _pin_source_path(project_root):
+    """The file the pin legend should name: the active loadout if there
+    is one, else the legacy manifest it fell back to."""
+    from .envs import project_manifest_path as _project_manifest_path
+    try:
+        from .serve.loadouts import resolve_loadout
+        resolved = resolve_loadout(project_root)
+        if resolved.versions:
+            from .serve.loadout_scaffold import default_loadout_path
+            scope = "user" if _is_default_project_root(project_root) else "project"
+            return default_loadout_path(scope, project_root)
+    except Exception:
+        pass
+    return _project_manifest_path(project_root)
+
+
+def _is_default_project_root(project_root) -> bool:
+    from .envs import default_project_root as _default_project_root
+    try:
+        return Path(project_root).resolve() == _default_project_root().resolve()
+    except Exception:
+        return False
 
 
 def _format_last_used(
@@ -5669,6 +5933,128 @@ def _format_disk_size(size_bytes: Optional[int]) -> str:
     return f"{n:.1f} PB"
 
 
+@main.command(name="use")
+@click.argument("target")
+@click.option(
+    '--user', '-u', 'user_scope', is_flag=True, default=False,
+    help=(
+        'Choose for you everywhere, rather than for this project.'
+    ),
+)
+@click.option(
+    '--project', '-p', 'project_scope', is_flag=True, default=False,
+    help=(
+        "Choose for THIS project (the default), creating .toolbase/ here "
+        "if there is none above."
+    ),
+)
+@_private_option
+def use_cmd(target, user_scope, project_scope, private_scope):
+    """Choose which installed version of a toolkit serves.
+
+    \b
+    Writes the pin and nothing else — no download, no environment
+    rebuild. Both versions stay in the cache; this only decides which
+    one `tb serve` spawns.
+
+    \b
+        tb use calculator@1.4.0     serve 1.4.0
+        tb use calculator@editable  serve your local checkout
+        tb use calculator           clear the pin (highest installed wins)
+
+    \b
+    Scope matches every other state-changing command: this project by
+    default, -u for you everywhere, --private for this project's
+    gitignored layer. An `editable` choice is routed to the private
+    layer, since it names a checkout no other machine has.
+
+    The change takes effect the next time `tb serve` starts, so restart
+    your agent session to pick it up.
+    """
+    from .envs import (
+        list_versions as _list_versions,
+        resolve_version as _resolve_version,
+        sort_versions as _sort_versions,
+        active_pins as _active_pins,
+    )
+    from .serve.loadout_scaffold import set_version as _set_loadout_version
+
+    scope = _resolve_scope(
+        user_scope, project_scope, private_scope, default=SCOPE_PROJECT,
+    )
+
+    name, _, version = target.partition("@")
+    version = version or None
+    if not name:
+        raise click.UsageError(
+            f"Bad target {target!r} — expected <toolkit> or "
+            "<toolkit>@<version>."
+        )
+
+    versions = _list_versions(name)
+    if not versions:
+        console.print(f"[red]✗ Toolkit '{name}' is not installed.[/red]")
+        console.print(f"\nInstall it: [cyan]toolbase install {name}[/cyan]")
+        sys.exit(1)
+
+    if version is not None and version not in versions:
+        console.print(f"[red]✗ {name} v{version} is not installed.[/red]")
+        console.print(
+            f"Installed versions: {', '.join(_sort_versions(versions))}"
+        )
+        console.print(
+            f"\nInstall it first: "
+            f"[cyan]toolbase install {name}@{version}[/cyan]"
+        )
+        sys.exit(1)
+
+    # An editable slot points at this machine's checkout, so committing
+    # that choice would leave a teammate with a pin to a directory they
+    # don't have. Route it to the private layer unless the user picked
+    # user scope, which is never committed either.
+    if version == EDITABLE_VERSION and scope == SCOPE_PROJECT:
+        scope = SCOPE_PRIVATE
+        console.print(
+            "[dim]Editable pins are machine-only — writing the "
+            "gitignored layer.[/dim]"
+        )
+
+    loadout_root = None if scope == SCOPE_USER else _cwd_project_root()
+    result = _set_loadout_version(
+        name, version, scope=scope, project_root=loadout_root,
+    )
+    if scope == SCOPE_PRIVATE:
+        _ensure_toolbase_gitignore(result.path.parent.parent)
+    if result.changed:
+        console.print(f"[green]✓[/green] {result.message}")
+    else:
+        console.print(f"[dim]{result.message}[/dim]")
+
+    console.print(f"[dim]Loadout: {_display_path(result.path)}[/dim]")
+    from .envs import default_project_root as _default_project_root
+    scope_root = (
+        loadout_root if loadout_root is not None else _default_project_root()
+    )
+
+    # The resolution reported is the one for the scope we wrote. That is
+    # only the whole story when that scope governs cwd — otherwise say so
+    # outright, because "now serves X" read from inside a project that
+    # resolves differently is worse than saying nothing.
+    if scope == SCOPE_USER:
+        _warn_pin_scope_not_active(scope_root, name, version)
+    resolution = _resolve_version(
+        _list_versions(name), pin=_active_pins(scope_root).get(name),
+    )
+    if not resolution.ok:
+        console.print(f"[yellow]⚠ {resolution.describe()}[/yellow]")
+    elif version is None:
+        console.print(
+            f"[dim]{name} now resolves to {resolution.version} "
+            f"({resolution.describe()}).[/dim]"
+        )
+    console.print("[dim]Restart your agent session to pick this up.[/dim]")
+
+
 @main.command()
 @click.argument('name')
 @_interactive_options
@@ -5681,8 +6067,9 @@ def uninstall(name, yes, no_, no_input):
       tb uninstall aster              — removes ALL installed versions
       tb uninstall aster@1.2.0        — removes one version slot only
 
-    Also removes the corresponding pin from the active project's
-    manifest (Phase 2: default-project; Phase 3 wires real per-project).
+    Also removes the corresponding pin from every manifest that named
+    the removed slot — the active project's and the global
+    default-project's, committed and machine-local layers alike.
 
     Conda environments are torn down before the cache slot is removed
     (so a failure here doesn't leave orphan conda envs behind).
@@ -5699,6 +6086,7 @@ def uninstall(name, yes, no_, no_input):
         find_slot as _find_slot,
         project_manifest_path as _project_manifest_path,
         remove_pin as _remove_pin,
+        sort_versions as _sort_versions_for_display,
     )
 
     mode = _resolve_prompt_mode(yes, no_, no_input)
@@ -5727,7 +6115,8 @@ def uninstall(name, yes, no_, no_input):
                 f"[red]✗ {name} v{target_version} is not installed.[/red]"
             )
             console.print(
-                f"Installed versions of {name}: {', '.join(sorted(versions))}"
+                f"Installed versions of {name}: "
+                f"{', '.join(_sort_versions_for_display(versions))}"
             )
             sys.exit(1)
         targets = [slot]
@@ -5781,53 +6170,69 @@ def uninstall(name, yes, no_, no_input):
         except OSError:
             pass
 
-    # Update the active project's manifest.
+    # Update every manifest that could pin what we just deleted.
     #
     # - ``uninstall <name>``: remove the pin entirely.
-    # - ``uninstall <name>@<ver>``: if any other version remains, leave
-    #   the pin alone (still valid, even if we just unpinned one slot).
-    #   If no versions remain, remove the pin.
+    # - ``uninstall <name>@<ver>``: leave a pin that still names an
+    #   installed version; drop one that names the slot we removed.
     #
-    # Uninstall never implicitly creates a project: if cwd isn't in one,
-    # we silently fall back to default-project (which is where ``install``
-    # would have pinned in the no-project case anyway).
+    # The active project AND the default-project both get cleaned. The
+    # binaries are gone globally, so a pin naming them dangles wherever
+    # it lives — and ``tb install`` pins the default-project by default
+    # (-g) even when run from inside a project, so cleaning only the
+    # active one orphaned that pin and made serve skip the toolkit
+    # everywhere the default-project applies.
+    #
+    # Uninstall never creates a project: absent manifests simply have no
+    # pin to remove, which ``remove_pin`` treats as a no-op.
     try:
         from .envs import (
             local_manifest_path as _local_manifest_path,
             load_manifest as _load_manifest_for_pins,
+            default_project_root as _default_project_root,
         )
         project_root, _source = _resolve_active_project_root()
-        manifest_path = _project_manifest_path(project_root)
-        local_path = _local_manifest_path(manifest_path)
+        roots = [project_root]
+        default_root = _default_project_root()
+        if default_root.resolve() != project_root.resolve():
+            roots.append(default_root)
+        layers = []
+        for root in roots:
+            committed = _project_manifest_path(root)
+            layers += [committed, _local_manifest_path(committed)]
+
         remaining = _list_versions(name)
-        if not remaining:
-            _remove_pin(manifest_path, name)
-            _remove_pin(local_path, name)
-        else:
-            # Some versions remain. If a pin (committed or local layer)
-            # still names a version we just removed, it now dangles —
-            # serving would SKIP the toolkit entirely ("pinned version
-            # not in cache") even though usable slots exist. Remove the
-            # stale pin loudly; unpinned resolution falls back to the
-            # highest remaining slot.
-            for layer in (manifest_path, local_path):
-                pins = {e.name: e.version
-                        for e in _load_manifest_for_pins(layer).toolkits}
-                pinned = pins.get(name)
-                if pinned is not None and pinned not in remaining:
-                    _remove_pin(layer, name)
-                    console.print(
-                        f"[yellow]⚠ Removed stale pin {name}@{pinned} from "
-                        f"{layer.name} (slot uninstalled; remaining: "
-                        f"{', '.join(remaining)}). Re-pin with "
-                        f"`tb install {name}@<version> -l` if needed.[/yellow]"
-                    )
+        for layer in layers:
+            if not remaining:
+                _remove_pin(layer, name)
+                continue
+            # Some versions remain. A pin still naming a version we just
+            # removed now dangles — serving would SKIP the toolkit
+            # entirely ("pinned version not installed") even though
+            # usable slots exist. Remove it loudly; unpinned resolution
+            # falls back to the highest remaining slot.
+            pins = {e.name: e.version
+                    for e in _load_manifest_for_pins(layer).toolkits}
+            pinned = pins.get(name)
+            if pinned is not None and pinned not in remaining:
+                _remove_pin(layer, name)
+                console.print(
+                    f"[yellow]⚠ Removed stale pin {name}@{pinned} from "
+                    f"{_display_path(layer)} — {', '.join(remaining)} "
+                    f"remain[/yellow]"
+                )
+
+        # And the loadouts, which is where versions actually live now.
+        # A version naming a slot we just deleted makes serve skip the
+        # toolkit outright, so it has to go the same way manifest pins
+        # do — same rule, newer file.
+        _clear_stale_loadout_versions(name, roots, remaining)
     except Exception as e:
         console.print(
             f"[dim]Note: could not update project manifest: {e}[/dim]"
         )
 
-    # Skills + default-profile cleanup — only when ALL versions are gone.
+    # Skills + default-loadout cleanup — only when ALL versions are gone.
     if not _list_versions(name):
         # Remove this toolkit's surfaced skills from every harness that has
         # a skill surface (Claude Code's ~/.claude/skills, Codex's
@@ -5843,30 +6248,67 @@ def uninstall(name, yes, no_, no_input):
                 removed_skills = unsurface_skills(name, target)
                 if removed_skills:
                     console.print(
-                        f"[green]✓[/green] Removed {len(removed_skills)} skill"
-                        f"{'s' if len(removed_skills) != 1 else ''} from {target.root}/"
+                        f"[dim]  {len(removed_skills)} skill"
+                        f"{'s' if len(removed_skills) != 1 else ''} removed "
+                        f"from {_display_path(target.root)}/[/dim]"
                     )
         except Exception as e:
             console.print(
                 f"[yellow]Could not clean up surfaced skill entries: {e}[/yellow]"
             )
 
-        # Drop the toolkit from the default profile(s) so an uninstalled
-        # toolkit doesn't linger as a dangling reference. Named profiles
+        # Drop the toolkit from the default loadout(s) so an uninstalled
+        # toolkit doesn't linger as a dangling reference. Named loadouts
         # are explicit user choices and left untouched (they surface a
         # clear skip at serve time if they reference a missing toolkit).
-        _uninstall_cleanup_profiles(name)
+        _uninstall_cleanup_loadouts(name)
 
     console.print(f"\n[bold green]✓ Uninstalled {plural}[/bold green]")
 
 
-def _uninstall_cleanup_profiles(name: str) -> None:
-    """Remove ``name`` from the user and active-project default profiles.
+def _clear_stale_loadout_versions(name, roots, remaining) -> None:
+    """Drop a loadout ``versions:`` entry naming an uninstalled slot.
+
+    Same rule as the manifest pins beside it: a version pointing at a
+    slot that no longer exists makes serve skip the toolkit entirely,
+    which is worse than falling back to whatever remains. Covers the
+    committed and private layers of every root, plus the user loadout.
+    """
+    import yaml as _yaml
+    from .serve.loadout_scaffold import set_version, default_loadout_path
+
+    targets = [("user", None)]
+    targets += [(scope, root) for root in roots
+                for scope in ("project", "private")]
+    seen = set()
+    for scope, root in targets:
+        try:
+            path = default_loadout_path(scope, root)
+        except Exception:
+            continue
+        if path in seen or not path.exists():
+            continue
+        seen.add(path)
+        data = _yaml.safe_load(path.read_text()) or {}
+        pinned = (data.get("versions") or {}).get(name)
+        if pinned is None or (remaining and pinned in remaining):
+            continue
+        set_version(name, None, scope=scope, project_root=root)
+        if remaining:
+            console.print(
+                f"[yellow]⚠ Cleared {name} {pinned} from "
+                f"{_display_path(path)} — {', '.join(remaining)} "
+                f"remain[/yellow]"
+            )
+
+
+def _uninstall_cleanup_loadouts(name: str) -> None:
+    """Remove ``name`` from the user and active-project default loadouts.
 
     Best-effort: only touches an entry that exists, only the ``default``
-    profile, and never raises into the uninstall flow.
+    loadout, and never raises into the uninstall flow.
     """
-    from .serve.profile_scaffold import deactivate as _deactivate
+    from .serve.loadout_scaffold import deactivate as _deactivate
     for scope, needs_root in (("user", False), ("project", True)):
         try:
             if needs_root:
@@ -5876,7 +6318,7 @@ def _uninstall_cleanup_profiles(name: str) -> None:
                 res = _deactivate(name, scope="user")
             if res.changed:
                 console.print(
-                    f"[dim]Removed {name} from the {scope} default profile.[/dim]"
+                    f"[dim]Removed {name} from the {scope} default loadout.[/dim]"
                 )
         except Exception:
             pass
@@ -6084,16 +6526,16 @@ def toolbase_config_dir() -> Path:
 
 @main.group(invoke_without_command=True)
 @click.option(
-    '--profile', 'profile_name', default=None, metavar='NAME',
+    '--loadout', 'loadout_name', default=None, metavar='NAME',
     help=(
-        'Serve a specific profile this invocation (one-shot, does not '
-        'persist). Without it, the active profile is resolved from '
-        'serve.yaml default.profile, else the implicit "default" profile.'
+        'Serve a specific loadout this invocation (one-shot, does not '
+        'persist). Without it, the active loadout is resolved from '
+        'serve.yaml default.loadout, else the implicit "default" loadout.'
     ),
 )
 @click.option(
     '--dry-run', '-d', 'dry_run', is_flag=True, default=False,
-    help='Print the active profile and what it selects, then exit.',
+    help='Print the active loadout and what it selects, then exit.',
 )
 @click.option(
     '--call-timeout', 'call_timeout', type=float, default=None,
@@ -6118,23 +6560,23 @@ def toolbase_config_dir() -> Path:
     ),
 )
 @click.pass_context
-def serve(ctx, profile_name, dry_run, call_timeout, no_tui, bare_flag):
+def serve(ctx, loadout_name, dry_run, call_timeout, no_tui, bare_flag):
     """
-    Start the MCP server for the active profile's tools.
+    Start the MCP server for the active loadout's tools.
 
-    Serves the tools selected by the active profile. The active profile is
-    resolved in order: --profile flag, then default.profile in serve.yaml,
-    then an implicit profile named "default". If none resolve, serve errors
+    Serves the tools selected by the active loadout. The active loadout is
+    resolved in order: --loadout flag, then default.loadout in serve.yaml,
+    then an implicit loadout named "default". If none resolve, serve errors
     with a hint — there is no "serve everything" fallback.
 
     You normally don't run this yourself: your agent harness (e.g. Claude
     Code) spawns it. Curate what's served with `tb activate` /
-    `tb deactivate`, or manage named profiles with `tb profile`.
+    `tb deactivate`, or manage named loadouts with `tb loadout`.
 
     \b
     Examples:
-        tb serve                        # active profile
-        tb serve --profile paper        # one-shot: serve the 'paper' profile
+        tb serve                        # active loadout
+        tb serve --loadout paper        # one-shot: serve the 'paper' loadout
         tb serve --dry-run              # preview the resolved selection
 
     \b
@@ -6155,7 +6597,7 @@ def serve(ctx, profile_name, dry_run, call_timeout, no_tui, bare_flag):
         )
         sys.exit(2)
 
-    from .serve.profiles import resolve_profile, NoActiveProfileError
+    from .serve.loadouts import resolve_loadout, NoActiveLoadoutError
     from .serve.config import ServeConfigError
 
     # Claim serve.log mirroring before anything else can take the singleton
@@ -6167,8 +6609,8 @@ def serve(ctx, profile_name, dry_run, call_timeout, no_tui, bare_flag):
     project_root, _src = _resolve_active_project_root()
 
     try:
-        profile = resolve_profile(project_root, cli_profile=profile_name)
-    except NoActiveProfileError as e:
+        loadout = resolve_loadout(project_root, cli_loadout=loadout_name)
+    except NoActiveLoadoutError as e:
         console.print(f"[red]{e}[/red]")
         sys.exit(1)
     except ServeConfigError as e:
@@ -6179,14 +6621,14 @@ def serve(ctx, profile_name, dry_run, call_timeout, no_tui, bare_flag):
     if bare_flag is not None:
         bare = bare_flag
     else:
-        from .serve.profiles import load_merged_serve_config
+        from .serve.loadouts import load_merged_serve_config
         try:
             bare = load_merged_serve_config(project_root).default.bare
         except ServeConfigError:
             bare = False
 
     if dry_run:
-        _print_resolution(profile, bare=bare)
+        _print_resolution(loadout, bare=bare)
         return
 
     # The MCP stdio protocol owns this process's stdin/stdout, so we do NOT
@@ -6194,32 +6636,32 @@ def serve(ctx, profile_name, dry_run, call_timeout, no_tui, bare_flag):
     # orchestrator builds its own stderr-bound Console.
     from .serve.orchestrator import DEFAULT_CALL_TIMEOUT_S, serve as _serve_entry
     timeout_s = call_timeout if call_timeout is not None else DEFAULT_CALL_TIMEOUT_S
-    rc = _serve_entry(no_tui=True, profile=profile, call_timeout_s=timeout_s,
+    rc = _serve_entry(no_tui=True, loadout=loadout, call_timeout_s=timeout_s,
                       bare=bare)
     sys.exit(rc)
 
 
-def _print_resolution(profile, bare: bool = False) -> None:
-    """Render --dry-run output: the active profile and what it selects.
+def _print_resolution(loadout, bare: bool = False) -> None:
+    """Render --dry-run output: the active loadout and what it selects.
 
-    Shows the profile name + provenance, each selected toolkit and its
+    Shows the loadout name + provenance, each selected toolkit and its
     per-toolkit curation (bundles / enabled / disabled), and the absolute
     serve.yaml blocklist. Exact served tools also depend on each toolkit's
     bundle membership and config-gating, so this is the selection view, not
     the final tool list — `tb list -v` gives the tool-level view.
     """
     console.print(
-        f"\n[bold]Active profile:[/bold] [cyan]{profile.name}[/cyan] "
-        f"[dim]({profile.source})[/dim]"
+        f"\n[bold]Active loadout:[/bold] [cyan]{loadout.name}[/cyan] "
+        f"[dim]({loadout.source})[/dim]"
     )
     console.print(
         f"[bold]Naming:[/bold] "
         + ("[yellow]bare <tool>[/yellow] (un-namespaced)" if bare
            else "qualified [cyan]<toolkit>__<tool>[/cyan]")
     )
-    if not profile.toolkits:
-        console.print("  [dim](profile selects no toolkits)[/dim]")
-    for tk, sel in profile.toolkits.items():
+    if not loadout.toolkits:
+        console.print("  [dim](loadout selects no toolkits)[/dim]")
+    for tk, sel in loadout.toolkits.items():
         if not sel.is_allowlist and not sel.disabled_tools:
             console.print(f"  [cyan]{tk}[/cyan] [dim](whole toolkit)[/dim]")
             continue
@@ -6237,16 +6679,16 @@ def _print_resolution(profile, bare: bool = False) -> None:
                 f"    disabled tools: {', '.join(sel.disabled_tools)}"
             )
 
-    if profile.disabled_toolkits or profile.disabled_tools:
+    if loadout.disabled_toolkits or loadout.disabled_tools:
         console.print(
             "\n[bold]Absolute blocklist (serve.yaml default.disabled):[/bold]"
         )
-        if profile.disabled_toolkits:
+        if loadout.disabled_toolkits:
             console.print(
-                f"  toolkits: {', '.join(profile.disabled_toolkits)}"
+                f"  toolkits: {', '.join(loadout.disabled_toolkits)}"
             )
-        if profile.disabled_tools:
-            console.print(f"  tools: {', '.join(profile.disabled_tools)}")
+        if loadout.disabled_tools:
+            console.print(f"  tools: {', '.join(loadout.disabled_tools)}")
 
     console.print(
         "\n[dim]Exact served tools also depend on bundle membership and "
@@ -6358,7 +6800,7 @@ def serve_config(action):
     console.print(SERVE_CONFIG_PATH.read_text())
 
 
-# ── activate / deactivate (casual-tier profile editing) ────────────────
+# ── activate / deactivate (casual-tier loadout editing) ────────────────
 
 
 def _installed_toolkit_names() -> set:
@@ -6370,18 +6812,18 @@ def _installed_toolkit_names() -> set:
         return set()
 
 
-def _resolve_profile_scope(global_scope: bool, local_scope: bool):
+def _resolve_loadout_scope(user_scope: bool, project_scope: bool):
     """Resolve activate/deactivate/create scope -> (scope, project_root).
 
     Default (and -l): the cwd's project -- the nearest ``.toolbase/`` above
     the cwd, or the cwd itself, creating ``.toolbase/`` there if there's none
     (mirrors ``tb install -l``). ``-g/--global`` forces the user layer.
     """
-    if global_scope and local_scope:
+    if user_scope and project_scope:
         raise click.UsageError(
             "-g/--global and -l/--local are mutually exclusive."
         )
-    if global_scope:
+    if user_scope:
         return "user", None
     return "project", _cwd_project_root()
 
@@ -6399,13 +6841,19 @@ def _print_mutation(result) -> None:
 
 
 def _scope_flags(f):
+    """Add the canonical scope options to a loadout-writing command.
+
+    Loadouts and serve.yaml exist at user and project scope only — there
+    is no gitignored variant of a loadout — so these commands take two
+    of the three scope keys. See ``_resolve_scope``.
+    """
     f = click.option(
-        '-l', '--local', 'local_scope', is_flag=True, default=False,
-        help="Operate on this project's default profile.",
+        '-p', '--project', 'project_scope', is_flag=True, default=False,
+        help="Operate on this project's default loadout (the default).",
     )(f)
     f = click.option(
-        '-g', '--global', 'global_scope', is_flag=True, default=False,
-        help='Operate on the user-level default profile.',
+        '-u', '--user', 'user_scope', is_flag=True, default=False,
+        help='Operate on the user-level default loadout.',
     )(f)
     return f
 
@@ -6430,8 +6878,8 @@ def _skill_route(tk: str, sub: str) -> bool:
 @main.command()
 @click.argument('item')
 @_scope_flags
-def activate(item, global_scope, local_scope):
-    """Activate a toolkit, bundle, tool, or skill in the default profile.
+def activate(item, user_scope, project_scope):
+    """Activate a toolkit, bundle, tool, or skill in the default loadout.
 
     \b
     ITEM is one of:
@@ -6444,12 +6892,12 @@ def activate(item, global_scope, local_scope):
     surfaced skill and not a tool. Skills are on by default; activating one
     just clears a previous `tb deactivate`.
     """
-    from .serve.profile_scaffold import (
+    from .serve.loadout_scaffold import (
         activate as _activate, activate_skill as _activate_skill,
-        parse_item, ProfileItemError,
+        parse_item, LoadoutItemError,
     )
 
-    scope, project_root = _resolve_profile_scope(global_scope, local_scope)
+    scope, project_root = _resolve_loadout_scope(user_scope, project_scope)
     tk = item.split('/', 1)[0].split('__', 1)[0]
     if tk not in _installed_toolkit_names():
         console.print(f"[red]✗ '{tk}' is not installed.[/red]")
@@ -6463,7 +6911,7 @@ def activate(item, global_scope, local_scope):
             )
         else:
             result = _activate(item, scope=scope, project_root=project_root)
-    except ProfileItemError as e:
+    except LoadoutItemError as e:
         console.print(f"[red]✗ {e}[/red]")
         sys.exit(2)
     _print_mutation(result)
@@ -6472,8 +6920,8 @@ def activate(item, global_scope, local_scope):
 @main.command()
 @click.argument('item')
 @_scope_flags
-def deactivate(item, global_scope, local_scope):
-    """Deactivate a toolkit, bundle, tool, or skill from the default profile.
+def deactivate(item, user_scope, project_scope):
+    """Deactivate a toolkit, bundle, tool, or skill from the default loadout.
 
     \b
     ITEM forms match `tb activate` (toolkit, toolkit/bundle, toolkit__tool,
@@ -6481,12 +6929,12 @@ def deactivate(item, global_scope, local_scope):
     it matches a surfaced skill and not a tool; deactivating it stops that
     guide from surfacing on the next `tb connect`.
     """
-    from .serve.profile_scaffold import (
+    from .serve.loadout_scaffold import (
         deactivate as _deactivate, deactivate_skill as _deactivate_skill,
-        parse_item, ProfileItemError,
+        parse_item, LoadoutItemError,
     )
 
-    scope, project_root = _resolve_profile_scope(global_scope, local_scope)
+    scope, project_root = _resolve_loadout_scope(user_scope, project_scope)
     try:
         kind, tk2, sub = parse_item(item)
         if kind == "tool" and _skill_route(tk2, sub):
@@ -6495,59 +6943,59 @@ def deactivate(item, global_scope, local_scope):
             )
         else:
             result = _deactivate(item, scope=scope, project_root=project_root)
-    except ProfileItemError as e:
+    except LoadoutItemError as e:
         console.print(f"[red]✗ {e}[/red]")
         sys.exit(2)
     _print_mutation(result)
 
 
-# ── tb profile: named-profile management (power tier) ──────────────────
+# ── tb loadout: named-loadout management (power tier) ──────────────────
 
 
 @main.group()
-def profile():
-    """Manage named profiles (curated tool sets)."""
+def loadout():
+    """Manage named loadouts (curated tool sets)."""
     pass
 
 
-def _profile_active_name(project_root):
-    """Best-effort name of the active profile, or None if unresolved."""
-    from .serve.profiles import (
-        load_merged_serve_config, discover_profiles,
-        resolve_active_profile_name,
+def _loadout_active_name(project_root):
+    """Best-effort name of the active loadout, or None if unresolved."""
+    from .serve.loadouts import (
+        load_merged_serve_config, discover_loadouts,
+        resolve_active_loadout_name,
     )
     from .serve.config import ServeConfigError
     try:
         merged = load_merged_serve_config(project_root)
-        available = discover_profiles(project_root)
-        name, _src = resolve_active_profile_name(merged, available)
+        available = discover_loadouts(project_root)
+        name, _src = resolve_active_loadout_name(merged, available)
         return name
     except ServeConfigError:
         return None
 
 
-@profile.command('list')
-def profile_list():
-    """List all available profiles (user + project), marking the active one."""
-    from .serve.profiles import discover_profiles
+@loadout.command('list')
+def loadout_list():
+    """List all available loadouts (user + project), marking the active one."""
+    from .serve.loadouts import discover_loadouts
     from .serve.config import ServeConfigError
 
     project_root, _src = _resolve_active_project_root()
     try:
-        found = discover_profiles(project_root)
+        found = discover_loadouts(project_root)
     except ServeConfigError as e:
         console.print(f"[red]{e}[/red]")
         sys.exit(1)
 
     if not found:
-        console.print("[dim]No profiles defined.[/dim]\n")
+        console.print("[dim]No loadouts defined.[/dim]\n")
         console.print(
             "Create one with [cyan]tb activate <toolkit>[/cyan] (builds the "
-            "default profile) or [cyan]tb profile create <name>[/cyan]."
+            "default loadout) or [cyan]tb loadout create <name>[/cyan]."
         )
         return
 
-    active = _profile_active_name(project_root)
+    active = _loadout_active_name(project_root)
     for name in sorted(found):
         prof = found[name]
         mark = "[green]*[/green]" if name == active else " "
@@ -6557,30 +7005,30 @@ def profile_list():
             f"{n_tk} toolkit{'s' if n_tk != 1 else ''})[/dim]"
         )
     if active:
-        console.print(f"\n[dim]* = active profile[/dim]")
+        console.print(f"\n[dim]* = active loadout[/dim]")
 
 
-@profile.command('show')
+@loadout.command('show')
 @click.argument('name', required=False)
-def profile_show(name):
-    """Pretty-print a profile (defaults to the active one)."""
-    from .serve.profiles import discover_profiles
+def loadout_show(name):
+    """Pretty-print a loadout (defaults to the active one)."""
+    from .serve.loadouts import discover_loadouts
     from .serve.config import ServeConfigError
 
     project_root, _src = _resolve_active_project_root()
     try:
-        found = discover_profiles(project_root)
+        found = discover_loadouts(project_root)
     except ServeConfigError as e:
         console.print(f"[red]{e}[/red]")
         sys.exit(1)
 
     if name is None:
-        name = _profile_active_name(project_root)
+        name = _loadout_active_name(project_root)
         if name is None:
-            console.print("[red]No active profile to show.[/red]")
+            console.print("[red]No active loadout to show.[/red]")
             sys.exit(1)
     if name not in found:
-        console.print(f"[red]No profile named '{name}'.[/red]")
+        console.print(f"[red]No loadout named '{name}'.[/red]")
         sys.exit(1)
 
     prof = found[name]
@@ -6600,44 +7048,44 @@ def profile_show(name):
             console.print(f"    disabled: {', '.join(sel.disabled_tools)}")
 
 
-@profile.command('path')
+@loadout.command('path')
 @click.argument('name')
-def profile_path_cmd(name):
-    """Print the file path of a profile."""
-    from .serve.profiles import discover_profiles
+def loadout_path_cmd(name):
+    """Print the file path of a loadout."""
+    from .serve.loadouts import discover_loadouts
     project_root, _src = _resolve_active_project_root()
-    found = discover_profiles(project_root)
+    found = discover_loadouts(project_root)
     if name not in found:
-        console.print(f"[red]No profile named '{name}'.[/red]")
+        console.print(f"[red]No loadout named '{name}'.[/red]")
         sys.exit(1)
     print(found[name].path)
 
 
-@profile.command('create')
+@loadout.command('create')
 @click.argument('name')
 @_scope_flags
-@click.option('--from', 'from_profile', default=None, metavar='PROFILE',
-              help='Scaffold from an existing profile instead of default.')
+@click.option('--from', 'from_loadout', default=None, metavar='LOADOUT',
+              help='Scaffold from an existing loadout instead of default.')
 @click.option('--empty', 'empty', is_flag=True, default=False,
-              help='Create a minimal empty profile.')
-def profile_create(name, global_scope, local_scope, from_profile, empty):
-    """Create a new named profile (scaffolded from default unless overridden)."""
-    from .serve.profile_scaffold import _load, _save
-    from .serve.profiles import discover_profiles
+              help='Create a minimal empty loadout.')
+def loadout_create(name, user_scope, project_scope, from_loadout, empty):
+    """Create a new named loadout (scaffolded from default unless overridden)."""
+    from .serve.loadout_scaffold import _load, _save
+    from .serve.loadouts import discover_loadouts
 
-    scope, project_root = _resolve_profile_scope(global_scope, local_scope)
-    from .serve.profile_scaffold import (
-        user_profiles_dir as _u, project_profiles_dir as _p,
+    scope, project_root = _resolve_loadout_scope(user_scope, project_scope)
+    from .serve.loadout_scaffold import (
+        user_loadouts_dir as _u, project_loadouts_dir as _p,
     )
     if scope == "user":
         dest = _u() / f"{name}.yaml"
     else:
-        from .serve.profile_scaffold import default_project_root as _dpr
+        from .serve.loadout_scaffold import default_project_root as _dpr
         root = project_root if project_root is not None else _dpr()
         dest = _p(root) / f"{name}.yaml"
 
     if dest.exists():
-        console.print(f"[red]Profile '{name}' already exists at {dest}.[/red]")
+        console.print(f"[red]Loadout '{name}' already exists at {dest}.[/red]")
         sys.exit(1)
 
     if empty:
@@ -6646,12 +7094,12 @@ def profile_create(name, global_scope, local_scope, from_profile, empty):
         data["toolkits"] = CommentedMap()
         _save(dest, data)
     else:
-        src_name = from_profile or "default"
-        found = discover_profiles(project_root)
+        src_name = from_loadout or "default"
+        found = discover_loadouts(project_root)
         if src_name in found:
             data = _load(found[src_name].path)
-        elif from_profile is not None:
-            console.print(f"[red]No profile named '{from_profile}' to copy.[/red]")
+        elif from_loadout is not None:
+            console.print(f"[red]No loadout named '{from_loadout}' to copy.[/red]")
             sys.exit(1)
         else:
             # No default to scaffold from — start blank.
@@ -6660,40 +7108,40 @@ def profile_create(name, global_scope, local_scope, from_profile, empty):
             data["toolkits"] = CommentedMap()
         _save(dest, data)
 
-    console.print(f"[green]✓[/green] Created profile '{name}'.")
+    console.print(f"[green]✓[/green] Created loadout '{name}'.")
     console.print(f"  [dim]{dest}[/dim]")
-    console.print(f"  [dim]Edit it: tb profile edit {name}[/dim]")
+    console.print(f"  [dim]Edit it: tb loadout edit {name}[/dim]")
 
 
-@profile.command('edit')
+@loadout.command('edit')
 @click.argument('name', required=False)
 @_scope_flags
-def profile_edit(name, global_scope, local_scope):
-    """Open a profile in $EDITOR (defaults to the active profile).
+def loadout_edit(name, user_scope, project_scope):
+    """Open a loadout in $EDITOR (defaults to the active loadout).
 
-    If the named profile doesn't exist, it's scaffolded from the default
-    profile (or blank) before opening.
+    If the named loadout doesn't exist, it's scaffolded from the default
+    loadout (or blank) before opening.
     """
-    from .serve.profiles import discover_profiles
-    from .serve.profile_scaffold import _load, _save
+    from .serve.loadouts import discover_loadouts
+    from .serve.loadout_scaffold import _load, _save
 
     project_root_tuple = _resolve_active_project_root()
     project_root = project_root_tuple[0]
-    found = discover_profiles(project_root)
+    found = discover_loadouts(project_root)
 
     if name is None:
-        name = _profile_active_name(project_root) or "default"
+        name = _loadout_active_name(project_root) or "default"
 
     if name in found:
         target = found[name].path
     else:
-        scope, proot = _resolve_profile_scope(global_scope, local_scope)
+        scope, proot = _resolve_loadout_scope(user_scope, project_scope)
         if scope == "user":
-            from .serve.profile_scaffold import user_profiles_dir as _u
+            from .serve.loadout_scaffold import user_loadouts_dir as _u
             target = _u() / f"{name}.yaml"
         else:
-            from .serve.profile_scaffold import (
-                project_profiles_dir as _p, default_project_root as _dpr,
+            from .serve.loadout_scaffold import (
+                project_loadouts_dir as _p, default_project_root as _dpr,
             )
             root = proot if proot is not None else _dpr()
             target = _p(root) / f"{name}.yaml"
@@ -6704,69 +7152,69 @@ def profile_edit(name, global_scope, local_scope):
     click.edit(filename=str(target))
 
 
-@profile.command('delete')
+@loadout.command('delete')
 @click.argument('name')
 @_scope_flags
 @_interactive_options
-def profile_delete(name, global_scope, local_scope, yes, no_, no_input):
-    """Delete a profile file."""
-    from .serve.profiles import discover_profiles
+def loadout_delete(name, user_scope, project_scope, yes, no_, no_input):
+    """Delete a loadout file."""
+    from .serve.loadouts import discover_loadouts
 
     mode = _resolve_prompt_mode(yes, no_, no_input)
     project_root, _src = _resolve_active_project_root()
-    found = discover_profiles(project_root)
+    found = discover_loadouts(project_root)
     if name not in found:
-        console.print(f"[red]No profile named '{name}'.[/red]")
+        console.print(f"[red]No loadout named '{name}'.[/red]")
         sys.exit(1)
     target = found[name].path
     if not _confirm(
-        f"Delete profile '{name}' ({target})?", default=False, mode=mode,
+        f"Delete loadout '{name}' ({target})?", default=False, mode=mode,
         consequential=True,
     ):
         console.print("[dim]Cancelled.[/dim]")
         sys.exit(0)
     target.unlink()
-    console.print(f"[green]✓[/green] Deleted profile '{name}'.")
+    console.print(f"[green]✓[/green] Deleted loadout '{name}'.")
 
 
-@profile.command('set-default')
+@loadout.command('set-default')
 @click.argument('name')
 @_scope_flags
-def profile_set_default(name, global_scope, local_scope):
-    """Set the active profile by writing default.profile into serve.yaml."""
-    from .serve.profiles import discover_profiles
+def loadout_set_default(name, user_scope, project_scope):
+    """Set the active loadout by writing default.loadout into serve.yaml."""
+    from .serve.loadouts import discover_loadouts
     from .serve.config import load_serve_config, save_serve_config
     from .envs.paths import user_serve_config_path, project_serve_config_path
 
-    scope, project_root = _resolve_profile_scope(global_scope, local_scope)
-    found = discover_profiles(project_root)
+    scope, project_root = _resolve_loadout_scope(user_scope, project_scope)
+    found = discover_loadouts(project_root)
     if name not in found:
-        console.print(f"[red]No profile named '{name}'.[/red]")
-        console.print("Create it first with [cyan]tb profile create[/cyan].")
+        console.print(f"[red]No loadout named '{name}'.[/red]")
+        console.print("Create it first with [cyan]tb loadout create[/cyan].")
         sys.exit(1)
 
     if scope == "user":
         path = user_serve_config_path()
     else:
-        from .serve.profile_scaffold import default_project_root as _dpr
+        from .serve.loadout_scaffold import default_project_root as _dpr
         root = project_root if project_root is not None else _dpr()
         path = project_serve_config_path(root)
 
     cfg = load_serve_config(path)
-    cfg.default.profile = name
+    cfg.default.loadout = name
     save_serve_config(cfg, path)
-    console.print(f"[green]✓[/green] Active profile set to '{name}'.")
+    console.print(f"[green]✓[/green] Active loadout set to '{name}'.")
     console.print(f"  [dim]{path}[/dim]")
 
 
-@profile.command('tools')
+@loadout.command('tools')
 @click.argument('toolkit', required=False)
-def profile_tools(toolkit):
+def loadout_tools(toolkit):
     """List available bundles + tools across installed toolkits.
 
-    Use as a reference while editing a profile: the names shown here are
+    Use as a reference while editing a loadout: the names shown here are
     what you pass to `tb activate` / `tb deactivate` and the `bundles:` /
-    `tools:` fields in a profile.
+    `tools:` fields in a loadout.
     """
     from .serve.orchestrator import discover_toolkits, _resolve_bundle_availability
 
@@ -6830,7 +7278,7 @@ def profile_tools(toolkit):
 # ── tb connect: wire toolbase into an agent harness ────────────────────
 
 
-def _resolve_connect_scope(global_scope: bool, local_scope: bool):
+def _resolve_connect_scope(user_scope: bool, project_scope: bool):
     """Connect scope -> (scope, project_root).
 
     Default is project-local: the client config for the directory you launch
@@ -6839,11 +7287,11 @@ def _resolve_connect_scope(global_scope: bool, local_scope: bool):
     ``.mcp.json`` no client ever reads. ``-g/--global`` writes the user-wide
     config (e.g. ``~/.claude.json``) that every session sees.
     """
-    if global_scope and local_scope:
+    if user_scope and project_scope:
         raise click.UsageError(
             "-g/--global and -l/--local are mutually exclusive."
         )
-    if global_scope:
+    if user_scope:
         return "user", None
     from .envs import find_project_root as _find_project_root
     cwd = Path.cwd()
@@ -6892,7 +7340,7 @@ def _resolve_connect_command(*, abspath: bool, portable: bool, scope: str) -> st
 def _activated_toolkit_dirs() -> "dict[str, Path]":
     """``{name: slot_dir}`` for each activated, ready toolkit.
 
-    "Activated" means the active profile names it and serve.yaml doesn't
+    "Activated" means the active loadout names it and serve.yaml doesn't
     blocklist it — the same set whose tools get served over MCP. Skills
     follow the tools: we surface a guide only for a toolkit whose tools the
     agent can actually reach. Best-effort; returns ``{}`` on any error."""
@@ -6930,7 +7378,7 @@ def _toolkit_skill_slugs(name: str) -> set:
 
 
 def _resolve_disabled_skills(name: str) -> set:
-    """Bare skill slugs the active profile blocklists for ``name``."""
+    """Bare skill slugs the active loadout blocklists for ``name``."""
     _resolved, _active = _list_resolve_active()
     if _resolved is None:
         return set()
@@ -6965,8 +7413,9 @@ def _surface_skills_for_connect(adapter, *, no_skills: bool = False) -> None:
             )
     if surfaced:
         console.print(
-            f"[dim]Surfaced {surfaced} skill guide"
-            f"{'s' if surfaced != 1 else ''} to {target.root}/[/dim]"
+            f"[dim]  {surfaced} skill"
+            f"{'s' if surfaced != 1 else ''} → "
+            f"{_display_path(target.root)}/[/dim]"
         )
 
 
@@ -6986,16 +7435,17 @@ def _unsurface_skills_for_connect(adapter) -> None:
         return
     if removed:
         console.print(
-            f"[dim]Removed {len(removed)} surfaced skill"
-            f"{'s' if len(removed) != 1 else ''} from {target.root}/[/dim]"
+            f"[dim]  {len(removed)} skill"
+            f"{'s' if len(removed) != 1 else ''} removed from "
+            f"{_display_path(target.root)}/[/dim]"
         )
 
 
 @main.command()
 @click.argument('harness', required=False)
 @_scope_flags
-@click.option('--profile', 'profile_name', default=None, metavar='NAME',
-              help='Also set NAME as the active profile (writes default.profile).')
+@click.option('--loadout', 'loadout_name', default=None, metavar='NAME',
+              help='Also set NAME as the active loadout (writes default.loadout).')
 @click.option('--remove', 'remove', is_flag=True, default=False,
               help="Remove the toolbase entry from the harness's config.")
 @click.option('--dry-run', 'dry_run', is_flag=True, default=False,
@@ -7019,7 +7469,7 @@ def _unsurface_skills_for_connect(adapter) -> None:
 @click.option('--no-skills', 'no_skills', is_flag=True, default=False,
               help="Don't surface the activated toolkits' skills into the "
                    "harness (wire the MCP server only).")
-def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
+def connect(harness, user_scope, project_scope, loadout_name, remove, dry_run,
             abspath, portable, do_list, do_harnesses, out_path, force, no_skills):
     """Wire toolbase into an agent harness.
 
@@ -7033,10 +7483,10 @@ def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
         tb connect claude-code              # project: .mcp.json here (default)
         tb connect claude-code -g           # user: ~/.claude.json (every session)
         tb connect antigravity -g           # agy CLI + IDE: ~/.gemini/config/
-        tb connect claude-code --profile paper
+        tb connect claude-code --loadout paper
         tb connect claude-code --remove
         tb connect orchestral               # write .toolbase/agent.py
-        tb connect orchestral --profile paper --out my_agent.py
+        tb connect orchestral --loadout paper --out my_agent.py
         tb connect --list                   # where is toolbase wired?
         tb connect --harnesses              # which harnesses are supported?
     """
@@ -7068,7 +7518,7 @@ def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
         # otherwise --list misses a .mcp.json sitting in a dir that has no
         # .toolbase/ yet.
         _, project_root = _resolve_connect_scope(
-            global_scope=False, local_scope=False
+            user_scope=False, project_scope=False
         )
         _connect_print_status(all_adapters(), project_root)
         return
@@ -7082,7 +7532,7 @@ def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
 
     if harness == "orchestral":
         _connect_orchestral(
-            profile_name=profile_name, out=out_path, force=force,
+            loadout_name=loadout_name, out=out_path, force=force,
             dry_run=dry_run, remove=remove,
         )
         return
@@ -7096,7 +7546,7 @@ def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
         )
         sys.exit(2)
 
-    scope, project_root = _resolve_connect_scope(global_scope, local_scope)
+    scope, project_root = _resolve_connect_scope(user_scope, project_scope)
 
     if remove:
         try:
@@ -7108,7 +7558,9 @@ def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
             sys.exit(1)
         path = adapter.config_path(scope, project_root)
         if removed:
-            console.print(f"[green]✓[/green] Removed toolbase from {path}.")
+            console.print(
+                f"[green]✓[/green] Unwired [dim]{_display_path(path)}[/dim]"
+            )
         else:
             console.print(f"[dim]No toolbase entry in {path}; nothing to remove.[/dim]")
         _unsurface_skills_for_connect(adapter)
@@ -7131,11 +7583,13 @@ def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
         console.print(f"[dim]Would write toolbase ({command} serve) to {path}.[/dim]")
         return
 
-    console.print(f"[green]✓[/green] Wired toolbase into {harness} at {path}.")
+    console.print(
+        f"[green]✓[/green] Wired {harness} [dim]{_display_path(path)}[/dim]"
+    )
 
-    # --profile: set the active profile in the matching serve.yaml scope.
-    if profile_name is not None:
-        _connect_set_profile(profile_name, scope, project_root)
+    # --loadout: set the active loadout in the matching serve.yaml scope.
+    if loadout_name is not None:
+        _connect_set_loadout(loadout_name, scope, project_root)
 
     # Surface the activated toolkits' skills into this harness (best-effort).
     _surface_skills_for_connect(adapter, no_skills=no_skills)
@@ -7143,22 +7597,22 @@ def connect(harness, global_scope, local_scope, profile_name, remove, dry_run,
     if scope == "project":
         note = adapter.project_scope_note()
         if note:
-            console.print(f"[dim]Note: {note}[/dim]")
+            console.print(f"[dim]  {note}[/dim]")
 
 
-def _connect_set_profile(profile_name, scope, project_root) -> None:
-    """Validate + write default.profile into the matching serve.yaml."""
-    from .serve.profiles import discover_profiles
+def _connect_set_loadout(loadout_name, scope, project_root) -> None:
+    """Validate + write default.loadout into the matching serve.yaml."""
+    from .serve.loadouts import discover_loadouts
     from .serve.config import load_serve_config, save_serve_config
     from .envs.paths import user_serve_config_path, project_serve_config_path
-    from .serve.profile_scaffold import default_project_root as _dpr
+    from .serve.loadout_scaffold import default_project_root as _dpr
 
-    found = discover_profiles(project_root)
-    if profile_name not in found:
+    found = discover_loadouts(project_root)
+    if loadout_name not in found:
         console.print(
-            f"[yellow]Wired, but no profile named '{profile_name}' exists "
-            "— default.profile not set. Create it with "
-            f"[cyan]tb profile create {profile_name}[/cyan].[/yellow]"
+            f"[yellow]Wired, but no loadout named '{loadout_name}' exists "
+            "— default.loadout not set. Create it with "
+            f"[cyan]tb loadout create {loadout_name}[/cyan].[/yellow]"
         )
         return
     if scope == "user":
@@ -7167,9 +7621,9 @@ def _connect_set_profile(profile_name, scope, project_root) -> None:
         root = project_root if project_root is not None else _dpr()
         path = project_serve_config_path(root)
     cfg = load_serve_config(path)
-    cfg.default.profile = profile_name
+    cfg.default.loadout = loadout_name
     save_serve_config(cfg, path)
-    console.print(f"[green]✓[/green] Active profile set to '{profile_name}'.")
+    console.print(f"[green]✓[/green] Active loadout set to '{loadout_name}'.")
 
 
 def _connect_print_status(adapters, project_root) -> None:
@@ -7178,7 +7632,7 @@ def _connect_print_status(adapters, project_root) -> None:
     any_present = False
     console.print("\n[bold]toolbase harness registrations:[/bold]")
     if project_root is not None:
-        console.print(f"  [dim]project scope -> {project_root}[/dim]")
+        console.print(f"  [dim]project scope → {project_root}[/dim]")
     for ad in adapters:
         try:
             entries = ad.status(project_root)
@@ -7196,7 +7650,7 @@ def _connect_print_status(adapters, project_root) -> None:
                 console.print(
                     f"  [green]✓[/green] [cyan]{entry.harness}[/cyan] "
                     f"[dim]({entry.scope})[/dim]  {entry.path}  "
-                    f"[dim]-> {entry.command} "
+                    f"[dim]→ {entry.command} "
                     f"{' '.join(entry.args or [])}[/dim]"
                 )
             else:
@@ -7244,27 +7698,27 @@ def _orchestral_script_path(out=None, *, accept_legacy=False):
     return path
 
 
-def _warn_if_profile_selects_nothing(profile_name) -> None:
-    """Warn at connect time if the profile the scaffold will serve is empty.
+def _warn_if_loadout_selects_nothing(loadout_name) -> None:
+    """Warn at connect time if the loadout the scaffold will serve is empty.
 
     Without this the user only finds out at launch, as a bare
     ``RuntimeError: no toolkits could be started`` from deep inside the
-    orchestrator. Best-effort: an unresolvable profile is not a reason to
+    orchestrator. Best-effort: an unresolvable loadout is not a reason to
     refuse to write the scaffold, so any failure here is silent.
     """
     from pathlib import Path as _Path
     from .envs import find_project_root
-    from .serve.profiles import resolve_profile
+    from .serve.loadouts import resolve_loadout
 
     try:
         root = find_project_root() or _Path.cwd()
-        profile = resolve_profile(root, cli_profile=profile_name)
+        loadout = resolve_loadout(root, cli_loadout=loadout_name)
     except Exception:
         return
-    if profile.toolkits:
+    if loadout.toolkits:
         return
     console.print(
-        f"[yellow]Note: profile '{profile.name}' currently serves no "
+        f"[yellow]Note: loadout '{loadout.name}' currently serves no "
         "toolkits[/yellow] — the agent would start with zero tools."
     )
     console.print(
@@ -7273,7 +7727,7 @@ def _warn_if_profile_selects_nothing(profile_name) -> None:
     )
 
 
-def _connect_orchestral(*, profile_name, out, force, dry_run, remove) -> None:
+def _connect_orchestral(*, loadout_name, out, force, dry_run, remove) -> None:
     """Handle `tb connect orchestral`: write (or remove) a runnable agent
     script at ``<project>/.toolbase/agent.py``. Orchestral is a library
     harness, not a config-file one, so "connecting" means scaffolding the code
@@ -7305,7 +7759,7 @@ def _connect_orchestral(*, profile_name, out, force, dry_run, remove) -> None:
         console.print(f"[green]✓[/green] Removed {path}.")
         return
 
-    content = agent_script(profile_name)
+    content = agent_script(loadout_name)
 
     if dry_run:
         console.print(f"[dim]Would write the following to {path}:[/dim]\n")
@@ -7352,7 +7806,7 @@ def _connect_orchestral(*, profile_name, out, force, dry_run, remove) -> None:
             "[yellow]Note: the orchestral package isn't importable here; "
             "the script needs it (and an LLM API key) at runtime.[/yellow]"
         )
-    _warn_if_profile_selects_nothing(profile_name)
+    _warn_if_loadout_selects_nothing(loadout_name)
     console.print(
         "[dim]Configure orchestral (LLM + API key), then launch with "
         "[cyan]tb orchestral[/cyan].[/dim]"
@@ -7364,7 +7818,7 @@ def _connect_orchestral(*, profile_name, out, force, dry_run, remove) -> None:
 @_scope_flags
 @click.option('--all', 'all_scopes', is_flag=True, default=False,
               help='Remove from BOTH the user and project config at once.')
-def disconnect(harness, global_scope, local_scope, all_scopes):
+def disconnect(harness, user_scope, project_scope, all_scopes):
     """Remove toolbase from a harness (alias for `tb connect --remove`).
 
     \b
@@ -7376,12 +7830,12 @@ def disconnect(harness, global_scope, local_scope, all_scopes):
 
     if harness == "orchestral":
         _connect_orchestral(
-            profile_name=None, out=None, force=False, dry_run=False,
+            loadout_name=None, out=None, force=False, dry_run=False,
             remove=True,
         )
         return
 
-    if all_scopes and (global_scope or local_scope):
+    if all_scopes and (user_scope or project_scope):
         raise click.UsageError(
             "--all can't be combined with -g/--global or -l/--local."
         )
@@ -7397,11 +7851,11 @@ def disconnect(harness, global_scope, local_scope, all_scopes):
 
     if all_scopes:
         _, proj_root = _resolve_connect_scope(
-            global_scope=False, local_scope=False
+            user_scope=False, project_scope=False
         )
         targets = [("user", None), ("project", proj_root)]
     else:
-        targets = [_resolve_connect_scope(global_scope, local_scope)]
+        targets = [_resolve_connect_scope(user_scope, project_scope)]
 
     for scope, project_root in targets:
         try:
@@ -7413,7 +7867,9 @@ def disconnect(harness, global_scope, local_scope, all_scopes):
             continue
         path = adapter.config_path(scope, project_root)
         if removed:
-            console.print(f"[green]✓[/green] Removed toolbase from {path}.")
+            console.print(
+                f"[green]✓[/green] Unwired [dim]{_display_path(path)}[/dim]"
+            )
         else:
             console.print(
                 f"[dim]No toolbase entry in {path}; nothing to remove.[/dim]"
@@ -7463,7 +7919,7 @@ def orchestral(script):
         )
         sys.exit(1)
     # Run with the interpreter toolbase runs under (toolbase + orchestral live
-    # there), cwd = the project root so the script resolves the active profile
+    # there), cwd = the project root so the script resolves the active loadout
     # and orchestral persists its conversation under the project.
     root = find_project_root() or _Path.cwd()
     console.print(f"[dim]Running {path} ...[/dim]")
@@ -7618,7 +8074,7 @@ def create_tarball(source_dir: Path, output_path: Path, toolkit_name: str):
 
     Excludes build/VCS/editor cruft AND consumer-side state that a dir
     accumulates when it doubles as a place you install/serve the toolkit
-    from: .toolbase/ (manifest, profiles, project config), .mcp.json,
+    from: .toolbase/ (manifest, loadouts, project config), .mcp.json,
     .codex/ and .agents/ (harness wiring with machine-specific paths), and
     .claude/ (local agent settings). Publishing those would leak local
     state and absolute paths into the public package.

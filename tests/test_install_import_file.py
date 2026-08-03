@@ -84,7 +84,7 @@ def test_malformed_files_fail_loud(tmp_path, body, fragment):
 def _dispatch(tmp_path, body, invoke):
     f = _write(tmp_path, body)
     return _install_from_import_file(
-        None, f, global_scope=False, local_scope=True, no_skills=False,
+        None, f, no_skills=False,
         activate_after=False, rebuild=False, yes=True, no_=False,
         no_input=True, invoke=invoke,
     )
@@ -102,8 +102,8 @@ toolkits:
     assert calls[0]["name"] == "calculator" and calls[0]["editable"] is False
     assert calls[1]["editable"] is True
     assert calls[1]["name"] == str((tmp_path / "kit").resolve())
-    # File-level scope/prompt flags applied to every entry.
-    assert all(c["local_scope"] and c["no_input"] for c in calls)
+    # File-level prompt flags applied to every entry.
+    assert all(c["no_input"] for c in calls)
 
 
 def test_failures_continue_then_exit_nonzero(tmp_path):
@@ -196,7 +196,7 @@ def test_tarball_install_roundtrip_dispatch(tmp_path):
         calls.append(kw)
 
     cli._install_from_tarball(
-        None, tarball, version=None, global_scope=False, local_scope=True,
+        None, tarball, version=None,
         no_skills=False, activate_after=False, bundle_flags=(),
         rebuild=False, yes=True, no_=False, no_input=True, invoke=invoke,
     )
@@ -222,7 +222,7 @@ def test_tarball_install_rejects_non_toolkit_archive(tmp_path):
         t.add(tmp_path / "junk.txt", arcname="junk.txt")
     with pytest.raises(click.UsageError) as e:
         cli._install_from_tarball(
-            None, bad, version=None, global_scope=False, local_scope=True,
+            None, bad, version=None,
             no_skills=False, activate_after=False, bundle_flags=(),
             rebuild=False, yes=True, no_=False, no_input=True,
             invoke=lambda **kw: None,

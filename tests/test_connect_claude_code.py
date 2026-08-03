@@ -170,7 +170,7 @@ def test_cli_disconnect_all_conflicts_with_scope_flags(
     from toolbase import cli
 
     monkeypatch.setenv("HOME", str(tmp_path))
-    r = CliRunner().invoke(cli.main, ["disconnect", "claude-code", "--all", "-g"])
+    r = CliRunner().invoke(cli.main, ["disconnect", "claude-code", "--all", "-u"])
     assert r.exit_code != 0
     assert "--all" in r.output
 

@@ -88,7 +88,12 @@ def _build_source() -> None:
     FAKE_HOME.mkdir(parents=True, exist_ok=True)
 
 
-def _toolbase_bin() -> str:
+def _toolbase_cmd() -> list:
+    """This working copy. See run_serve_e2e for why not shutil.which."""
+    return [sys.executable, "-m", "toolbase.cli"]
+
+
+def _unused_toolbase_bin() -> str:
     binp = shutil.which("toolbase")
     if binp is None:
         print(
@@ -98,8 +103,8 @@ def _toolbase_bin() -> str:
     return binp
 
 
-def _call_greet(toolbase_bin: str) -> str:
-    """Connect a fresh MCP client/serve and call editkit__greet."""
+def _call_greet(toolbase_cmd: list) -> str:
+    """Connect a fresh MCP client/serve and call editkit__Greet."""
     from orchestral.mcp import MCPClient
 
     sub_env = {
@@ -107,12 +112,12 @@ def _call_greet(toolbase_bin: str) -> str:
         "PATH": os.environ.get("PATH", ""),
     }
     client = MCPClient(
-        server_command=[toolbase_bin, "serve", TOOLKIT_NAME],
+        server_command=[*toolbase_cmd, "serve"],
         env=sub_env,
     )
     client.connect()
     try:
-        return client.call_tool(f"{TOOLKIT_NAME}__greet", {"name": "tony"})
+        return client.call_tool(f"{TOOLKIT_NAME}__Greet", {"name": "tony"})
     finally:
         try:
             client.disconnect()
@@ -122,16 +127,21 @@ def _call_greet(toolbase_bin: str) -> str:
 
 def main() -> int:
     _build_source()
-    toolbase_bin = _toolbase_bin()
+    toolbase_cmd = _toolbase_cmd()
 
     print(f"HOME redirected to {FAKE_HOME}")
     print(f"source dir: {SOURCE_DIR}")
-    print(f"using toolbase at: {toolbase_bin}\n")
+    print(f"using toolbase: {' '.join(toolbase_cmd)}\n")
+
+    # Neutral cwd for the same reason as run_serve_e2e: the repo is a
+    # toolbase project and would shadow the fake home.
+    WORK_ROOT.mkdir(parents=True, exist_ok=True)
+    os.chdir(WORK_ROOT)
 
     # Step 1: editable install.
     print("--- toolbase install -e ---")
     install = subprocess.run(
-        [toolbase_bin, "install", "-e", str(SOURCE_DIR), "--no-input"],
+        [*toolbase_cmd, "install", "-e", str(SOURCE_DIR), "--no-input"],
         env={"HOME": str(FAKE_HOME), "PATH": os.environ.get("PATH", "")},
         capture_output=True,
         text=True,
@@ -140,6 +150,20 @@ def main() -> int:
     if install.returncode != 0:
         print("!!! editable install failed")
         print(install.stderr[-800:])
+        return 1
+
+    # Activate it: installing does not serve, so without this the
+    # orchestrator has nothing to expose and the client sees the
+    # connection close with no explanation.
+    activate = subprocess.run(
+        [*toolbase_cmd, "activate", TOOLKIT_NAME, "-u"],
+        env={"HOME": str(FAKE_HOME), "PATH": os.environ.get("PATH", "")},
+        capture_output=True,
+        text=True,
+    )
+    if activate.returncode != 0:
+        print("!!! activate failed")
+        print(activate.stderr[-800:])
         return 1
 
     # Verify the slot is a real dir with a symlinked tools/ and a real venv.
@@ -157,7 +181,7 @@ def main() -> int:
 
     # Step 2: serve + call (expect v1 "hello").
     print("--- serve + call (expect hello) ---")
-    r1 = _call_greet(toolbase_bin)
+    r1 = _call_greet(toolbase_cmd)
     print(f"  result: {r1}")
     if "hello, tony" not in r1:
         print("!!! v1 greet did not return the expected payload")
@@ -171,7 +195,7 @@ def main() -> int:
 
     # Step 4: reconnect (fresh serve = fresh subprocess) and confirm live.
     print("--- serve + call again (expect HOWDY) ---")
-    r2 = _call_greet(toolbase_bin)
+    r2 = _call_greet(toolbase_cmd)
     print(f"  result: {r2}")
     if "HOWDY, tony" not in r2:
         print("!!! edit was NOT picked up — symlink-follow may be broken")

@@ -2,7 +2,7 @@
 
 Some toolkits need values to work: an API key, a path, a default setting.
 This is separate from curation. Configuration is the data a toolkit needs,
-profiles are which tools the agent sees.
+loadouts are which tools the agent sees.
 
 ## See what a toolkit needs
 
@@ -48,12 +48,12 @@ Three layers merge, later wins key-by-key:
 |---|---|---|
 | `--user` | `~/.toolbase/config/<kit>.yaml` | your defaults and secrets, every project on this machine |
 | `--project` | `<repo>/.toolbase/config/<kit>.yaml` | **committed**, shareable values the whole team should get |
-| `--local` | `<repo>/.toolbase/config/<kit>.local.yaml` | project-scoped **machine truth** — absolute tool paths, local builds. Gitignored automatically. |
+| `--private` | `<repo>/.toolbase/config/<kit>.local.yaml` | project-scoped **machine truth** — absolute tool paths, local builds. Gitignored automatically. |
 
 Inside a project, `config set` defaults to the project layer. The rule of
 thumb: if the value contains a path that only exists on your machine, it's
-`--local`; if it's a secret, it's `--user`; otherwise `--project` and commit
-it. Writing `--local` drops a `.toolbase/.gitignore` (if absent) so the file
+`--private`; if it's a secret, it's `--user`; otherwise `--project` and commit
+it. Writing `--private` drops a `.toolbase/.gitignore` (if absent) so the file
 can't reach git by accident.
 
 ## Scaffold a fresh config file

@@ -146,15 +146,15 @@ def project_config_path(project_root: Path, toolkit: str) -> Path:
     return project_root / ".toolbase" / "config" / f"{toolkit}.yaml"
 
 
-# ── serve config + profiles (curation layer) ────────────────────────
+# ── serve config + loadouts (curation layer) ────────────────────────
 
 
 def user_serve_config_path(*, base: Optional[Path] = None) -> Path:
     """``~/.toolbase/serve.yaml`` — user-level serve defaults.
 
-    Carries ``default.profile`` (which profile is active) and the
-    absolute ``default.disabled`` blocklists. Profile bodies live in
-    ``profiles/`` (see ``user_profiles_dir``), not here.
+    Carries ``default.loadout`` (which loadout is active) and the
+    absolute ``default.disabled`` blocklists. Loadout bodies live in
+    ``loadouts/`` (see ``user_loadouts_dir``), not here.
     """
     return _user_root(base) / "serve.yaml"
 
@@ -169,20 +169,39 @@ def project_serve_config_path(project_root: Path) -> Path:
     return project_root / ".toolbase" / "serve.yaml"
 
 
-def user_profiles_dir(*, base: Optional[Path] = None) -> Path:
-    """``~/.toolbase/profiles/`` — user-level profile files.
+def user_loadouts_dir(*, base: Optional[Path] = None) -> Path:
+    """``~/.toolbase/loadouts/`` — user-level loadout files.
 
-    One file per profile (``<name>.yaml``). Does NOT create the dir;
+    One file per loadout (``<name>.yaml``). Does NOT create the dir;
     callers create it when writing.
     """
-    return _user_root(base) / "profiles"
+    return _user_root(base) / "loadouts"
 
 
-def project_profiles_dir(project_root: Path) -> Path:
-    """``<project>/.toolbase/profiles/`` — project-level profile files.
+def project_loadouts_dir(project_root: Path) -> Path:
+    """``<project>/.toolbase/loadouts/`` — project-level loadout files.
 
     Same default-project special-case as ``project_manifest_path``.
     """
+    if _is_default_project(project_root):
+        return project_root / "loadouts"
+    return project_root / ".toolbase" / "loadouts"
+
+
+# ── pre-0.12 spelling ───────────────────────────────────────────────
+#
+# Loadouts were called profiles and lived in ``profiles/``. Discovery
+# falls back to these when the current directory is absent, so an
+# un-migrated machine keeps serving; nothing writes to them.
+
+
+def legacy_user_profiles_dir(*, base: Optional[Path] = None) -> Path:
+    """``~/.toolbase/profiles/`` — the pre-0.12 user loadout dir."""
+    return _user_root(base) / "profiles"
+
+
+def legacy_project_profiles_dir(project_root: Path) -> Path:
+    """``<project>/.toolbase/profiles/`` — the pre-0.12 project dir."""
     if _is_default_project(project_root):
         return project_root / "profiles"
     return project_root / ".toolbase" / "profiles"

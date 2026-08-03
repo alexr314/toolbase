@@ -124,9 +124,9 @@ def test_bridge_threads_overrides_through():
     orig_orch = bridge.Orchestrator
     orig_resolve = bridge._resolve
     bridge.Orchestrator = _FakeOrch
-    bridge._resolve = lambda project_root, profile: object()
+    bridge._resolve = lambda project_root, loadout: object()
     try:
-        with toolbase_tools(profile="p", quiet=True,
+        with toolbase_tools(loadout="p", quiet=True,
                             config_overrides={"base_directory": "/sb"}) as tools:
             assert tools == []
     finally:

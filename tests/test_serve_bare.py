@@ -40,7 +40,7 @@ def test_load_bare_true(tmp_path):
 
 def test_load_bare_absent_is_false(tmp_path):
     p = tmp_path / "serve.yaml"
-    p.write_text("default:\n  profile: paper\n")
+    p.write_text("default:\n  loadout: paper\n")
     assert load_serve_config(p).default.bare is False
 
 

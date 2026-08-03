@@ -25,9 +25,9 @@ def test_create_tarball_excludes_consumer_state(tmp_path: Path):
 
     # Consumer / harness / local state that must NOT ship.
     (src / ".mcp.json").write_text('{"mcpServers": {}}')
-    (src / ".toolbase" / "profiles").mkdir(parents=True)
+    (src / ".toolbase" / "loadouts").mkdir(parents=True)
     (src / ".toolbase" / "serve.yaml").write_text("default: {}\n")
-    (src / ".toolbase" / "profiles" / "default.yaml").write_text("toolkits: {}\n")
+    (src / ".toolbase" / "loadouts" / "default.yaml").write_text("toolkits: {}\n")
     (src / ".claude").mkdir()
     (src / ".claude" / "settings.local.json").write_text("{}")
     (src / ".codex").mkdir()

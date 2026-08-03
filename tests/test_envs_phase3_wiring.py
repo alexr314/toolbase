@@ -103,7 +103,9 @@ def test_cwd_project_root_creates_in_cwd(tmp_path, fake_home, monkeypatch):
     monkeypatch.chdir(cwd)
     root = cli._cwd_project_root()
     assert root == cwd.resolve()
-    assert (cwd / ".toolbase" / "manifest.yaml").exists()
+    # The directory is the marker; no file is fabricated.
+    assert (cwd / ".toolbase").is_dir()
+    assert not (cwd / ".toolbase" / "manifest.yaml").exists()
 
 
 def test_cwd_project_root_uses_existing_project_above(tmp_path, fake_home, monkeypatch):
@@ -172,11 +174,15 @@ def test_project_init_creates_dot_toolbase(tmp_path, fake_home):
         cli.main, ["project", "init", "--path", str(target)],
     )
     assert r.exit_code == 0, r.output
-    manifest = target / ".toolbase" / "manifest.yaml"
-    assert manifest.exists()
-    parsed = _yaml.safe_load(manifest.read_text())
-    assert parsed.get("schema_version") == 1
-    assert parsed.get("toolkits") == []
+    # The directory is the marker. It used to also fabricate an empty
+    # manifest.yaml purely so discovery could find it — a versioning
+    # file written by a command with no opinion about versions, and
+    # legacy the moment versions moved into loadouts.
+    assert (target / ".toolbase").is_dir()
+    assert not (target / ".toolbase" / "manifest.yaml").exists()
+    # And it is discoverable on that basis alone.
+    from toolbase.envs import find_project_root
+    assert find_project_root(cwd=target) == target
 
 
 def test_project_init_idempotent(tmp_path, fake_home):

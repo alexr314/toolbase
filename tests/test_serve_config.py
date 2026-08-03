@@ -1,16 +1,16 @@
 """Tests for ``toolbase/serve/config.py`` — the defaults-only serve.yaml.
 
-serve.yaml carries only ``default.profile`` (which profile is active) and
-``default.disabled`` (absolute blocklists). Profile bodies live one-file-per
-under ``profiles/`` and are covered in ``test_serve_profiles.py``.
+serve.yaml carries only ``default.loadout`` (which loadout is active) and
+``default.disabled`` (absolute blocklists). Loadout bodies live one-file-per
+under ``loadouts/`` and are covered in ``test_serve_loadouts.py``.
 
 Matrix:
 - with/without serve.yaml present
-- profile field present / absent / wrong type
+- loadout field present / absent / wrong type
 - disabled blocklists round-trip
 - the retired ``groups:`` block is rejected with a clear message
 - malformed / non-mapping yaml -> clear error with path
-- two-layer merge: profile project-wins, disabled lists union
+- two-layer merge: loadout project-wins, disabled lists union
 - ``_split_tool`` shape validation
 """
 
@@ -37,16 +37,16 @@ from toolbase.serve.config import (
 
 def test_load_missing_returns_empty(tmp_path: Path):
     cfg = load_serve_config(tmp_path / "serve.yaml")
-    assert cfg.default.profile is None
+    assert cfg.default.loadout is None
     assert cfg.default.disabled_toolkits == []
     assert cfg.default.disabled_tools == []
 
 
-def test_load_profile_and_blocklists(tmp_path: Path):
+def test_load_loadout_and_blocklists(tmp_path: Path):
     p = tmp_path / "serve.yaml"
     p.write_text(yaml.safe_dump({
         "default": {
-            "profile": "paper",
+            "loadout": "paper",
             "disabled": {
                 "toolkits": ["heptapod"],
                 "tools": ["aster__heavy"],
@@ -54,14 +54,14 @@ def test_load_profile_and_blocklists(tmp_path: Path):
         }
     }))
     cfg = load_serve_config(p)
-    assert cfg.default.profile == "paper"
+    assert cfg.default.loadout == "paper"
     assert cfg.default.disabled_toolkits == ["heptapod"]
     assert cfg.default.disabled_tools == ["aster__heavy"]
 
 
-def test_load_profile_must_be_nonempty_string(tmp_path: Path):
+def test_load_loadout_must_be_nonempty_string(tmp_path: Path):
     p = tmp_path / "serve.yaml"
-    p.write_text(yaml.safe_dump({"default": {"profile": ["not", "a", "str"]}}))
+    p.write_text(yaml.safe_dump({"default": {"loadout": ["not", "a", "str"]}}))
     with pytest.raises(ServeConfigError):
         load_serve_config(p)
 
@@ -72,7 +72,7 @@ def test_load_rejects_retired_groups_block(tmp_path: Path):
     with pytest.raises(ServeConfigError) as ei:
         load_serve_config(p)
     assert "groups" in str(ei.value)
-    assert "profile" in str(ei.value)
+    assert "loadout" in str(ei.value)
 
 
 def test_load_malformed_yaml_clear_error(tmp_path: Path):
@@ -94,14 +94,14 @@ def test_save_and_reload_roundtrip(tmp_path: Path):
     p = tmp_path / "serve.yaml"
     cfg = ServeConfig(
         default=DefaultBlock(
-            profile="paper",
+            loadout="paper",
             disabled_toolkits=["heptapod"],
             disabled_tools=["aster__heavy"],
         ),
     )
     save_serve_config(cfg, p)
     reloaded = load_serve_config(p)
-    assert reloaded.default.profile == "paper"
+    assert reloaded.default.loadout == "paper"
     assert reloaded.default.disabled_toolkits == ["heptapod"]
     assert reloaded.default.disabled_tools == ["aster__heavy"]
 
@@ -110,7 +110,7 @@ def test_save_empty_config_drops_empty_keys(tmp_path: Path):
     p = tmp_path / "serve.yaml"
     save_serve_config(ServeConfig(), p)
     reloaded = load_serve_config(p)
-    assert reloaded.default.profile is None
+    assert reloaded.default.loadout is None
     assert reloaded.default.disabled_toolkits == []
     # An empty config serializes to an empty mapping (no stray keys).
     assert (yaml.safe_load(p.read_text()) or {}) == {}
@@ -119,18 +119,18 @@ def test_save_empty_config_drops_empty_keys(tmp_path: Path):
 # ── two-layer merge ──────────────────────────────────────────────────────────
 
 
-def test_merge_profile_project_wins():
-    user = ServeConfig(default=DefaultBlock(profile="user-default"))
-    project = ServeConfig(default=DefaultBlock(profile="proj-default"))
+def test_merge_loadout_project_wins():
+    user = ServeConfig(default=DefaultBlock(loadout="user-default"))
+    project = ServeConfig(default=DefaultBlock(loadout="proj-default"))
     merged = merge_serve_configs(user, project)
-    assert merged.default.profile == "proj-default"
+    assert merged.default.loadout == "proj-default"
 
 
-def test_merge_profile_falls_through_to_user():
-    user = ServeConfig(default=DefaultBlock(profile="user-default"))
-    project = ServeConfig(default=DefaultBlock())  # no profile
+def test_merge_loadout_falls_through_to_user():
+    user = ServeConfig(default=DefaultBlock(loadout="user-default"))
+    project = ServeConfig(default=DefaultBlock())  # no loadout
     merged = merge_serve_configs(user, project)
-    assert merged.default.profile == "user-default"
+    assert merged.default.loadout == "user-default"
 
 
 def test_merge_disabled_lists_union():

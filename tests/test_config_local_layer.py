@@ -10,8 +10,8 @@ precedence — completing the symmetry with manifest.local.yaml. Pins:
   - merge order: user < project < local, in both resolvers
     (envs.resolve_toolkit_config and setup.load_state_config — the
     serve gate and host injection paths)
-  - tb config set --local writes the file and self-gitignores
-  - tb config set --local/--project/--user are mutually exclusive
+  - tb config set --private writes the file and self-gitignores
+  - tb config set --private/--project/--user are mutually exclusive
 """
 
 from __future__ import annotations
@@ -71,7 +71,7 @@ def test_resolver_merge_order(tmp_path):
 
 def test_state_config_sees_local_layer(tmp_path, monkeypatch):
     # The serve-time path (bundle gates + host --state-config) must see
-    # the same merge, or a path set with --local wouldn't satisfy a
+    # the same merge, or a path set with --private wouldn't satisfy a
     # bundle's `requires:` gate.
     from toolbase.setup import parse_config_block
     from toolbase.setup.declarative import load_state_config
@@ -105,7 +105,7 @@ def project_cwd(tmp_path, monkeypatch):
 def test_config_set_local_writes_and_gitignores(project_cwd):
     result = CliRunner().invoke(
         cli.main,
-        ["config", "set", "kit", "delphes_path", "/srv/delphes", "--local"])
+        ["config", "set", "kit", "delphes_path", "/srv/delphes", "--private"])
     assert result.exit_code == 0, result.output
     f = project_cwd / ".toolbase" / "config" / "kit.local.yaml"
     assert yaml.safe_load(f.read_text())["delphes_path"] == "/srv/delphes"
@@ -118,6 +118,6 @@ def test_config_set_local_writes_and_gitignores(project_cwd):
 def test_layer_flags_mutually_exclusive(project_cwd):
     result = CliRunner().invoke(
         cli.main,
-        ["config", "set", "kit", "k", "v", "--local", "--project"])
+        ["config", "set", "kit", "k", "v", "--private", "--project"])
     assert result.exit_code != 0
     assert "mutually exclusive" in result.output

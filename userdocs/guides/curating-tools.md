@@ -23,7 +23,7 @@ calculator
 ## See what's available
 
 ```bash
-tb profile tools calculator
+tb loadout tools calculator
 ```
 
 ## Narrow it down
@@ -49,19 +49,32 @@ tb serve --dry-run   # the set the agent will see
 ```console
 ✓ calculator  (active)
   - 1.4.0   (used 2 minutes ago, 40 MB)
-    ✓ add     [bundle: basic]
-    ✗ power   [bundle: scientific]
-    ✗ solve   [bundle: symbolic]  (needs config: cas_path)
+    [basic]
+      ✓ add
+    [scientific]
+      ✗ power
+    [symbolic]  ⚠ needs config: cas_path
+      ✗ solve
 ```
 
-A tool is hidden if its bundle isn't active, you deactivated it, or its bundle
-needs config you haven't set ([Configuring toolkits](configuring-toolkits.md)).
+Tools are grouped under their bundle, and anything blocking a whole bundle is
+stated once on its header. A tool is hidden if its bundle isn't active, you
+deactivated it, or its bundle needs config you haven't set
+([Configuring toolkits](configuring-toolkits.md)). A bundle whose deps were
+never installed (`tb install calculator[basic]` and nothing else) shows its
+tool names but no per-tool status — install it to serve them:
+
+```console
+    [symbolic]  ✗ not installed — add with `tb install calculator[symbolic]`
+      solve, simplify
+```
 
 If two active toolkits expose the same tool name, `tb list -v` flags it and
 `tb serve` warns at startup:
 
 ```console
-    ✓ add     [bundle: basic]  (also in: matrix)
+    [basic]
+      ✓ add     (name also in: matrix)
 ```
 
 It's harmless — tools are served namespaced (`calculator__add`, `matrix__add`),
@@ -72,4 +85,4 @@ that would clash if ever served un-namespaced. See
 ## Next
 
 - [Configuring toolkits](configuring-toolkits.md): unlock config-gated bundles
-- [Profiles](profiles-power-user.md): save and switch named tool sets
+- [Loadouts](loadouts-power-user.md): save and switch named tool sets

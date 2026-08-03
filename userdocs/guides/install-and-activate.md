@@ -59,18 +59,18 @@ tb activate calculator
 ✓ Activated calculator (whole toolkit).
 ```
 
-Activation is **project-local by default**: it writes a profile under the
+Activation is **project-local by default**: it writes a loadout under the
 current directory's `.toolbase/` (creating it if needed), so the toolkit is
-exposed only when you work here. Add `-g` to activate it **user-wide** (every
+exposed only when you work here. Add `-u` to activate it **user-wide** (every
 session, any directory) instead:
 
 ```bash
 tb activate calculator        # this project only (creates ./.toolbase/)
-tb activate calculator -g     # user-wide
+tb activate calculator -u     # user-wide
 ```
 
 `tb install calculator -a` installs and activates in one step, following the
-same rule: project-local by default, `-g` for user-wide. The binary still
+same rule: project-local by default, `-u` for user-wide. The binary still
 lands in the shared global cache either way; only the activation is scoped.
 
 ## See what you have
@@ -80,7 +80,7 @@ tb list
 ```
 
 ```console
-Active profile: default
+Active loadout: default
 
 ✓ calculator   1.4.0   (active)
 ✗ units        0.9.0   (inactive)
@@ -92,6 +92,7 @@ Active profile: default
 
 ```bash
 tb install calculator@1.5.0     # newer version, alongside 1.4.0
+tb use calculator@1.4.0         # switch back — writes the pin, no rebuild
 tb uninstall calculator@1.4.0   # remove one version slot
 tb uninstall calculator         # remove all versions
 ```

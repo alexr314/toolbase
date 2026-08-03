@@ -1,26 +1,29 @@
 # Troubleshooting
 
-## "No active profile"
+## "No active loadout"
 
-`tb serve` couldn't resolve a profile. Activate something (creates the default
-profile) or set one:
+`tb serve` couldn't resolve a loadout. Activate something (creates the default
+loadout) or set one:
 
 ```bash
-tb activate <toolkit>            # builds the default profile
-tb profile set-default <name>    # or point at an existing one
+tb activate <toolkit>            # builds the default loadout
+tb loadout set-default <name>    # or point at an existing one
 ```
 
 ## The agent sees no tools
 
-Installing doesn't serve. Check the toolkit is active and the harness is wired:
+Start with `tb status` — it names the project and loadout in effect, what
+would serve, and anything broken. Installing doesn't serve, so the usual
+answer is that nothing is active:
 
 ```bash
+tb status              # context, what serves, what's wrong
 tb list                # is it ✓ active?
 tb connect --list      # is toolbase wired into your harness?
 tb serve --dry-run     # what would be served
 ```
 
-Restart the agent session after `connect` or any profile change.
+Restart the agent session after `connect` or any loadout change.
 
 ## A tool I expected is missing
 
@@ -32,7 +35,8 @@ A tool is hidden if its bundle isn't active, you deactivated it, or its bundle
 needs config:
 
 ```console
-✗ solve   [bundle: symbolic]  (needs config: cas_path)
+[symbolic]  ⚠ needs config: cas_path
+  ✗ solve
 ```
 
 Set the key (`tb config set <toolkit> cas_path <value>`) and re-serve.
@@ -43,7 +47,8 @@ If two active toolkits each define, say, an `add` tool, `tb serve` prints a
 warning at startup and `tb list -v` annotates the rows:
 
 ```console
-✓ add     [bundle: basic]  (also in: matrix)
+    [basic]
+      ✓ add     (name also in: matrix)
 ```
 
 This is **harmless by default**: tools are served namespaced as

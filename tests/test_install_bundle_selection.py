@@ -204,7 +204,7 @@ def test_update_install_meta_bundles_noop_when_no_meta(tmp_path: Path):
 def test_tool_is_served_passes_when_installed_bundles_is_none():
     """Backward compat: no install-time gating when installed_bundles=None."""
     from toolbase.serve.bundles import BundleAvailability
-    from toolbase.serve.profiles import tool_is_served
+    from toolbase.serve.loadouts import tool_is_served
     av = BundleAvailability(
         available_bundles=["alpha"], dropped_bundles={},
         has_bundles_block=True,
@@ -217,7 +217,7 @@ def test_tool_is_served_passes_when_installed_bundles_is_none():
 def test_tool_is_served_excludes_when_bundle_not_installed():
     """A tool's bundles must intersect installed_bundles when set."""
     from toolbase.serve.bundles import BundleAvailability
-    from toolbase.serve.profiles import tool_is_served
+    from toolbase.serve.loadouts import tool_is_served
     av = BundleAvailability(
         available_bundles=["alpha", "beta"], dropped_bundles={},
         has_bundles_block=True,
@@ -238,7 +238,7 @@ def test_tool_is_served_bundle_less_tool_always_passes_install_gate():
     """A tool with no declared bundles is always installed (no extras
     gating it); it passes the install-time check regardless of the set."""
     from toolbase.serve.bundles import BundleAvailability
-    from toolbase.serve.profiles import tool_is_served
+    from toolbase.serve.loadouts import tool_is_served
     av = BundleAvailability(
         available_bundles=[], dropped_bundles={},
         has_bundles_block=False,
@@ -253,7 +253,7 @@ def test_tool_is_served_empty_installed_bundles_excludes_bundled_tools():
     """``installed_bundles=set()`` (= base-only install) excludes every
     bundle-aware tool, leaves bundle-less tools served."""
     from toolbase.serve.bundles import BundleAvailability
-    from toolbase.serve.profiles import tool_is_served
+    from toolbase.serve.loadouts import tool_is_served
     av = BundleAvailability(
         available_bundles=["alpha"], dropped_bundles={},
         has_bundles_block=True,
@@ -511,7 +511,7 @@ def test_install_rebuild_destructively_reinstalls(fake_env, tmp_path: Path):
     assert installed_bundles(slot) == ["alpha"]
 
 
-def test_install_records_bundles_in_manifest(fake_env, tmp_path: Path):
+def test_install_records_bundles_in_the_cache_slot(fake_env, tmp_path: Path):
     src = _make_source_toolkit(
         tmp_path / "src",
         bundles_block={
@@ -526,14 +526,17 @@ def test_install_records_bundles_in_manifest(fake_env, tmp_path: Path):
     )
     assert r.exit_code == 0, r.output
 
-    # Manifest entry should record the subset.
+    # The subset is recorded in the slot's install meta, which is what
+    # serve-time bundle gating actually reads. The manifest never gets
+    # one: install writes no manifest, and nothing read that field.
+    from toolbase.envs.cache import installed_bundles
+    from toolbase.envs.paths import cache_dir
+    assert installed_bundles(cache_dir("demo", "0.1.0")) == ["alpha"]
+
     from toolbase.envs.manifest import load_manifest
     from toolbase.envs.paths import project_manifest_path
     manifest_path = project_manifest_path(fake_env["home"] / "default-project")
-    m = load_manifest(manifest_path)
-    entry = m.find("demo")
-    assert entry is not None
-    assert entry.bundles == ["alpha"]
+    assert load_manifest(manifest_path).find("demo") is None
 
 
 # ────────────────────────────────────────────────────────────────────

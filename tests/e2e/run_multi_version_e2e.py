@@ -126,17 +126,32 @@ def _uninstall(target: str, *, yes: bool = True) -> int:
     return result.exit_code
 
 
+def _use(target: str) -> int:
+    """Pin a version the way a user would. Explicitly user-scoped: the
+    default is this project, and the harness runs from the repo, which
+    would write the pin into the repo's own .toolbase/."""
+    with mock.patch.object(config, "CONFIG_DIR", FAKE_HOME):
+        result = CliRunner().invoke(
+            cli.main, ["use", "-u", target], catch_exceptions=False,
+        )
+    print(f"--- use {target}: exit {result.exit_code} ---")
+    if result.exit_code != 0:
+        print(result.output)
+    return result.exit_code
+
+
 def _read_pinned_version() -> str | None:
-    """Return the version pinned in the default-project manifest, or None."""
-    manifest_path = FAKE_HOME / "default-project" / "manifest.yaml"
-    if not manifest_path.exists():
+    """Return the version pinned in the user loadout, or None.
+
+    Versions live in the loadout's ``versions:`` block, separate from
+    the ``toolkits:`` curation; `tb use` is what writes them.
+    """
+    loadout = FAKE_HOME / "loadouts" / "default.yaml"
+    if not loadout.exists():
         return None
     import yaml as _yaml
-    data = _yaml.safe_load(manifest_path.read_text()) or {}
-    for entry in data.get("toolkits", []) or []:
-        if entry.get("name") == TOOLKIT_NAME:
-            return entry.get("version")
-    return None
+    data = _yaml.safe_load(loadout.read_text()) or {}
+    return (data.get("versions") or {}).get(TOOLKIT_NAME)
 
 
 def main() -> int:
@@ -179,10 +194,20 @@ def main() -> int:
             return 5
 
     # Manifest pin should reflect the LAST install (0.2.0).
+    # Install writes no manifest — `tb use` is the only thing that pins,
+    # so two installs leave the cache with two slots and no opinion.
     pinned = _read_pinned_version()
     print(f"Manifest pin after both installs: {pinned}")
-    if pinned != "0.2.0":
-        print(f"!!! expected pin to be 0.2.0, got {pinned}")
+    if pinned is not None:
+        print(f"!!! install should not pin, got {pinned}")
+        return 6
+
+    # Pin explicitly, so the uninstall cleanup below has something to
+    # clean. This is the deliberate act install no longer performs.
+    if _use(f"{TOOLKIT_NAME}@0.2.0") != 0:
+        return 6
+    if _read_pinned_version() != "0.2.0":
+        print(f"!!! tb use should have pinned 0.2.0")
         return 6
 
     # ── Phase B: uninstall one version, verify the other remains ──
@@ -199,9 +224,7 @@ def main() -> int:
         print(f"!!! v0.2.0 slot should still exist")
         return 8
 
-    # Pin remains because we only uninstalled the non-pinned version (0.1.0
-    # was earlier; 0.2.0 is the pinned one). Actually wait: the pin was
-    # 0.2.0 and we removed 0.1.0, so 0.2.0 stays pinned.
+    # The pin names 0.2.0 and we removed 0.1.0, so it stays valid.
     pinned = _read_pinned_version()
     print(f"Manifest pin after uninstall 0.1.0: {pinned}")
     if pinned != "0.2.0":
@@ -220,14 +243,15 @@ def main() -> int:
         print(f"!!! pin should be cleared, got {pinned}")
         return 11
 
-    # ── Phase D: re-install both, verify the @<version> syntax ──
+    # ── Phase D: re-install, verify the @<version> syntax still works
+    # and still leaves the manifest alone.
     if _install("0.1.0") != 0:
         return 12
     if not (cache_root / "0.1.0").exists():
         return 13
     pinned = _read_pinned_version()
-    if pinned != "0.1.0":
-        print(f"!!! after solo install of 0.1.0, pin should be 0.1.0, got {pinned}")
+    if pinned is not None:
+        print(f"!!! re-install should not pin, got {pinned}")
         return 14
 
     print("\n✓ multi-version e2e passed")

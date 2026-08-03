@@ -923,12 +923,14 @@ def _resolve_toolkit_dir(
 
     - ``toolkits_dir`` explicitly passed → use that (test-injection
       path; matches the 0.4.x flat layout used in test fixtures).
-    - ``toolkits_dir`` is None → resolve via the 0.5.0 cache layout.
-      The active version is picked from the default-project manifest
-      pin if there is one; otherwise the only-installed-version (if
-      there's exactly one) or the highest version when multiple.
+    - ``toolkits_dir`` is None → resolve via the 0.5.0 cache layout,
+      through ``envs.resolve_version`` — the same pin chain the serve
+      orchestrator uses, so ``tb setup`` always configures the slot
+      ``tb serve`` will run.
 
-    Raises ``RuntimeError`` if the toolkit isn't installed anywhere.
+    Raises ``RuntimeError`` if the toolkit isn't installed anywhere, or
+    if a pin names a version that isn't in the cache (setting up some
+    other version than the pinned one would be a silent surprise).
     """
     if toolkits_dir is not None:
         legacy = toolkits_dir / toolkit_name
@@ -940,10 +942,8 @@ def _resolve_toolkit_dir(
 
     # 0.5.0 cache walk.
     from ..envs import (
-        list_versions, find_slot,
-        project_manifest_path, get_pin,
+        list_versions, find_slot, active_pins, resolve_version,
     )
-    from ..versioning import parse_version
 
     versions = list_versions(toolkit_name)
     if not versions:
@@ -952,32 +952,20 @@ def _resolve_toolkit_dir(
             "~/.toolbase/cache/)"
         )
 
-    # Prefer the pin from the active project's manifest (Phase 3:
-    # walk-upward discovery via cli._resolve_active_project_root).
-    try:
-        from ..cli import _resolve_active_project_root
-        project_root, _source = _resolve_active_project_root()
-        manifest_path = project_manifest_path(project_root)
-        pin = get_pin(manifest_path, toolkit_name)
-    except Exception:
-        pin = None
+    resolution = resolve_version(
+        versions, pin=active_pins().get(toolkit_name),
+    )
+    if not resolution.ok:
+        raise RuntimeError(
+            f"toolkit {toolkit_name!r}: {resolution.describe()}. "
+            f"Install it, or repoint the pin with "
+            f"`tb use {toolkit_name}@<version>`."
+        )
 
-    if pin is not None and pin.version in versions:
-        chosen_version = pin.version
-    elif len(versions) == 1:
-        chosen_version = versions[0]
-    else:
-        # No pin, multiple — pick highest.
-        chosen_version = sorted(
-            versions,
-            key=lambda v: parse_version(v) or (0, 0, 0),
-            reverse=True,
-        )[0]
-
-    slot = find_slot(toolkit_name, chosen_version)
+    slot = find_slot(toolkit_name, resolution.version)
     if slot is None:
         raise RuntimeError(
-            f"toolkit {toolkit_name!r} v{chosen_version} resolution "
+            f"toolkit {toolkit_name!r} v{resolution.version} resolution "
             "failed (cache walk inconsistency)"
         )
     return slot.path
