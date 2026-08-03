@@ -5255,6 +5255,47 @@ def status_cmd():
             '    [dim](use "tb connect <harness>" to wire one)[/dim]'
         )
 
+    # ── Skills ───────────────────────────────────────────────────────
+    # Skills reach an agent by a different route than tools: they are
+    # copied into the harness's own skill directory by `tb connect`,
+    # not served over MCP. So an active toolkit's skills are not
+    # necessarily in front of the agent -- they are there if a harness
+    # was wired after they were activated. Shown only for active
+    # toolkits, since an inactive one surfaces nothing.
+    skill_rows = []
+    for name in active_rows:
+        slot = next(
+            (c for c in by_name[name] if c.version == resolutions[name].version),
+            None)
+        if slot is None:
+            continue
+        for slug, state, detail in _toolkit_skill_status(name, slot.path):
+            skill_rows.append((f"{name}__{slug}", state, detail, name, slug))
+
+    if skill_rows:
+        console.print()
+        console.print("[bold]Skills[/bold] [dim]— surfaced to harnesses[/dim]")
+        for qualified, state, detail, tk, slug in skill_rows:
+            if state == "on":
+                console.print(f"  {qualified}")
+            elif state == "off":
+                console.print(
+                    f"  {qualified:<40} [dim]off — "
+                    f"`tb activate {tk}__{slug}`[/dim]"
+                )
+            else:
+                console.print(
+                    f"  {qualified:<40} [dim]needs the {detail} bundle[/dim]"
+                )
+        # Only worth saying when something would actually be surfaced;
+        # with every skill off or gated, an unwired harness is not what
+        # is standing between the agent and these.
+        if not wired and any(state == "on" for _q, state, *_r in skill_rows):
+            console.print(
+                "    [dim](no harness wired here, so none are in front of "
+                "an agent yet)[/dim]"
+            )
+
     # ── Issues ───────────────────────────────────────────────────────
     from .envs import interpreter_problem as _interp_problem
     issues: list = []
@@ -5462,6 +5503,15 @@ def list_cmd(as_json, verbose):
                 # a subset install. Matches the raw ``bundles`` field in
                 # ``.install_meta.yaml``.
                 "installed_bundles": (e.install_meta or {}).get("bundles"),
+                # ``skills``: what this slot ships and whether each would
+                # be surfaced -- "on", "off" (deactivated), or "gated"
+                # (its bundle's config requirements are unmet). Empty
+                # list for a toolkit that ships none.
+                "skills": [
+                    {"slug": slug, "state": state, "bundle": detail}
+                    for slug, state, detail in _toolkit_skill_status(
+                        e.name, e.path)
+                ],
             }
             for e in _list_sorted_entries(entries)
         ]
@@ -5708,12 +5758,22 @@ def _list_print_tools_verbose(
                 f"    [yellow]⚠ not served: {disc.skip_reason}[/yellow]"
             )
         return
+    # A toolkit absent from the active loadout serves nothing, and
+    # surfaces no skills either. Resolved before the early return below
+    # so both exits agree on it.
+    toolkit_active = bool(
+        resolved_loadout is not None and name in resolved_loadout.toolkits
+    )
+
     availability, name_to_bundles = _resolve_bundle_availability(disc)
     if not name_to_bundles:
         console.print(
             "    [dim](tools not enumerated in toolkit.yaml; served list "
             "is available at serve time)[/dim]"
         )
+        # Skills are discovered from the filesystem, not the tool
+        # declaration, so they are knowable even here.
+        _list_print_skills(name, disc.path, toolkit_active)
         return
     if multi_version:
         console.print(f"    [dim]tools in {disc.path.name}:[/dim]")
@@ -5738,10 +5798,6 @@ def _list_print_tools_verbose(
             for q in resolved_loadout.disabled_tools
             if q.startswith(prefix)
         }
-        # A toolkit absent from the active loadout serves nothing.
-        toolkit_active = name in resolved_loadout.toolkits
-    else:
-        toolkit_active = False
 
     # Tools are grouped under the bundle they belong to. A 60-tool
     # toolkit across 12 bundles is unreadable as one alphabetical list,
@@ -5827,6 +5883,41 @@ def _list_print_tools_verbose(
                     f" [yellow](name also in: {', '.join(others)})[/yellow]"
                 )
             console.print(f"      {mk} {tool}{btag}{clash}")
+
+    # Skills, under their own header. A toolkit's skills are as much of
+    # what it offers as its tools -- they reach the agent by the same
+    # act of activating it -- and nothing else in a read command showed
+    # they existed.
+    _list_print_skills(name, disc.path, toolkit_active)
+
+
+def _list_print_skills(
+    name: str, toolkit_dir: Path, toolkit_active: bool,
+) -> None:
+    """Print a toolkit's skills with the same served/hidden marks tools use.
+
+    ``toolkit_active`` gates the tick the same way it gates a tool's: an
+    inactive toolkit surfaces nothing, so a ✓ beside its skill would say
+    the opposite of what is true.
+    """
+    rows = _toolkit_skill_status(name, toolkit_dir)
+    if not rows:
+        return
+    console.print("    [cyan]\\[skills][/cyan]")
+    for slug, state, detail in rows:
+        if state == "on":
+            mk = "[green]✓[/green]" if toolkit_active else "[red]✗[/red]"
+            console.print(f"      {mk} {slug}")
+        elif state == "off":
+            console.print(
+                f"      [red]✗[/red] {slug} "
+                f"[dim](deactivated — `tb activate {name}__{slug}`)[/dim]"
+            )
+        else:
+            console.print(
+                f"      [red]✗[/red] {slug} "
+                f"[dim](needs the {detail} bundle)[/dim]"
+            )
 
 
 def _list_sorted_entries(entries):
@@ -7550,6 +7641,49 @@ def _resolve_disabled_skills(name: str) -> set:
     if sel is None:
         return set()
     return set(getattr(sel, "disabled_skills", []) or [])
+
+
+def _toolkit_skill_status(name: str, toolkit_dir: Path) -> "list[tuple]":
+    """A toolkit's skills and whether each would be surfaced.
+
+    Returns ``[(slug, state, detail)]`` sorted by slug, where state is
+    ``"on"``, ``"off"`` (deactivated in the active loadout) or
+    ``"gated"`` (scoped to a bundle whose config requirements aren't
+    met, so its tools aren't served either and the guide would mislead).
+
+    One function because three surfaces report this -- ``tb list -v``,
+    ``tb status``, and the surfacing that ``tb connect`` actually
+    performs -- and they answer the same question. It applies the same
+    two filters ``skills.surface_skills`` applies, in the same order, so
+    what is shown is what would be written into a harness.
+    """
+    from .skills import discover_skills, parse_frontmatter
+
+    sources = discover_skills(toolkit_dir)
+    if not sources:
+        return []
+    disabled = _resolve_disabled_skills(name)
+    available = _available_bundles_for_surface(name, toolkit_dir)
+
+    rows = []
+    for src in sources:
+        if src.slug in disabled:
+            rows.append((src.slug, "off", None))
+            continue
+        bundle = None
+        try:
+            fm, _body = parse_frontmatter(
+                src.doc.read_text(encoding="utf-8"))
+            bundle = fm.bundle if fm else None
+        except Exception:
+            # An unreadable guide is the author's problem, not a reason
+            # to hide the skill from a listing.
+            pass
+        if bundle is not None and available is not None and bundle not in available:
+            rows.append((src.slug, "gated", bundle))
+        else:
+            rows.append((src.slug, "on", bundle))
+    return sorted(rows)
 
 
 def _surface_skills_for_connect(adapter, *, no_skills: bool = False) -> None:
