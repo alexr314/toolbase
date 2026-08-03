@@ -1,0 +1,37 @@
+name: tb-calculator-synthetic
+version: 0.1.0
+description: Synthetic calculator toolkit — exercises the Phase 3C download flow at a small scale (10 KB standing in for a multi-GB dataset).
+author: Toolbase
+category: general
+keywords:
+  - calculator
+  - arithmetic
+python_version: "3.12"
+setup_script: true
+config:
+  # User-supplied: API key the toolkit needs to reach an external service.
+  # Models a toolkit that can't serve until a credential is provided.
+  - name: api_key
+    description: "API key for the units service (mocked for the test)."
+    type: secret
+    required: true
+
+  # User-supplied: workspace dir for outputs.
+  - name: workspace
+    description: "Where the calculator writes outputs."
+    type: path
+    default: ~/.toolbase/data/tb-calculator-synthetic/workspace
+    required: false
+
+  # User-supplied: parallelism.
+  - name: max_workers
+    description: "Number of parallel workers for batch operations."
+    type: integer
+    default: 4
+    min: 1
+    max: 16
+
+tools:
+  - name: calculate
+    function: tools.calculate
+    description: Evaluates an expression and reports the injected state it ran with.

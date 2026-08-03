@@ -40,23 +40,23 @@ def _write_project_config(
 def test_no_files_returns_empty(tmp_path, fake_home):
     project = tmp_path / "proj"
     project.mkdir()
-    out = envs_config_mod.resolve_toolkit_config("aster", project)
+    out = envs_config_mod.resolve_toolkit_config("calculator", project)
     assert out == {}
 
 
 def test_user_only_surfaces(tmp_path, fake_home):
     project = tmp_path / "proj"
     project.mkdir()
-    _write_user_config(fake_home, "aster", "api_key: abc\n")
-    out = envs_config_mod.resolve_toolkit_config("aster", project)
+    _write_user_config(fake_home, "calculator", "api_key: abc\n")
+    out = envs_config_mod.resolve_toolkit_config("calculator", project)
     assert out == {"api_key": "abc"}
 
 
 def test_project_only_surfaces(tmp_path, fake_home):
     project = tmp_path / "proj"
     project.mkdir()
-    _write_project_config(project, "aster", "opacity_path: /data/ops\n")
-    out = envs_config_mod.resolve_toolkit_config("aster", project)
+    _write_project_config(project, "calculator", "opacity_path: /data/ops\n")
+    out = envs_config_mod.resolve_toolkit_config("calculator", project)
     assert out == {"opacity_path": "/data/ops"}
 
 
@@ -64,14 +64,14 @@ def test_project_overrides_user_key_by_key(tmp_path, fake_home):
     project = tmp_path / "proj"
     project.mkdir()
     _write_user_config(
-        fake_home, "aster",
+        fake_home, "calculator",
         "api_key: USER-KEY\nopacity_path: /home/user/opacities\n",
     )
     _write_project_config(
-        project, "aster",
+        project, "calculator",
         "opacity_path: /scratch/proj-opacities\n",
     )
-    out = envs_config_mod.resolve_toolkit_config("aster", project)
+    out = envs_config_mod.resolve_toolkit_config("calculator", project)
     assert out["api_key"] == "USER-KEY"  # only in user
     assert out["opacity_path"] == "/scratch/proj-opacities"  # project wins
 
@@ -79,9 +79,9 @@ def test_project_overrides_user_key_by_key(tmp_path, fake_home):
 def test_project_only_keys_are_merged_in(tmp_path, fake_home):
     project = tmp_path / "proj"
     project.mkdir()
-    _write_user_config(fake_home, "aster", "api_key: abc\n")
-    _write_project_config(project, "aster", "extra_flag: true\n")
-    out = envs_config_mod.resolve_toolkit_config("aster", project)
+    _write_user_config(fake_home, "calculator", "api_key: abc\n")
+    _write_project_config(project, "calculator", "extra_flag: true\n")
+    out = envs_config_mod.resolve_toolkit_config("calculator", project)
     assert out["api_key"] == "abc"
     assert out["extra_flag"] is True
 
@@ -90,10 +90,10 @@ def test_schema_version_is_stripped(tmp_path, fake_home):
     project = tmp_path / "proj"
     project.mkdir()
     _write_user_config(
-        fake_home, "aster",
+        fake_home, "calculator",
         "schema_version: 1\napi_key: abc\n",
     )
-    out = envs_config_mod.resolve_toolkit_config("aster", project)
+    out = envs_config_mod.resolve_toolkit_config("calculator", project)
     assert "schema_version" not in out
     assert out["api_key"] == "abc"
 
@@ -102,8 +102,8 @@ def test_legacy_user_config_without_schema_version_works(tmp_path, fake_home):
     """Phase 3C files have no schema_version; treat as v0 (legacy), pass through."""
     project = tmp_path / "proj"
     project.mkdir()
-    _write_user_config(fake_home, "aster", "api_key: abc\n")
-    out = envs_config_mod.resolve_toolkit_config("aster", project)
+    _write_user_config(fake_home, "calculator", "api_key: abc\n")
+    out = envs_config_mod.resolve_toolkit_config("calculator", project)
     assert out == {"api_key": "abc"}
 
 
@@ -111,9 +111,9 @@ def test_needs_value_sentinel_overridden_by_project(tmp_path, fake_home):
     """The Phase 3C <NEEDS VALUE> sentinel is just a string. Project wins."""
     project = tmp_path / "proj"
     project.mkdir()
-    _write_user_config(fake_home, "aster", "api_key: '<NEEDS VALUE>'\n")
-    _write_project_config(project, "aster", "api_key: real-key\n")
-    out = envs_config_mod.resolve_toolkit_config("aster", project)
+    _write_user_config(fake_home, "calculator", "api_key: '<NEEDS VALUE>'\n")
+    _write_project_config(project, "calculator", "api_key: real-key\n")
+    out = envs_config_mod.resolve_toolkit_config("calculator", project)
     assert out["api_key"] == "real-key"
 
 
@@ -121,23 +121,23 @@ def test_needs_value_propagates_when_no_project_override(tmp_path, fake_home):
     """Sentinel stays if project doesn't override — serve's 3C gate fires."""
     project = tmp_path / "proj"
     project.mkdir()
-    _write_user_config(fake_home, "aster", "api_key: '<NEEDS VALUE>'\n")
-    out = envs_config_mod.resolve_toolkit_config("aster", project)
+    _write_user_config(fake_home, "calculator", "api_key: '<NEEDS VALUE>'\n")
+    out = envs_config_mod.resolve_toolkit_config("calculator", project)
     assert out["api_key"] == "<NEEDS VALUE>"
 
 
 def test_load_user_layer_alone(tmp_path, fake_home):
     """The lower-level layer accessor returns user data only."""
-    _write_user_config(fake_home, "aster", "api_key: abc\n")
-    out = envs_config_mod.load_user_config_layer("aster")
+    _write_user_config(fake_home, "calculator", "api_key: abc\n")
+    out = envs_config_mod.load_user_config_layer("calculator")
     assert out == {"api_key": "abc"}
 
 
 def test_load_project_layer_alone(tmp_path, fake_home):
     project = tmp_path / "proj"
     project.mkdir()
-    _write_project_config(project, "aster", "opacity: /data\n")
-    out = envs_config_mod.load_project_config_layer("aster", project)
+    _write_project_config(project, "calculator", "opacity: /data\n")
+    out = envs_config_mod.load_project_config_layer("calculator", project)
     assert out == {"opacity": "/data"}
 
 
@@ -146,12 +146,12 @@ def test_nested_value_is_replaced_wholesale_not_deep_merged(tmp_path, fake_home)
     project = tmp_path / "proj"
     project.mkdir()
     _write_user_config(
-        fake_home, "aster",
+        fake_home, "calculator",
         "options:\n  a: 1\n  b: 2\n",
     )
     _write_project_config(
-        project, "aster",
+        project, "calculator",
         "options:\n  a: 99\n",  # 'b' is NOT preserved
     )
-    out = envs_config_mod.resolve_toolkit_config("aster", project)
+    out = envs_config_mod.resolve_toolkit_config("calculator", project)
     assert out["options"] == {"a": 99}

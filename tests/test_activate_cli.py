@@ -97,12 +97,12 @@ def test_deactivate_removes_entry(isolated: Path):
 
 def test_list_marks_active_and_inactive(isolated: Path):
     _fake_install(isolated, "heptapod")
-    _fake_install(isolated, "aster")
+    _fake_install(isolated, "calculator")
     CliRunner().invoke(cli.main, ["activate", "heptapod", "-u"])
     r = CliRunner().invoke(cli.main, ["list"])
     assert r.exit_code == 0, r.output
-    # heptapod active, aster inactive
-    assert "heptapod" in r.output and "aster" in r.output
+    # heptapod active, calculator inactive
+    assert "heptapod" in r.output and "calculator" in r.output
     assert "Active loadout" in r.output
 
 

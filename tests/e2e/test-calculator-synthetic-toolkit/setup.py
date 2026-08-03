@@ -1,13 +1,14 @@
-"""Synthetic ASTER setup — exercises the Phase 3C-2 download flow.
+"""Synthetic calculator setup — exercises the Phase 3C-2 download flow.
 
-ASTER's real install ships a ~2.3 GB opacity-data download. This
-toolkit models the same surface — `choice` between download and
-provide-path, SHA256-verified extract into ``ctx.data_dir``,
-``set_config`` writeback for ``opacity_path`` — at 10 KB scale
-against a localhost mock server. The harness asserts the
-extracted layout matches what ASTER's tools would expect.
+Models a toolkit whose install ships a large reference dataset — a
+constants table here — at 10 KB instead of the multi-GB scale the flow
+was designed for. Same surface: `choice` between download and
+provide-path, SHA256-verified extract into ``ctx.data_dir``, and a
+``set_config`` writeback for ``constants_path``, against a localhost
+mock server. The harness asserts the extracted layout matches what the
+toolkit's tools would expect.
 
-The harness sets STK_E2E_OPACITY_URL and STK_E2E_OPACITY_SHA256
+The harness sets STK_E2E_CONSTANTS_URL and STK_E2E_CONSTANTS_SHA256
 in the environment so this script is self-contained against the
 fixture server.
 """
@@ -19,7 +20,7 @@ from pathlib import Path
 
 
 def setup(ctx):
-    ctx.info("Synthetic ASTER setup starting...")
+    ctx.info("Synthetic calculator setup starting...")
 
     # Workspace already declared in config:; the Tier-1 pass writes
     # it. Confirm it exists or create it.
@@ -29,14 +30,14 @@ def setup(ctx):
     ctx.set_config("workspace", str(workspace))
     ctx.info(f"Workspace: {workspace}")
 
-    # Opacity flow: choice between download and provide-path.
-    existing = ctx.get_config("opacity_path")
+    # Constants flow: choice between download and provide-path.
+    existing = ctx.get_config("constants_path")
     if existing and Path(existing).expanduser().exists():
-        ctx.info(f"Opacity data already configured: {existing}")
+        ctx.info(f"Constants data already configured: {existing}")
         return validate(ctx)
 
     choice = ctx.choice(
-        "How would you like to set up opacity data?",
+        "How would you like to set up constants data?",
         [
             ("download", "Download automatically"),
             ("path", "I have the data — let me provide the path"),
@@ -45,51 +46,51 @@ def setup(ctx):
     )
 
     if choice == "download":
-        return _download_opacity(ctx)
+        return _download_constants(ctx)
     elif choice == "path":
-        return _prompt_opacity_path(ctx)
+        return _prompt_constants_path(ctx)
     else:
         ctx.warn("Setup skipped. Toolkit will refuse to serve until configured.")
         return False
 
 
-def _download_opacity(ctx):
-    url = os.environ.get("STK_E2E_OPACITY_URL")
-    sha = os.environ.get("STK_E2E_OPACITY_SHA256")
+def _download_constants(ctx):
+    url = os.environ.get("STK_E2E_CONSTANTS_URL")
+    sha = os.environ.get("STK_E2E_CONSTANTS_SHA256")
     if not url:
-        ctx.error("STK_E2E_OPACITY_URL not set — harness must set this")
+        ctx.error("STK_E2E_CONSTANTS_URL not set — harness must set this")
         return False
 
-    dest = ctx.data_dir / "opacity"
-    ctx.info(f"Downloading opacity data → {dest}")
+    dest = ctx.data_dir / "constants"
+    ctx.info(f"Downloading constants data → {dest}")
     ctx.download(
         url=url,
         destination=dest,
-        description="Opacity data (synthetic)",
+        description="Constants data (synthetic)",
         size_hint="2.3 GB",  # cosmetic — real fixture is much smaller
         extract=True,
         sha256=sha or None,
     )
-    ctx.set_config("opacity_path", str(dest))
-    ctx.success("Opacity data installed.")
+    ctx.set_config("constants_path", str(dest))
+    ctx.success("Constants data installed.")
     return validate(ctx)
 
 
-def _prompt_opacity_path(ctx):
+def _prompt_constants_path(ctx):
     path = ctx.prompt_path(
-        "Path to opacity data:", must_exist=True,
+        "Path to constants data:", must_exist=True,
     )
     if path is None:
-        ctx.warn("No path provided; deferring opacity_path setup.")
+        ctx.warn("No path provided; deferring constants_path setup.")
         return False
-    ctx.set_config("opacity_path", str(path))
+    ctx.set_config("constants_path", str(path))
     return validate(ctx)
 
 
 def validate(ctx):
     """Quick check called at every serve startup. Read-only.
 
-    Pass iff workspace and opacity_path are set and the latter
+    Pass iff workspace and constants_path are set and the latter
     contains the expected sentinel file the harness drops into the
     archive.
     """
@@ -100,11 +101,11 @@ def validate(ctx):
     if not workspace:
         return False
 
-    opacity_path_str = ctx.get_config("opacity_path")
-    if not opacity_path_str:
+    constants_path_str = ctx.get_config("constants_path")
+    if not constants_path_str:
         return False
 
-    op = Path(opacity_path_str).expanduser()
+    op = Path(constants_path_str).expanduser()
     if not op.exists():
         return False
     # The harness's archive contains a sentinel file `manifest.txt`

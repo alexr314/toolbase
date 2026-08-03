@@ -59,11 +59,11 @@ def test_project_config_dir_is_pure_path_resolution(tmp_path: Path):
 
 
 def test_config_path_is_per_toolkit(isolated_config: Path):
-    assert storage.config_path("aster") == isolated_config / "config" / "aster.yaml"
+    assert storage.config_path("calculator") == isolated_config / "config" / "calculator.yaml"
 
 
 def test_config_path_does_not_create_file(isolated_config: Path):
-    p = storage.config_path("aster")
+    p = storage.config_path("calculator")
     assert not p.exists()
 
 
