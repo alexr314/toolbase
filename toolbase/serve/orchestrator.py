@@ -247,6 +247,14 @@ def discover_toolkits(toolkits_dir: Optional[Path] = None) -> List[ToolkitDiscov
                 skip = "Docker mode (not yet supported)"
             elif env not in ("venv", "conda"):
                 skip = f"unknown environment type: {env!r}"
+        if not skip:
+            # A venv whose base interpreter was deleted still looks
+            # perfectly installed. Catch it here rather than letting
+            # spawn fail with "mcp connect failed: [Errno 2]".
+            from ..envs import interpreter_problem
+            problem = interpreter_problem(meta)
+            if problem:
+                skip = f"{problem} — run `tb repair {name}`"
 
         found.append(ToolkitDiscovery(
             name=name, path=chosen.path, meta=meta, skip_reason=skip,

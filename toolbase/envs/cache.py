@@ -127,6 +127,45 @@ def read_install_meta(slot_dir: Path) -> Optional[Dict[str, Any]]:
     return {k: v for k, v in raw.items() if k != "schema_version"}
 
 
+def interpreter_problem(meta: Dict[str, Any]) -> Optional[str]:
+    """Why this slot's Python can't be run, or None if it can.
+
+    A venv doesn't contain an interpreter -- it symlinks the one that
+    built it, and ``tb install`` builds with whatever Python was running
+    it at the time. Delete that environment (a conda env, say) and the
+    slot is left pointing at nothing, from every environment at once,
+    because there is only one copy of the slot.
+
+    Nothing else notices. The metadata is intact, the toolkit's files are
+    intact, so discovery calls the slot ready and serve tries to spawn it
+    on every startup, failing at connect with ``mcp connect failed:
+    [Errno 2] No such file or directory``. Checking here turns that into
+    something ``tb status`` can say before an agent session loses its
+    tools.
+
+    Takes the merged metadata dict (``install_meta`` plus the legacy
+    ``.tb_meta.json`` keys) rather than a slot dir, so serve discovery,
+    ``tb status`` and ``tb list`` all answer from the same rule.
+
+    Conda slots are named, not pathed -- resolving whether an env still
+    exists means shelling out to conda, which is too slow for a listing.
+    They are reported healthy here and still fail loudly at spawn.
+    """
+    if meta.get("environment") != "venv" and meta.get("install_method") != "venv":
+        return None
+    python_path = meta.get("python_path")
+    if not python_path:
+        # Spawn raises its own clear error for this; don't double-report.
+        return None
+    # exists() resolves symlinks, so a link whose target is gone is False
+    # -- which is the whole case this exists to catch.
+    if not Path(python_path).exists():
+        return "interpreter missing"
+    if not os.access(python_path, os.X_OK):
+        return "interpreter not executable"
+    return None
+
+
 def installed_bundles(slot_dir: Path) -> Optional[List[str]]:
     """Return the list of installed bundles for a slot, or None for "all".
 

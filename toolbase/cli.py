@@ -5256,19 +5256,43 @@ def status_cmd():
         )
 
     # ── Issues ───────────────────────────────────────────────────────
+    from .envs import interpreter_problem as _interp_problem
     issues: list = []
+    broken_interpreters: list = []
+    # Counted separately from the list: the two problems have different
+    # fixes, and a stale-pin hint under a broken interpreter sends you
+    # to reinstall something whose files are perfectly fine.
+    pin_issue_count = 0
     for name in sorted(by_name):
         r = resolutions[name]
         if not r.ok:
             issues.append(
                 f"  {name:<22} {str(r.pin):<10} [dim]{r.describe()}[/dim]"
             )
+            pin_issue_count += 1
+            continue
+        # The slot resolves, but its interpreter may be gone -- an
+        # install whose parent environment was deleted. Everything else
+        # here reads healthy, which is exactly why it needs saying.
+        slot = next(
+            (c for c in by_name[name] if c.version == r.version), None)
+        if slot is None:
+            continue
+        meta = dict(slot.install_meta or {})
+        meta.update(slot.legacy_meta or {})
+        problem = _interp_problem(meta)
+        if problem:
+            issues.append(
+                f"  {name:<22} {r.version:<10} [dim]{problem}[/dim]"
+            )
+            broken_interpreters.append(name)
     for name, version in sorted(pins.items()):
         if name not in by_name:
             issues.append(
                 f"  {name:<22} {version:<10} [dim]pinned, not installed[/dim]"
             )
-    pin_issues = list(issues)
+            pin_issue_count += 1
+    pin_issues = pin_issue_count > 0
     if active_rows and not wired:
         issues.append(
             "  no harness wired here     [dim]`tb connect <harness>`[/dim]"
@@ -5283,6 +5307,11 @@ def status_cmd():
             console.print(
                 '    [dim]`tb use <toolkit>` clears a pin; '
                 '`tb install <toolkit>@<version>` restores it[/dim]'
+            )
+        if broken_interpreters:
+            console.print(
+                f'    [dim]`tb repair {broken_interpreters[0]}` rebuilds the '
+                'environment without reinstalling[/dim]'
             )
 
 
@@ -6050,6 +6079,216 @@ def use_cmd(target, user_scope, project_scope, private_scope):
             f"({resolution.describe()}).[/dim]"
         )
     console.print("[dim]Restart your agent session to pick this up.[/dim]")
+
+
+# ── `toolbase repair` ───────────────────────────────────────────────────
+#
+# A venv holds no interpreter of its own: `python -m venv` symlinks the
+# one that built it, and `tb install` builds with whatever Python was
+# running it (see the venv creation in _install_venv). Delete that
+# environment later -- a conda env you were done with -- and every
+# toolkit installed from it is stranded, from everywhere at once, since
+# the cache holds one copy shared by all environments.
+#
+# What survives is everything expensive: the toolkit's files and the
+# whole of site-packages. Only the link to the base is gone. So the
+# repair is to re-point it, not to reinstall -- `venv --upgrade` swaps
+# the interpreter and leaves packages alone, turning a multi-minute
+# re-download into a second.
+#
+# The one hard constraint is the minor version. Compiled extensions in
+# site-packages are built against a specific ABI, so 3.12 packages under
+# a 3.13 interpreter would import and then fail obscurely. This refuses
+# rather than guessing, which is the difference between a repair and a
+# subtler break.
+
+
+def _venv_python_candidates(minor: str) -> List[Path]:
+    """Interpreters that could re-base a venv built on ``minor``.
+
+    Ordered by how long they tend to outlive the thing being repaired:
+    a standalone install before a conda env, since re-basing onto
+    another disposable environment just reschedules this failure.
+    """
+    exe = f"python{minor}"
+    found: List[Path] = []
+
+    # Standalone installs first: not tied to a project or a tool that
+    # might be uninstalled next month.
+    for root in (Path("/opt/homebrew/bin"), Path("/usr/local/bin"),
+                 Path("/usr/bin")):
+        p = root / exe
+        if p.exists() and os.access(p, os.X_OK):
+            found.append(p)
+
+    # Then whatever is on PATH, which picks up pyenv, asdf, uv-managed
+    # interpreters and the like without hardcoding any of their layouts.
+    on_path = shutil.which(exe)
+    if on_path:
+        found.append(Path(on_path))
+
+    # Conda envs last, discovered through conda's own bookkeeping rather
+    # than a guessed install location. Re-basing onto another disposable
+    # env only reschedules this failure, so these are the fallback.
+    for env_var in ("CONDA_PREFIX", "CONDA_EXE"):
+        raw = os.environ.get(env_var)
+        if not raw:
+            continue
+        base = Path(raw)
+        base = base.parent.parent if env_var == "CONDA_EXE" else base.parent
+        for cand in sorted(base.glob(f"*/bin/{exe}")):
+            if os.access(cand, os.X_OK):
+                found.append(cand)
+
+    # Finally the interpreter running us, if it happens to match.
+    if f"{sys.version_info.major}.{sys.version_info.minor}" == minor:
+        found.append(Path(sys.executable))
+    seen, ordered = set(), []
+    for p in found:
+        r = str(p.resolve()) if p.exists() else str(p)
+        if r not in seen:
+            seen.add(r)
+            ordered.append(p)
+    return ordered
+
+
+def _slot_minor(venv_dir: Path) -> Optional[str]:
+    """The Python minor a venv was built against, from pyvenv.cfg."""
+    cfg = venv_dir / "pyvenv.cfg"
+    if not cfg.exists():
+        return None
+    for line in cfg.read_text().splitlines():
+        if line.strip().startswith("version"):
+            parts = line.split("=", 1)[-1].strip().split(".")
+            if len(parts) >= 2:
+                return f"{parts[0]}.{parts[1]}"
+    return None
+
+
+@main.command(name="repair")
+@click.argument("target", required=False)
+@click.option("--all", "all_", is_flag=True, default=False,
+              help="Repair every installed toolkit that needs it.")
+@_interactive_options
+def repair_cmd(target, all_, yes, no_, no_input):
+    """Re-point a toolkit's environment at a working Python.
+
+    \b
+    For an install whose parent environment was deleted. A venv only
+    symlinks the interpreter that built it, so removing that conda env
+    (or upgrading the Python it came from) strands the toolkit — while
+    its files and installed packages sit there intact.
+
+    \b
+    This swaps the interpreter and keeps the packages, so it costs a
+    second rather than a full re-download. It will not cross a minor
+    version: 3.12 packages under 3.13 would import and then fail in
+    ways much harder to read than the error you have now. If no
+    matching Python is installed, it says so and stops.
+
+    \b
+      tb repair heptapod          # one toolkit (all its versions)
+      tb repair heptapod@2.4.0    # one version
+      tb repair --all             # everything that needs it
+    """
+    from .envs import walk_cache, interpreter_problem
+
+    if not target and not all_:
+        raise click.UsageError("Give a toolkit name, or --all.")
+
+    name, _, version = (target or "").partition("@")
+    entries = list(walk_cache())
+    if name:
+        entries = [e for e in entries if e.name == name]
+        if not entries:
+            console.print(f"[red]✗[/red] {name} is not installed.")
+            sys.exit(1)
+        if version:
+            entries = [e for e in entries if e.version == version]
+            if not entries:
+                console.print(
+                    f"[red]✗[/red] {name}@{version} is not installed.")
+                sys.exit(1)
+
+    broken = []
+    for e in entries:
+        meta = dict(e.install_meta or {})
+        meta.update(e.legacy_meta or {})
+        problem = interpreter_problem(meta)
+        if problem:
+            broken.append((e, meta, problem))
+
+    if not broken:
+        scope = "any installed toolkit" if all_ or not name else target
+        console.print(f"Nothing to repair — {scope} has a working Python.")
+        return
+
+    mode = _resolve_prompt_mode(yes, no_, no_input)
+    repaired, failed = 0, 0
+    for entry, meta, problem in broken:
+        label = f"{entry.name}@{entry.version}"
+        venv_dir = Path(meta["python_path"]).parent.parent
+        minor = _slot_minor(venv_dir)
+        if minor is None:
+            console.print(
+                f"[red]✗[/red] {label}: no pyvenv.cfg — cannot tell which "
+                f"Python it needs. Reinstall it."
+            )
+            failed += 1
+            continue
+
+        candidates = _venv_python_candidates(minor)
+        if not candidates:
+            console.print(
+                f"[red]✗[/red] {label}: needs Python {minor}, which isn't "
+                f"installed anywhere I can find."
+            )
+            console.print(
+                f"    [dim]Install Python {minor} and re-run, or "
+                f"`tb install {entry.name}@{entry.version}` to rebuild "
+                f"against a different one.[/dim]"
+            )
+            failed += 1
+            continue
+
+        chosen = candidates[0]
+        console.print(f"{label}: {problem} (needs Python {minor})")
+        console.print(f"    [dim]re-pointing at {chosen}[/dim]")
+        if not _confirm(f"Repair {label}?", default=True, mode=mode):
+            console.print("    [dim]skipped[/dim]")
+            continue
+
+        try:
+            # The dangling links have to go first: `venv --upgrade`
+            # copies onto these paths and errors out on a symlink whose
+            # target doesn't exist.
+            for stale in venv_dir.glob("bin/python*"):
+                if stale.is_symlink() and not stale.exists():
+                    stale.unlink()
+            subprocess.run(
+                [str(chosen), "-m", "venv", "--upgrade", str(venv_dir)],
+                check=True, capture_output=True, text=True,
+            )
+        except subprocess.CalledProcessError as exc:
+            console.print(f"[red]✗[/red] {label}: {exc.stderr.strip()}")
+            failed += 1
+            continue
+
+        recheck = interpreter_problem(meta)
+        if recheck:
+            console.print(f"[red]✗[/red] {label}: still broken ({recheck})")
+            failed += 1
+            continue
+        console.print(f"[green]✓[/green] {label} repaired")
+        repaired += 1
+
+    if repaired:
+        console.print(
+            f"\n[dim]Packages were left untouched; only the interpreter "
+            f"link changed.[/dim]"
+        )
+    if failed:
+        sys.exit(1)
 
 
 @main.command()
