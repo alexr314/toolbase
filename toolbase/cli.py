@@ -1643,13 +1643,14 @@ def _login_browser_flow(mode: str) -> None:
 
 
 # ────────────────────────────────────────────────────────────────────────
-# `toolbase project` — manage project-local manifests.
+# `toolbase project` — manage project-local state.
 #
-# A project is any directory with a ``.toolbase/manifest.yaml``. Walk-
-# upward discovery makes any subdirectory of a project a project member
-# too. ``tb install`` in a project pins its toolkit version into the
-# project's manifest, so different projects can pin different versions
-# of the same toolkit without conflict.
+# A project is any directory with a ``.toolbase/``. Walk-upward discovery
+# makes any subdirectory of a project a project member too. ``tb use`` in
+# a project records its toolkit version in the project's loadout, so
+# different projects can choose different versions of the same toolkit
+# without conflict. ``tb install`` records nothing — it only places bits
+# in the shared cache.
 #
 # Most users will never run ``tb project init`` explicitly — ``tb
 # install`` in a non-project dir prompts (TTY) "create .toolbase/
@@ -5343,14 +5344,14 @@ def list_cmd(as_json, verbose):
 
     \b
         $ tb list
-        heptapod
-          - 0.3 * <-  (used yesterday, 8.4 GB)
-          - 0.1       (used 3 days ago, 8.2 GB)
-          serving 0.3 (pinned to 0.3)
-        arxiv-search
-          - 0.2 *     (used 2 hours ago, 180 MB)
+        ✗ arxiv-search (inactive)
+            0.2   (used 2 hours ago, 180 MB)
+        ✗ heptapod (inactive)
+          ➤ 0.3   (used yesterday, 8.4 GB)
+            0.1   (used 3 days ago, 8.2 GB)
+            serving 0.3 (pinned to 0.3)
 
-        * = pinned in this project (./.toolbase/manifest.yaml)
+        versions from ./.toolbase/loadouts/default.yaml
 
     \b
     Per-entry fields:
@@ -5359,16 +5360,12 @@ def list_cmd(as_json, verbose):
         ``"never"`` if missing.
       - ``disk_size``: bytes from the per-slot ``.disk_size`` file
         (computed once at install time). ``"—"`` if missing.
-      - ``*``: marks the version pinned in the active project's
-        manifest (whichever ``.toolbase/manifest.yaml`` discovery
-        resolves to). Legend printed only when at least one pin
-        applies. Default-project pins are flagged the same way; the
-        legend points at the resolved manifest path.
-      - ``<-``: marks the version that would actually serve, shown
-        only when more than one is installed (with one slot there's
-        nothing to disambiguate). The line below the version rows
-        gives the reason — a pin, or the highest-wins fallback. A pin
-        naming a version that isn't installed is called out there too:
+      - ``➤``: marks the version that would actually serve, shown only
+        when more than one is installed (with one slot there's nothing
+        to disambiguate). The line below the version rows gives the
+        reason — a recorded choice, or the highest-wins fallback — and
+        the footer names the file that choice came from. A version
+        naming a slot that isn't installed is called out there too:
         serve skips such a toolkit entirely.
 
     With ``--json``, output is a flat array of objects:
@@ -7481,8 +7478,8 @@ def connect(harness, user_scope, project_scope, loadout_name, remove, dry_run,
     \b
     Examples:
         tb connect claude-code              # project: .mcp.json here (default)
-        tb connect claude-code -g           # user: ~/.claude.json (every session)
-        tb connect antigravity -g           # agy CLI + IDE: ~/.gemini/config/
+        tb connect claude-code -u           # user: ~/.claude.json (every session)
+        tb connect antigravity -u           # agy CLI + IDE: ~/.gemini/config/
         tb connect claude-code --loadout paper
         tb connect claude-code --remove
         tb connect orchestral               # write .toolbase/agent.py
