@@ -4431,7 +4431,11 @@ def _install_from_tarball(ctx, path: Path, *, version,
 )
 @click.option(
     '--no-skills', 'no_skills', is_flag=True, default=False,
-    help="Don't surface the toolkit's skills into ~/.claude/skills/.",
+    help=(
+        "Skip the note about skills this toolkit ships. Install never "
+        "surfaces them itself; `tb connect --no-skills` is what suppresses "
+        "surfacing."
+    ),
 )
 @click.option(
     '--activate', '-a', 'activate_after', is_flag=True, default=False,
@@ -4498,7 +4502,7 @@ def install(ctx, name, version, editable, no_skills, activate_after, bundle_flag
       1. Acquire the toolkit (download from registry, or read a local path)
       2. Create an isolated environment (venv or conda, auto-detected)
       3. Install dependencies, then orchestral-ai + mcp
-      4. Surface the toolkit's skills into ~/.claude/skills/ (unless --no-skills)
+      4. Report any skills the toolkit ships (`tb connect` surfaces them)
 
     \b
     Examples:
@@ -4508,7 +4512,7 @@ def install(ctx, name, version, editable, no_skills, activate_after, bundle_flag
         toolbase install .                        # install from cwd
         toolbase install -e .                     # editable: live link to cwd
         toolbase install aster -a                 # install and activate here
-        toolbase install aster --no-skills        # don't touch ~/.claude/skills/
+        toolbase install aster --no-skills        # skip the skills note
         toolbase install calculator[basic,symbolic]  # only those bundles
         toolbase install calculator --bundle basic   # flag form, same effect
         toolbase install calculator[symbolic]        # re-install adds bundles
