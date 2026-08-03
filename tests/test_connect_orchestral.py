@@ -307,7 +307,10 @@ def test_cli_remove_absent_is_friendly_noop(tmp_path):
     out = tmp_path / "agent.py"
     res = _run(["connect", "orchestral", "--out", str(out), "--remove"])
     assert res.exit_code == 0, res.output
-    assert "nothing to remove" in res.output.lower()
+    # Flattened: the message embeds a tmp path, so the wrap point moves
+    # with the path length. conftest pins the width, and this keeps the
+    # assertion honest if that message ever grows past it.
+    assert "nothing to remove" in " ".join(res.output.split()).lower()
 
 
 def test_cli_harnesses_lists_orchestral():
