@@ -112,6 +112,13 @@ def main() -> int:
 
     # Patch HOME so the CLI's CONFIG_DIR resolves to our isolated dir.
     os.environ["HOME"] = str(fake_home)
+    # ...and move off the repo. HOME only covers the user layer; project
+    # discovery walks up from the working directory, and the checkout has
+    # a .toolbase/ of its own (this harness's own leftovers, among other
+    # things). Run from the repo root, that project's config layer answers
+    # for tb-config-test and supplies the very api_key Step 1 asserts is
+    # unset — the harness passing or failing on residue from its last run.
+    os.chdir(WORK_ROOT)
 
     # ── Step 1: validate refuses with no config ────────────────────
     print("=" * 60)
@@ -208,7 +215,7 @@ def main() -> int:
     print(f"  state: {rt.state.name}")
 
     proxies = {p.get_name(): p for p in orch._proxy_tools}
-    qualified = f"{TOOLKIT_NAME}__get_config"
+    qualified = f"{TOOLKIT_NAME}__GetConfig"
     if qualified not in proxies:
         print(f"!!! proxy tool {qualified} missing")
         return 8

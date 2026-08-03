@@ -198,11 +198,13 @@ def main() -> int:
     if "feynrules" not in availability.dropped_bundles:
         print("!!! feynrules should be dropped")
         return 13
-    # Check the membership map: loose_tool has no bundle.
-    if mapping.get("loose_tool") is not None:
-        print(f"!!! loose_tool should have bundle=None, got {mapping['loose_tool']}")
+    # Check the membership map: loose_tool belongs to no bundle. The map
+    # is name -> list, not name -> single bundle, since a tool can appear
+    # in several; "no bundle" is the empty list.
+    if mapping.get("loose_tool"):
+        print(f"!!! loose_tool should belong to no bundle, got {mapping['loose_tool']}")
         return 14
-    if mapping.get("mg5_run") != "mg5":
+    if mapping.get("mg5_run") != ["mg5"]:
         print(f"!!! mg5_run should belong to bundle 'mg5', got {mapping.get('mg5_run')}")
         return 15
     # is_bundle_available semantics:
