@@ -6,7 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ---
 
-## [Unreleased]
+## [0.12.0] — 2026-08-02
+
+Reworks how toolbase decides **which version of a toolkit serves**, and separates that decision from installing and from exposing. The model is now one rule with no exceptions: `install` places bits, `tb use` chooses a version, `tb activate` exposes tools. `install` previously did fragments of all three depending on flags, which is where most of the defects below came from.
 
 ### Changed (breaking)
 
@@ -14,39 +16,26 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
   `tb profile` is `tb loadout`, `--profile` is `--loadout`, the directory is `loadouts/`, and serve.yaml's key is `default.loadout`. "Profile" is overloaded to near-meaninglessness — shell, browser, AWS, user profiles — and it's already the word toolbench uses for this concept, so the two systems stop needing a translation.
 
-  More substantially, a toolkit's entry in a loadout now takes an optional `version:` beside its `bundles` and `tools`. A loadout previously said which tools an agent got but not which build of them, so it was half a specification: share one and it resolves differently elsewhere, or drifts when someone bumps a toolkit. For a benchmark condition that's a silently invalid result. One file now answers both questions.
+  More substantially, a loadout now records which *build* of each toolkit it means, in a top-level `versions:` block. A loadout previously said which tools an agent got but not which build of them, so it was half a specification: share one and it resolves differently elsewhere, or drifts when someone bumps a toolkit. For a benchmark condition that's a silently invalid result. One file now answers both questions.
 
   ```yaml
   # .toolbase/loadouts/paper.yaml
+  versions:
+    heptapod: 2.4.0       # omit to take the fallback (newest installed)
   toolkits:
     heptapod:
-      version: 2.4.0        # omit to take the fallback (newest installed)
       bundles: [pdg, analysis]
   ```
 
-  `tb use` writes there rather than to a manifest, and `--private` gains a real destination: `<name>.local.yaml`, merged over its committed sibling toolkit by toolkit, field by field. That layer has to exist — an editable pin names a directory only your machine has, and committing one leaves a teammate with a dangling pin — so `tb use -p <toolkit>@editable` routes there by itself and says so.
+  The two blocks are siblings rather than nested because they layer by different rules. Curation shadows: a project's tool selection replaces the user's whole, because merging two curated sets yields a third that nobody designed. Versions layer per toolkit: a project that says nothing about a toolkit keeps whatever you chose machine-wide. Nesting the version inside its curation entry forces both to share the shadowing rule, and that is precisely what made `tb use` activate a toolkit and `tb deactivate` discard its version.
 
-  Pre-0.12 state keeps working, unmigrated: loadout discovery falls back to `profiles/` per scope, `default.profile` is read when `default.loadout` is unset, and manifest pins resolve underneath loadout entries. None of the old names are ever written, so files convert as they're touched.
+  `tb use` writes there rather than to a manifest, and `--private` gains a real destination: `<name>.local.yaml`, merged over its committed sibling toolkit by toolkit, field by field. That layer has to exist — an editable pin names a directory only your machine has, and committing one leaves a teammate with a dangling pin — so `tb use <toolkit>@editable` routes there by itself and says so.
 
-### Added
+  Pre-0.12 state keeps working, unmigrated: loadout discovery falls back to `profiles/` per scope, `default.profile` is read when `default.loadout` is unset, a nested `version:` inside a toolkit entry is still honoured, and manifest pins resolve underneath loadout entries. None of the old names or shapes are ever written, so files convert as they are touched.
 
-- **`tb status`** — one place that answers which context applies, what would serve, and what's broken. Sections appear only when they have content, so a healthy setup is four lines. Run against a real machine during development it immediately surfaced two pins naming toolkits that were never installed; serve skips those silently and nothing in `tb list` said so.
+- **`tb install` writes no manifest and takes no scope.** It puts a toolkit in the shared cache and stops. Previously every install wrote a pin, so a manifest accumulated bookkeeping nobody chose and you couldn't tell deliberate entries from incidental ones — which is where the orphaned pins, the pins that didn't apply, and the install/uninstall scope mismatch all came from. `tb use` is now the only command that records a version, so every entry is one somebody typed.
 
-  ```console
-  $ tb status
-  On project  ~/.toolbase/default-project   (no .toolbase/ above cwd — user default)
-  Loadout     default   (implicit default loadout)
-
-  Active — served to agents
-    heptapod               2.4.0      pinned
-
-  Issues
-    skilltk                0.1.0      pinned, not installed
-  ```
-
-- **`tb install` writes no manifest and takes no scope.** It puts a toolkit in the shared cache and stops. Previously every install wrote a pin, so a manifest accumulated bookkeeping nobody chose and you couldn't tell deliberate entries from incidental ones — which is where the orphaned pins, the pins that didn't apply, and the install/uninstall scope mismatch all came from. `tb use` is now the only command that pins, so every entry in a manifest is one somebody typed.
-
-  Nothing is needed for the common case: with no pin, the newest installed version serves. Installing an older version therefore does not switch to it, and install says so rather than leaving you to notice:
+  Nothing is needed for the common case: with no recorded version, the newest installed one serves. Installing an older version therefore does not switch to it, and install says so rather than leaving you to notice:
 
   ```console
   $ tb install calculator@1.2.0
@@ -55,7 +44,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
     To use it: tb use calculator@1.2.0
   ```
 
-  `-u`, `-p` and `--private` are gone from `install`. `-a/--activate` stays and now follows `tb activate`'s own default (this project); pass `-u` to `tb activate` afterwards for the user-level profile. `-e` no longer writes a private pin — see below.
+  `-u`, `-p` and `--private` are gone from `install`. `-a/--activate` stays and now follows `tb activate`'s own default (this project); pass `-u` to `tb activate` afterwards for the user-level loadout. `-e` no longer writes a private pin — see below.
+
+- **`tb use` defaults to this project**, like every other scoped command. It defaulted to user scope, which meant that run from inside a repo with its own `.toolbase/` it wrote a version that the repo then ignored in favour of the highest installed — a success message for a no-op. `-u` still writes the user layer explicitly. Because an editable slot names a path only your machine has, `tb use -p <toolkit>@editable` routes to the private layer by itself rather than committing a pin that breaks for everyone else.
+
+- **A project is any directory with a `.toolbase/`,** not one containing `.toolbase/manifest.yaml`. The marker was a file that commands had to fabricate in order to be found later, so whether a directory counted as a project depended on which command you happened to run first. The directory alone is the marker, and `~/.toolbase/` is explicitly excluded so your home directory does not become a project that shadows every other.
 
 - **Editable installs are opt-in, and every surface says so.** An `editable` slot still loses the unpinned fallback to any numbered version — deliberately. The cache is user-wide (one `cache/<name>/editable/` shared by every directory), so if linking a checkout won by default, a single `tb install -e` would change what every agent session on the machine runs, and confining it again would mean pinning numbered versions in every *other* project. Losing by default makes it opt-in instead: `tb use <toolkit>@editable` selects the checkout exactly where you run it. It also keeps `tb install` exceptionless — no install changes what serves.
 
@@ -65,17 +58,39 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
   The three keys are now the same everywhere: `-u/--user` (`~/.toolbase/`), `-p/--project` (`<repo>/.toolbase/`, committed), and `--private` (`<repo>/.toolbase/*.local.yaml`, gitignored). `--global`, `-g`, `--local` and `-l` are **removed**, not deprecated. `--layer` takes `user|project|private`.
 
-  This closes a gap as well as a redundancy: pins had no flag for the private layer at all — `manifest.local.yaml` was reachable only implicitly, via `-e` or `tb use …@editable`. `tb install --private` and `tb use --private` now write it directly.
+  This closes a gap as well as a redundancy: versions had no flag for the private layer at all — the machine-local file was reachable only implicitly, via `-e` or `tb use …@editable`. `tb use --private` now writes it directly.
 
-  Defaults still differ by command (`use` defaults to `--user`; activate, config, profile and connect to `--project`); `install` takes no scope at all. That asymmetry is a separate question from the spelling.
-
-  `tb init`'s `-p` short for `--path` is also gone, so `-p` means project everywhere; `--path` still works.
+  Every scoped command now defaults to this project; `install` takes no scope at all. `tb init`'s `-p` short for `--path` is gone, so `-p` means project everywhere; `--path` still works.
 
 ### Added
 
-- **`tb use <toolkit>@<version>` switches which installed version serves.** Only `install` could write a pin, so moving one between two already-installed versions meant re-running `tb install <name>@<version>` — which deletes the cache slot and rebuilds the environment from scratch, and, if you decline the "already installed, reinstall?" prompt, aborts before writing the pin at all. There was no way to get the pin without paying for the rebuild. `tb use` writes the manifest and nothing else. Bare `tb use <toolkit>` clears the pin; `-u`/`-p`/`--private` scope it; an `editable` choice goes to the gitignored `manifest.local.yaml`, since that pin can't be shared. A local pin that would silently override the layer being written is removed, loudly.
+- **`tb status`** — one place that answers which context applies, what would serve, what can reach it, and what's broken. Run against a real machine during development it immediately surfaced two pins naming toolkits that were never installed; serve skips those silently and nothing in `tb list` said so.
 
-- **`tb list` marks the version that actually serves.** `*` (pinned) said what someone wrote down, which is silent in the case that confuses people most: nothing is pinned, several versions are installed, and the highest-wins fallback picks one with no sign a choice was made. Version rows now carry `<-` on the slot `tb serve` would spawn, with the reason below them. `--json` grows `serving` and `serving_reason` (`active` was already taken, and refers to the profile, not the version).
+  ```console
+  $ tb status
+  On project  myrepo/   (.toolbase/ above cwd)
+  Loadout     default   (implicit default loadout)
+
+  Active — served to agents
+    heptapod               2.4.0      pinned
+
+  Installed, not active
+    arxiv-search           0.1.0
+
+  Wired harnesses
+    claude-code            .mcp.json
+
+  Issues
+    skilltk                0.1.0      pinned, not installed
+  ```
+
+  The Active and Wired sections always render, saying `(none)` when empty and naming the command that fills them — an absent section reads as "nothing to say here" when the fact that nothing is wired is usually the answer you needed.
+
+- **`tb use <toolkit>@<version>` switches which installed version serves.** Only `install` could record a version, so moving between two already-installed ones meant re-running `tb install <name>@<version>` — which deletes the cache slot and rebuilds the environment from scratch, and, if you decline the "already installed, reinstall?" prompt, aborts before recording anything at all. There was no way to make the switch without paying for the rebuild. `tb use` writes the loadout's `versions:` block and nothing else: it does not download, rebuild, or activate. Bare `tb use <toolkit>` clears the entry; `-u`/`-p`/`--private` scope it. A private entry that would silently override the layer being written is removed, loudly.
+
+- **`tb list` marks the version that actually serves.** The old `*` marked "pinned", which is silent in exactly the case that confuses people most: nothing is pinned, several versions are installed, and the highest-wins fallback picks one with no sign that a choice was made. A `➤` now sits on the slot `tb serve` would spawn, with the reason beside it, and the source of the versions is printed rather than left implicit. `--json` grows `serving` and `serving_reason` (`active` was already taken, and refers to the loadout, not the version).
+
+- **Continuous integration.** The unit suite runs on Python 3.12 and 3.13 for every push, and the e2e harnesses run on pull requests. There was none before, which is why four separate shipped changes each broke a harness unnoticed. Harnesses known to be stale are listed explicitly and the job fails if one of them starts passing, so the list can't quietly become a place where failures go to be forgotten. A working-tree check fails the build if a test writes into the checkout.
 
 ### Changed
 
@@ -85,17 +100,21 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **`tb list -v` said nothing at all about a toolkit `serve` would refuse to run.** It filtered discovery on "no skip reason" and returned silently when that matched nothing, so a toolkit with a pin naming an absent slot — an editable install removed outside `tb uninstall`, say — printed its version rows and no tools. It read as "this toolkit has no tools" rather than "this is about to fail". The reason is now printed, in both plain and verbose output.
 
-- **`tb setup` could configure a different version than `tb serve` runs.** It read pins from the committed manifest only, while serve reads the committed and machine-local layers merged, so an editable pin in `manifest.local.yaml` sent the two commands at different slots. Both now resolve through one implementation; a pin naming an uninstalled version is an error rather than a silent fallback to another slot.
+- **`tb use` activated the toolkit as a side effect, and `tb deactivate` discarded its version.** Both followed from storing the version inside the curation entry: writing a version had to create that entry, which is what "activated" means, and removing the entry took the version with it. Deactivating and reactivating a toolkit silently moved it to the newest installed build. Versions live in their own block now, so the two operations no longer touch each other's state.
 
-- **Project-scoped pin writes ignored `--project-dir`.** They walked up from the working directory regardless, so the documented project-discovery override didn't apply.
+- **Creating a project dropped every user-level version choice.** A project loadout shadows the user's, which is right for curation and wrong for versions: running `tb activate` in a plain directory makes it a project, and every toolkit whose version you had chosen machine-wide silently jumped to the newest installed. The choice was still on disk, it had just stopped applying. Versions now layer user-then-project per toolkit, the same chain per-toolkit config already used, so a project overrides only what it actually names.
 
-- **A user-scope pin written from inside a project claimed success while changing nothing there.** User scope is `tb use`'s default, but a cwd inside a project resolves pins from *that* project's manifest, so `tb install kit@1.0.0` (or `tb use kit@1.0.0`) run from a repo with its own `.toolbase/` pinned a version that the repo then ignored in favour of the highest installed. `install` said nothing at all (it no longer pins); `use` printed a plain success line. Both now say the pin doesn't apply there and give the `-p` form to fix it. The underlying scope asymmetry is unchanged — this makes it visible rather than silent.
+- **`tb setup` could configure a different version than `tb serve` runs.** It read pins from the committed manifest only, while serve reads the committed and machine-local layers merged, so an editable pin in the private layer sent the two commands at different slots. Both now resolve through one implementation; a version naming an uninstalled slot is an error rather than a silent fallback to another.
 
-- **`tb list`'s pin legend claimed a project that doesn't exist.** Outside any project the `*` refers to the global default-project fallback, but the legend read `* = pinned in this project`, sending people to look for a `.toolbase/` that was never there. It now says `pinned globally` and prints that manifest's absolute path (rendered relative to a cwd that happens to be your home directory, it read like a local file).
+- **`tb status` looked for wired harnesses where clients never read.** It resolved the project root the way read-only commands do, landing on the user default, while `tb connect` writes `.mcp.json` into the working directory — so a correctly wired project reported nothing wired.
+
+- **A user-scope version written from inside a project claimed success while changing nothing there.** A cwd inside a project resolves versions from *that* project, so `tb use kit@1.0.0` run from a repo with its own `.toolbase/` recorded a choice the repo then ignored in favour of the highest installed. It printed a plain success line. `tb use` now defaults to the project, and still says so when an explicit `-u` write won't apply where you are.
+
+- **Project-scoped writes ignored `--project-dir`.** They walked up from the working directory regardless, so the documented project-discovery override didn't apply.
 
 - **`tb uninstall` listed installed versions lexicographically** in its "not installed" error, putting `2.10.0` before `2.9.0` — the opposite of `tb list` and `tb use`, which sort numerically.
 
-- **`tb uninstall` left a dangling pin in the user-level manifest.** Install pinned the default-project by default (it no longer pins at all), but `uninstall` only cleaned the *active* project's manifest — different files whenever you're inside a project with its own `.toolbase/`. Installing a toolkit from a repo and then uninstalling it there deleted the binaries while leaving `<name>@<version>` pinned globally, naming a version that no longer existed. Since a pin naming an absent slot makes serve skip the toolkit outright, the toolkit then stayed unservable everywhere the default-project applies — including after reinstalling a *different* version, because the stale pin still won. Both roots' committed and machine-local layers are now cleaned, and the stale-pin warning names which manifest it edited.
+- **`tb uninstall` left a dangling pin in the user-level manifest.** Install pinned the default-project by default (it no longer pins at all), but `uninstall` only cleaned the *active* project's manifest — different files whenever you're inside a project with its own `.toolbase/`. Installing a toolkit from a repo and then uninstalling it there deleted the binaries while leaving `<name>@<version>` recorded globally, naming a version that no longer existed. Since a version naming an absent slot makes serve skip the toolkit outright, the toolkit then stayed unservable everywhere the default-project applies — including after reinstalling a *different* version, because the stale entry still won. Both roots' committed and private layers are now cleaned, in manifests and loadouts alike, and the message names which file it edited.
 
 ## [0.11.0] — 2026-07-30
 
