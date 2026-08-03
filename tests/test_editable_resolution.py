@@ -170,7 +170,7 @@ class TestListSurface:
         r = CliRunner().invoke(cli.main, ["list"])
         lines = r.output.splitlines()
         numbered = next(l for l in lines if "1.0.0" in l and "serving" not in l)
-        editable_row = next(l for l in lines if "editable" in l and "->" in l)
+        editable_row = next(l for l in lines if "editable" in l and "→" in l)
         assert "▸" in numbered
         assert "▸" not in editable_row
 
@@ -180,7 +180,7 @@ class TestListSurface:
         r = CliRunner().invoke(cli.main, ["list"])
         # Display order must match resolution order, or the rows tell a
         # different story from the marker.
-        assert r.output.index("1.0.0") < r.output.index("-> /src/kit")
+        assert r.output.index("1.0.0") < r.output.index("→ /src/kit")
 
     def test_json_reports_the_numbered_slot_as_serving(self, env):
         import json

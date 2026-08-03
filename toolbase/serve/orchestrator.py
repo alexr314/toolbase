@@ -220,7 +220,7 @@ def discover_toolkits(toolkits_dir: Optional[Path] = None) -> List[ToolkitDiscov
                 and chosen is not None and chosen.version != EDITABLE):
             src = (editable_slot.install_meta or {}).get("source_path", "?")
             shadow_note = (
-                f"your editable checkout (-> {src}) is NOT what serves; "
+                f"your editable checkout (→ {src}) is NOT what serves; "
                 f"{chosen.version} is ({resolution.describe()}) — "
                 f"`tb use {name}@editable` to serve the checkout"
             )

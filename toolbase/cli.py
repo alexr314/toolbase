@@ -5204,7 +5204,7 @@ def status_cmd():
             (c for c in by_name[name] if c.version == r.version), None)
         src = (slot.install_meta or {}).get("source_path") if slot else None
         if src:
-            extra = f"   [dim]-> {src}[/dim]"
+            extra = f"   [dim]→ {src}[/dim]"
         others = [c.version for c in by_name[name] if c.version != r.version]
         if r.reason == "highest" and others:
             extra += f"   [dim]({', '.join(_sorted_versions(others))} also installed)[/dim]"
@@ -5496,7 +5496,7 @@ def list_cmd(as_json, verbose):
             if editable_src:
                 console.print(
                     f"  {bullet} {ver_cell}   "
-                    f"[dim](-> {editable_src}, used {last_used}, {size})[/dim]"
+                    f"[dim](→ {editable_src}, used {last_used}, {size})[/dim]"
                     f"{subset_tag}"
                 )
             else:
@@ -7395,7 +7395,7 @@ def _surface_skills_for_connect(adapter, *, no_skills: bool = False) -> None:
     if surfaced:
         console.print(
             f"[dim]  {surfaced} skill"
-            f"{'s' if surfaced != 1 else ''} -> "
+            f"{'s' if surfaced != 1 else ''} → "
             f"{_display_path(target.root)}/[/dim]"
         )
 
@@ -7613,7 +7613,7 @@ def _connect_print_status(adapters, project_root) -> None:
     any_present = False
     console.print("\n[bold]toolbase harness registrations:[/bold]")
     if project_root is not None:
-        console.print(f"  [dim]project scope -> {project_root}[/dim]")
+        console.print(f"  [dim]project scope → {project_root}[/dim]")
     for ad in adapters:
         try:
             entries = ad.status(project_root)
@@ -7631,7 +7631,7 @@ def _connect_print_status(adapters, project_root) -> None:
                 console.print(
                     f"  [green]✓[/green] [cyan]{entry.harness}[/cyan] "
                     f"[dim]({entry.scope})[/dim]  {entry.path}  "
-                    f"[dim]-> {entry.command} "
+                    f"[dim]→ {entry.command} "
                     f"{' '.join(entry.args or [])}[/dim]"
                 )
             else:

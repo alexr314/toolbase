@@ -337,7 +337,7 @@ def test_list_renders_editable_indicator(fake_env, tmp_path):
     result = CliRunner().invoke(cli.main, ["list"], catch_exceptions=False)
     assert result.exit_code == 0, result.output
     assert "editable" in result.output
-    assert "->" in result.output
+    assert "→" in result.output
     # Rich may soft-wrap the path across the (narrow) test terminal, so
     # collapse whitespace before checking the source path is present.
     flat = "".join(result.output.split())
