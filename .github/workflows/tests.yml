@@ -19,6 +19,7 @@ concurrency:
 jobs:
   unit:
     name: unit (py${{ matrix.python }})
+    timeout-minutes: 20
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -58,6 +59,7 @@ jobs:
 
   e2e:
     name: e2e harnesses
+    timeout-minutes: 30
     # Slower and network-dependent (they pip-install into real venvs), so
     # they gate merges to main rather than every push to a branch.
     if: github.event_name != 'push'
@@ -78,48 +80,34 @@ jobs:
       - name: Run the harnesses
         # Each is a standalone script exiting non-zero on failure. They
         # are independent, so run all of them and report the whole
-        # picture rather than stopping at the first.
-        #
-        # KNOWN_FAILING is checked in deliberately. Seven harnesses have
-        # been broken for months against shipped changes nobody updated
-        # them for — a CI that is red on day one gets ignored, and a CI
-        # that silently skips them never gets fixed. Listing them keeps
-        # the rest meaningful, and the list is the backlog.
-        #
-        # The check is strict both ways: a listed harness that starts
-        # passing also fails the job, so the list can't rot.
+        # picture rather than stopping at the first -- one broken
+        # harness shouldn't hide the state of the other twelve.
         run: |
-          KNOWN_FAILING="
-            run_aster_synthetic_e2e.py
-            run_bundles_e2e.py
-            run_envs_e2e.py
-            run_restart_e2e.py
-            run_setup_e2e.py
-            run_setup_script_e2e.py
-            run_two_layer_config_e2e.py
-          "
-          regressed=""
-          fixed=""
+          failed=""
           for f in tests/e2e/run_*.py; do
             name=$(basename "$f")
-            known=$(echo "$KNOWN_FAILING" | tr -d ' ' | grep -qx "$name" && echo yes || echo no)
-            echo "::group::$name (known-failing: $known)"
+            echo "::group::$name"
             if python "$f"; then
               echo "PASS $name"
-              [ "$known" = yes ] && fixed="$fixed $name"
             else
               echo "FAIL $name"
-              [ "$known" = no ] && regressed="$regressed $name"
+              failed="$failed $name"
             fi
             echo "::endgroup::"
           done
-          status=0
-          if [ -n "$regressed" ]; then
-            echo "::error::harnesses that were passing now fail:$regressed"
-            status=1
+          if [ -n "$failed" ]; then
+            echo "::error::failing harnesses:$failed"
+            exit 1
           fi
-          if [ -n "$fixed" ]; then
-            echo "::error::these now pass — remove them from KNOWN_FAILING:$fixed"
-            status=1
+
+      - name: No state written outside the sandbox
+        # The harnesses build real installs and must keep them in $TMPDIR.
+        # One of them used to run from the repo root, and since .toolbase/
+        # is the project marker, its leftovers there changed what a later
+        # run resolved -- a test suite grading its own residue.
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "::error::harnesses modified the working tree:"
+            git status --porcelain
+            exit 1
           fi
-          exit $status
