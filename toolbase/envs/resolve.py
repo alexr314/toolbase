@@ -41,6 +41,7 @@ that is what makes ``tb install foo@1.2.0`` leave 1.4.0 serving — and
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence
 
 from ..versioning import parse_version
@@ -179,17 +180,51 @@ def active_pins(project_root=None) -> Dict[str, str]:
         except Exception:
             return {}
 
-    # Legacy first, so loadout entries override it per name.
-    pins: Dict[str, str] = {}
-    try:
-        pins.update(load_merged_pins(project_manifest_path(project_root)))
-    except Exception:
-        pass
+    # Layered lowest-first, each overriding the last per toolkit:
+    #
+    #   legacy manifest  ->  user loadout  ->  project loadout
+    #
+    # The user layer matters because a project's loadout shadows the
+    # user's *whole* — right for curation, since a half-merged tool
+    # selection is one nobody designed, but wrong for versions. Without
+    # this, `tb activate` in a plain directory makes it a project and
+    # silently drops every version you had chosen machine-wide: the
+    # toolkit would jump from your pinned build to newest-installed with
+    # nothing said. Versions layer; curation shadows.
+    from ..serve.loadouts import resolve_loadout
 
-    try:
-        from ..serve.loadouts import resolve_loadout
-        pins.update(resolve_loadout(project_root).versions)
-    except Exception:
-        pass  # no loadout, or a malformed one: the fallback still applies
+    pins: Dict[str, str] = {}
+    for root in _version_layers(project_root):
+        try:
+            pins.update(load_merged_pins(project_manifest_path(
+                root if root is not None else _default_root()
+            )))
+        except Exception:
+            pass
+        try:
+            pins.update(resolve_loadout(root).versions)
+        except Exception:
+            pass  # absent or malformed: lower layers still apply
 
     return pins
+
+
+def _default_root():
+    from . import default_project_root
+    return default_project_root()
+
+
+def _version_layers(project_root):
+    """Roots to read versions from, lowest priority first.
+
+    ``None`` is the user layer (the default-project's manifest and the
+    user loadout); ``project_root`` then layers over it. Outside a
+    project the two resolve identically, so the merge is a no-op rather
+    than a special case.
+    """
+    try:
+        if project_root is None or Path(project_root).resolve() == _default_root().resolve():
+            return [None]
+    except Exception:
+        pass
+    return [None, project_root]
