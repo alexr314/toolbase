@@ -7176,12 +7176,61 @@ def activate(item, user_scope, project_scope):
             result = _activate_skill(
                 tk2, sub, scope=scope, project_root=project_root,
             )
-        else:
-            result = _activate(item, scope=scope, project_root=project_root)
+            _print_mutation(result)
+            # Activating clears a `tb deactivate`; it cannot clear a
+            # bundle gate. Without this the command reports success (or
+            # "already active") on a skill that stays unsurfaced, which
+            # is the one case where the message and the outcome disagree.
+            _warn_if_skill_is_gated(tk2, sub)
+            return
+        result = _activate(item, scope=scope, project_root=project_root)
     except LoadoutItemError as e:
         console.print(f"[red]✗ {e}[/red]")
         sys.exit(2)
     _print_mutation(result)
+
+
+def _warn_if_skill_is_gated(tk: str, slug: str) -> None:
+    """Say so when a skill won't surface despite being active.
+
+    A skill scoped to a bundle is withheld while that bundle's config
+    keys are unset, and no amount of activating changes that -- the two
+    are separate filters. Naming the keys turns a silent no-op into
+    something actionable.
+    """
+    slot = _toolkit_slot_dir(tk)
+    if slot is None:
+        return
+    row = next(
+        (r for r in _toolkit_skill_status(tk, slot) if r[0] == slug), None)
+    if row is None or row[1] != "gated":
+        return
+    bundle = row[2]
+    console.print(
+        f"[yellow]⚠ Not surfaced: {tk}__{slug} is scoped to the "
+        f"{bundle} bundle, which isn't configured.[/yellow]"
+    )
+    missing = _missing_config_keys_for_bundle(tk, slot, bundle)
+    if missing:
+        console.print(
+            f"    [dim]Set {', '.join(missing)} with "
+            f"`tb config set {tk} <key> <value>`.[/dim]"
+        )
+
+
+def _missing_config_keys_for_bundle(tk: str, slot: Path, bundle: str) -> list:
+    """Config keys the named bundle is waiting on, for a gated message."""
+    try:
+        from .serve.orchestrator import (
+            discover_toolkits, _resolve_bundle_availability,
+        )
+        disc = next((d for d in discover_toolkits() if d.name == tk), None)
+        if disc is None:
+            return []
+        availability, _map = _resolve_bundle_availability(disc)
+        return list(availability.dropped_bundles.get(bundle) or [])
+    except Exception:
+        return []
 
 
 @main.command()

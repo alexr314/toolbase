@@ -257,3 +257,77 @@ class TestStatus:
         rec = json.loads(_run("list", "--json").output)[0]
         assert rec["active"] is False
         assert rec["skills"][0]["state"] == "on"
+
+
+# ── activating a gated skill ────────────────────────────────────────────
+
+
+class TestActivateGatedSkill:
+    """Activating clears a `tb deactivate`; it cannot clear a bundle gate.
+
+    The two are separate filters, so a skill scoped to an unconfigured
+    bundle stays unsurfaced no matter how often it is activated. Without
+    a word about it the command reports success -- or "already active" --
+    on something that will not reach an agent, which is the one case
+    where the message and the outcome disagree.
+    """
+
+    def test_says_the_skill_will_not_surface(self, env):
+        _toolkit(skills=[("heavy_guide", "heavy")],
+                 bundles={"heavy": ["heavy_path"]})
+        _run("activate", "demo-kit")
+        out = " ".join(_run("activate", "demo-kit__heavy_guide").output.split())
+        assert "Not surfaced" in out
+        assert "heavy bundle" in out
+
+    def test_names_the_config_keys_it_is_waiting_on(self, env):
+        """Naming them is what turns a silent no-op into something the
+        user can act on."""
+        _toolkit(skills=[("heavy_guide", "heavy")],
+                 bundles={"heavy": ["heavy_path", "other_key"]})
+        _run("activate", "demo-kit")
+        out = " ".join(_run("activate", "demo-kit__heavy_guide").output.split())
+        assert "heavy_path" in out
+        assert "other_key" in out
+        assert "tb config set demo-kit" in out
+
+    def test_warns_even_when_it_was_already_active(self, env):
+        """Skills default on, so the usual path prints "already active" --
+        the exact message that read as success in the reported case."""
+        _toolkit(skills=[("heavy_guide", "heavy")],
+                 bundles={"heavy": ["heavy_path"]})
+        _run("activate", "demo-kit")
+        r = _run("activate", "demo-kit__heavy_guide")
+        flat = " ".join(r.output.split())
+        assert "already active" in flat
+        assert "Not surfaced" in flat
+
+    def test_warns_after_a_real_reactivation(self, env):
+        _toolkit(skills=[("heavy_guide", "heavy")],
+                 bundles={"heavy": ["heavy_path"]})
+        _run("activate", "demo-kit")
+        _run("deactivate", "demo-kit__heavy_guide")
+        out = " ".join(_run("activate", "demo-kit__heavy_guide").output.split())
+        assert "Activated skill" in out
+        assert "Not surfaced" in out
+
+    def test_an_ungated_skill_gets_no_warning(self, env):
+        _toolkit(skills=["searching"])
+        _run("activate", "demo-kit")
+        assert "Not surfaced" not in _run(
+            "activate", "demo-kit__searching").output
+
+    def test_configuring_the_bundle_silences_it(self, env):
+        """The warning tracks the gate, not the skill."""
+        _toolkit(skills=[("heavy_guide", "heavy")],
+                 bundles={"heavy": ["heavy_path"]})
+        _run("activate", "demo-kit")
+        _run("config", "set", "-u", "demo-kit", "heavy_path", "/opt/heavy")
+        assert "Not surfaced" not in _run(
+            "activate", "demo-kit__heavy_guide").output
+
+    def test_activating_a_tool_is_unaffected(self, env):
+        _toolkit(skills=["searching"], tools=("do_thing",))
+        _run("activate", "demo-kit")
+        assert "Not surfaced" not in _run(
+            "activate", "demo-kit__do_thing").output
