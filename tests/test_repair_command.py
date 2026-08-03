@@ -216,10 +216,11 @@ class TestRepair:
         r = CliRunner().invoke(cli.main, ["repair", "demo-kit", "--yes"])
         assert r.exit_code == 1
         flat = " ".join(r.output.split())
-        assert "needs Python 3.4" in flat
-        assert "isn't installed" in flat
-        # And it points at the fallback rather than leaving you stuck.
-        assert "tb install demo-kit@1.0.0" in flat
+        assert "built on Python 3.4" in flat
+        # And it points at both ways out rather than leaving you stuck:
+        # re-run from a matching Python, or remove and reinstall.
+        assert "Python 3.4 environment" in flat
+        assert "tb clean" in flat
 
     def test_says_so_when_there_is_nothing_to_repair(self, env, tmp_path):
         py = tmp_path / "python"
@@ -259,3 +260,119 @@ class TestRepair:
         r = CliRunner().invoke(cli.main, ["repair", "demo-kit@2.0.0", "--yes"])
         assert r.exit_code == 0, r.output
         assert "Nothing to repair" in r.output
+
+
+# ── tb clean ────────────────────────────────────────────────────────────
+
+
+class TestClean:
+    """The fallback when repair can't apply.
+
+    Repair only ever re-points a venv at ``sys.executable`` -- searching
+    the host for a matching Python means encoding a guess about someone
+    else's machine. So a slot built on a different minor than the one
+    toolbase is running can't be repaired here, and removing it is the
+    honest option.
+    """
+
+    def test_removes_a_slot_that_cannot_run(self, env):
+        _slot(python_path="/nonexistent/bin/python")
+        slot = cache_dir("demo-kit", "1.0.0")
+        r = CliRunner().invoke(cli.main, ["clean", "--yes"])
+        assert r.exit_code == 0, r.output
+        assert not slot.exists()
+
+    def test_drops_the_empty_toolkit_dir_too(self, env):
+        """Otherwise the walker keeps reporting a toolkit with no
+        versions in it."""
+        _slot(python_path="/nonexistent/bin/python")
+        CliRunner().invoke(cli.main, ["clean", "--yes"])
+        assert not cache_dir("demo-kit", "1.0.0").parent.exists()
+
+    def test_leaves_healthy_installs_alone(self, env, tmp_path):
+        py = tmp_path / "python"
+        py.write_text("#!/bin/sh\n")
+        py.chmod(0o755)
+        _slot("fine-kit", "1.0.0", python_path=str(py))
+        _slot("broken-kit", "1.0.0", python_path="/nonexistent/bin/python")
+        CliRunner().invoke(cli.main, ["clean", "--yes"])
+        assert cache_dir("fine-kit", "1.0.0").exists()
+        assert not cache_dir("broken-kit", "1.0.0").exists()
+
+    def test_never_removes_an_editable_install(self, env):
+        """The slot is a symlink to a working copy, and rebuilding it
+        needs the original `tb install -e <path>` that only the user
+        knows."""
+        slot = cache_dir("edit-kit", "editable")
+        slot.mkdir(parents=True, exist_ok=True)
+        from toolbase.envs import write_install_meta as _wim
+        from toolbase.envs import write_legacy_meta as _wlm
+        extras = {"python_path": "/nonexistent/bin/python",
+                  "editable": True, "source_path": "/src/edit-kit"}
+        _wim(slot, name="edit-kit", version="editable", install_method="venv",
+             python_version="3.12", extras=extras)
+        _wlm(slot, {"name": "edit-kit", "version": "editable",
+                    "environment": "venv", **extras})
+
+        r = CliRunner().invoke(cli.main, ["clean", "--yes"])
+        assert slot.exists(), "an editable working copy was removed"
+        assert "tb install -e /src/edit-kit" in " ".join(r.output.split())
+
+    def test_dry_run_removes_nothing(self, env):
+        _slot(python_path="/nonexistent/bin/python")
+        r = CliRunner().invoke(cli.main, ["clean", "--dry-run"])
+        assert r.exit_code == 0, r.output
+        assert cache_dir("demo-kit", "1.0.0").exists()
+        assert "nothing removed" in r.output.lower()
+
+    def test_declining_removes_nothing(self, env):
+        _slot(python_path="/nonexistent/bin/python")
+        r = CliRunner().invoke(cli.main, ["clean", "--no"])
+        assert cache_dir("demo-kit", "1.0.0").exists()
+
+    def test_says_so_when_everything_is_healthy(self, env, tmp_path):
+        py = tmp_path / "python"
+        py.write_text("#!/bin/sh\n")
+        py.chmod(0o755)
+        _slot(python_path=str(py))
+        r = CliRunner().invoke(cli.main, ["clean", "--yes"])
+        assert "Nothing to clean" in r.output
+
+    def test_clears_the_version_records_of_what_it_removed(self, env):
+        """A pin naming a deleted slot doesn't fall back -- serve skips
+        the toolkit outright, so it would stay broken even after a good
+        reinstall."""
+        from toolbase.envs import (
+            add_pin, project_manifest_path, default_project_root, load_manifest,
+        )
+        _slot(python_path="/nonexistent/bin/python")
+        manifest = project_manifest_path(default_project_root())
+        add_pin(manifest, "demo-kit", "1.0.0")
+
+        r = CliRunner().invoke(cli.main, ["clean", "--yes"])
+        assert r.exit_code == 0, r.output
+        pins = {e.name: e.version for e in load_manifest(manifest).toolkits}
+        assert "demo-kit" not in pins
+
+
+class TestRepairUsesOnlyTheRunningInterpreter:
+    def test_matching_minor_resolves_to_sys_executable(self):
+        minor = f"{sys.version_info.major}.{sys.version_info.minor}"
+        assert cli._repair_interpreter(minor) == Path(sys.executable)
+
+    def test_a_different_minor_resolves_to_nothing(self):
+        """No host search: a guess that lands on the wrong build fails
+        more obscurely than the breakage it was fixing."""
+        assert cli._repair_interpreter("3.4") is None
+
+    def test_the_refusal_names_clean_as_the_way_out(self, env):
+        slot = cache_dir("demo-kit", "1.0.0")
+        slot.mkdir(parents=True, exist_ok=True)
+        venv = _real_venv(slot)
+        _strand(venv, "3.4")
+        _slot(python_path=str(venv / "bin" / "python"))
+        r = CliRunner().invoke(cli.main, ["repair", "demo-kit", "--yes"])
+        assert r.exit_code == 1
+        flat = " ".join(r.output.split())
+        assert "built on Python 3.4" in flat
+        assert "tb clean" in flat
