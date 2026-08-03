@@ -5256,19 +5256,43 @@ def status_cmd():
         )
 
     # ── Issues ───────────────────────────────────────────────────────
+    from .envs import interpreter_problem as _interp_problem
     issues: list = []
+    broken_interpreters: list = []
+    # Counted separately from the list: the two problems have different
+    # fixes, and a stale-pin hint under a broken interpreter sends you
+    # to reinstall something whose files are perfectly fine.
+    pin_issue_count = 0
     for name in sorted(by_name):
         r = resolutions[name]
         if not r.ok:
             issues.append(
                 f"  {name:<22} {str(r.pin):<10} [dim]{r.describe()}[/dim]"
             )
+            pin_issue_count += 1
+            continue
+        # The slot resolves, but its interpreter may be gone -- an
+        # install whose parent environment was deleted. Everything else
+        # here reads healthy, which is exactly why it needs saying.
+        slot = next(
+            (c for c in by_name[name] if c.version == r.version), None)
+        if slot is None:
+            continue
+        meta = dict(slot.install_meta or {})
+        meta.update(slot.legacy_meta or {})
+        problem = _interp_problem(meta)
+        if problem:
+            issues.append(
+                f"  {name:<22} {r.version:<10} [dim]{problem}[/dim]"
+            )
+            broken_interpreters.append(name)
     for name, version in sorted(pins.items()):
         if name not in by_name:
             issues.append(
                 f"  {name:<22} {version:<10} [dim]pinned, not installed[/dim]"
             )
-    pin_issues = list(issues)
+            pin_issue_count += 1
+    pin_issues = pin_issue_count > 0
     if active_rows and not wired:
         issues.append(
             "  no harness wired here     [dim]`tb connect <harness>`[/dim]"
@@ -5283,6 +5307,11 @@ def status_cmd():
             console.print(
                 '    [dim]`tb use <toolkit>` clears a pin; '
                 '`tb install <toolkit>@<version>` restores it[/dim]'
+            )
+        if broken_interpreters:
+            console.print(
+                '    [dim]`tb clean` removes installs that can no longer '
+                'run, then reinstall them[/dim]'
             )
 
 
@@ -6052,6 +6081,189 @@ def use_cmd(target, user_scope, project_scope, private_scope):
     console.print("[dim]Restart your agent session to pick this up.[/dim]")
 
 
+def _drop_stale_version_records(name: str) -> None:
+    """Forget recorded versions of ``name`` whose slots are gone.
+
+    Called after anything that deletes slots — ``uninstall`` and
+    ``clean``. A pin or loadout entry naming a version that no longer
+    exists doesn't fall back: serve skips the toolkit outright, so it
+    stays broken even after a good reinstall of a different version.
+
+    The active project AND the default-project are both cleaned. The
+    binaries are gone globally, so a record naming them dangles wherever
+    it lives, and pre-0.12 installs pinned the default-project even when
+    run from inside a project — cleaning only the active one orphaned
+    that pin and made serve skip the toolkit everywhere the
+    default-project applies.
+
+    Never creates a project: absent manifests have no pin to remove,
+    which ``remove_pin`` treats as a no-op.
+    """
+    try:
+        from .envs import (
+            local_manifest_path as _local_manifest_path,
+            load_manifest as _load_manifest_for_pins,
+            default_project_root as _default_project_root,
+            project_manifest_path as _project_manifest_path,
+            list_versions as _list_versions,
+            remove_pin as _remove_pin,
+        )
+        project_root, _source = _resolve_active_project_root()
+        roots = [project_root]
+        default_root = _default_project_root()
+        if default_root.resolve() != project_root.resolve():
+            roots.append(default_root)
+        layers = []
+        for root in roots:
+            committed = _project_manifest_path(root)
+            layers += [committed, _local_manifest_path(committed)]
+
+        remaining = _list_versions(name)
+        for layer in layers:
+            if not remaining:
+                _remove_pin(layer, name)
+                continue
+            # Some versions remain. A pin still naming a removed version
+            # dangles — serving would SKIP the toolkit entirely even
+            # though usable slots exist. Remove it loudly; unpinned
+            # resolution falls back to the highest remaining slot.
+            pins = {e.name: e.version
+                    for e in _load_manifest_for_pins(layer).toolkits}
+            pinned = pins.get(name)
+            if pinned is not None and pinned not in remaining:
+                _remove_pin(layer, name)
+                console.print(
+                    f"[yellow]⚠ Removed stale pin {name}@{pinned} from "
+                    f"{_display_path(layer)} — {', '.join(remaining)} "
+                    f"remain[/yellow]"
+                )
+
+        # And the loadouts, which is where versions actually live now.
+        # Same rule, newer file.
+        _clear_stale_loadout_versions(name, roots, remaining)
+    except Exception as e:
+        # Loud, not dim. This catch exists for unreadable or absent
+        # manifests, but it will swallow anything -- during this
+        # refactor it turned a NameError into a note nobody would read,
+        # while pins quietly survived the uninstall that should have
+        # cleared them. If it fires, stale records are still on disk and
+        # serve will skip the toolkit.
+        console.print(
+            f"[yellow]⚠ Could not clear version records for {name}: {e}[/yellow]"
+        )
+        console.print(
+            "    [dim]A pin naming a removed version makes serve skip the "
+            "toolkit; check `tb status`.[/dim]"
+        )
+
+
+@main.command(name="clean")
+@click.option("--dry-run", is_flag=True, default=False,
+              help="List what would be removed and stop.")
+@_interactive_options
+def clean_cmd(dry_run, yes, no_, no_input):
+    """Remove installs that can no longer run.
+
+    \b
+    For a toolkit whose Python is gone — usually because it was
+    installed from an environment (a conda env, say) that was later
+    deleted. A venv only symlinks the interpreter that built it, so
+    removing that environment strands the toolkit.
+
+    \b
+    Prints the command to put each one back. Reinstalling builds
+    against whatever Python is running toolbase now.
+
+    \b
+    Clears each toolkit's pins and loadout entries too, so nothing is
+    left naming a version that no longer exists — a dangling entry makes
+    serve skip the toolkit even after a good reinstall.
+
+    \b
+    Editable installs are reported but not removed: the slot is a
+    symlink to your working copy, and taking it away is a bigger call
+    than this command should make on its own. The exact `tb install -e`
+    to rebuild it is printed.
+    """
+    from .envs import walk_cache, interpreter_problem
+
+    broken, editable = [], []
+    for e in walk_cache():
+        meta = dict(e.install_meta or {})
+        meta.update(e.legacy_meta or {})
+        if not interpreter_problem(meta):
+            continue
+        if meta.get("editable") or meta.get("source_path"):
+            editable.append((e, meta))
+        else:
+            broken.append((e, meta))
+
+    if not broken and not editable:
+        console.print("Nothing to clean — every install has a working Python.")
+        return
+
+    for entry, meta in editable:
+        console.print(
+            f"[yellow]![/yellow] {entry.name}@{entry.version} "
+            f"[dim]editable, left alone — "
+            f"reinstall with `tb install -e "
+            f"{meta.get('source_path', '<path>')}`[/dim]"
+        )
+
+    if not broken:
+        return
+
+    console.print("These cannot run and would be removed:")
+    for entry, _ in broken:
+        console.print(f"  {entry.name}@{entry.version}   [dim]{entry.path}[/dim]")
+    if dry_run:
+        console.print("\n[dim]--dry-run: nothing removed.[/dim]")
+        return
+
+    mode = _resolve_prompt_mode(yes, no_, no_input)
+    if not _confirm(
+        f"Remove {len(broken)} unusable install(s)?",
+        default=False, mode=mode, consequential=True,
+    ):
+        console.print("[dim]Nothing removed.[/dim]")
+        return
+
+    removed, restore = 0, []
+    for entry, _ in broken:
+        try:
+            shutil.rmtree(entry.path)
+            # cache/<name>/<version>/ — drop <name>/ once its last
+            # version goes, so the walker stops reporting a toolkit
+            # with nothing in it.
+            parent = entry.path.parent
+            if parent.is_dir() and not any(parent.iterdir()):
+                parent.rmdir()
+        except OSError as exc:
+            console.print(f"[red]✗[/red] {entry.name}@{entry.version}: {exc}")
+            continue
+        # Same cleanup uninstall does: a pin or loadout entry naming a
+        # slot that is gone makes serve skip the toolkit outright.
+        _drop_stale_version_records(entry.name)
+        _uninstall_cleanup_loadouts(entry.name)
+        console.print(f"[green]✓[/green] removed {entry.name}@{entry.version}")
+        restore.append(f"tb install {entry.name}@{entry.version}")
+        removed += 1
+
+    if removed:
+        # Removing costs a reinstall, so hand back the exact commands
+        # rather than leaving the version to be remembered -- the pin
+        # naming it was just cleared, which is what made it safe to
+        # remove and also what erased the record of what was here.
+        running = f"{sys.version_info.major}.{sys.version_info.minor}"
+        console.print(f"\nPut them back with:")
+        for cmd in restore:
+            console.print(f"  {cmd}")
+        console.print(
+            f"[dim]They will build against Python {running} — whatever "
+            f"toolbase is running now.[/dim]"
+        )
+
+
 @main.command()
 @click.argument('name')
 @_interactive_options
@@ -6182,52 +6394,7 @@ def uninstall(name, yes, no_, no_input):
     #
     # Uninstall never creates a project: absent manifests simply have no
     # pin to remove, which ``remove_pin`` treats as a no-op.
-    try:
-        from .envs import (
-            local_manifest_path as _local_manifest_path,
-            load_manifest as _load_manifest_for_pins,
-            default_project_root as _default_project_root,
-        )
-        project_root, _source = _resolve_active_project_root()
-        roots = [project_root]
-        default_root = _default_project_root()
-        if default_root.resolve() != project_root.resolve():
-            roots.append(default_root)
-        layers = []
-        for root in roots:
-            committed = _project_manifest_path(root)
-            layers += [committed, _local_manifest_path(committed)]
-
-        remaining = _list_versions(name)
-        for layer in layers:
-            if not remaining:
-                _remove_pin(layer, name)
-                continue
-            # Some versions remain. A pin still naming a version we just
-            # removed now dangles — serving would SKIP the toolkit
-            # entirely ("pinned version not installed") even though
-            # usable slots exist. Remove it loudly; unpinned resolution
-            # falls back to the highest remaining slot.
-            pins = {e.name: e.version
-                    for e in _load_manifest_for_pins(layer).toolkits}
-            pinned = pins.get(name)
-            if pinned is not None and pinned not in remaining:
-                _remove_pin(layer, name)
-                console.print(
-                    f"[yellow]⚠ Removed stale pin {name}@{pinned} from "
-                    f"{_display_path(layer)} — {', '.join(remaining)} "
-                    f"remain[/yellow]"
-                )
-
-        # And the loadouts, which is where versions actually live now.
-        # A version naming a slot we just deleted makes serve skip the
-        # toolkit outright, so it has to go the same way manifest pins
-        # do — same rule, newer file.
-        _clear_stale_loadout_versions(name, roots, remaining)
-    except Exception as e:
-        console.print(
-            f"[dim]Note: could not update project manifest: {e}[/dim]"
-        )
+    _drop_stale_version_records(name)
 
     # Skills + default-loadout cleanup — only when ALL versions are gone.
     if not _list_versions(name):
