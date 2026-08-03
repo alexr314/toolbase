@@ -6,6 +6,48 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ---
 
+## [0.13.0] — 2026-08-03
+
+### Added
+
+- **`tb clean` removes installs whose Python is gone.** A virtual environment holds no interpreter of its own — it symlinks the one that built it — and `tb install` builds with whichever Python is running toolbase at the time. Install a toolkit from a conda env, delete that env later, and the toolkit is stranded from every project at once, because the cache holds one copy shared by all of them rather than one per environment.
+
+  Nothing about the install is damaged: the toolkit's files and the whole of its `site-packages` are intact, and only the link to the base Python is gone. `tb clean` removes what can no longer run and prints the exact `tb install` to put each one back — which matters, because removing a slot also clears the pin naming its version, and that pin was the record of what had been there.
+
+  ```console
+  $ tb clean
+  ✓ removed calculator@1.4.0
+
+  Put them back with:
+    tb install calculator@1.4.0
+  ```
+
+  Editable installs are reported but never removed: the slot is a symlink to a working copy, and taking one away is a larger decision than this command should make on its own. The `tb install -e <path>` that rebuilds it is printed instead.
+
+- **A missing interpreter is reported before serve trips over it.** `tb status` lists it under `Issues`, `tb list` and serve discovery agree, and all three answer from one rule, so they cannot drift apart. Previously nothing noticed: metadata and toolkit files stay intact when the base Python disappears, so discovery called the slot ready, `tb status` listed it as healthy, and serve tried to spawn it on every startup and failed at connect with `mcp connect failed: [Errno 2] No such file or directory` — a message that names the interpreter and explains nothing. Found on a real machine, where one toolkit had been quietly unservable for weeks.
+
+  Conda-based installs are exempt. They are named rather than pathed, and deciding whether one still exists means shelling out to conda, which is too slow for a listing; they still fail loudly at spawn.
+
+### Fixed
+
+- **`tb connect --help` told you to run a flag that does not exist.** Its examples used `-g`, which 0.12.0 replaced with `-u`; running one exits with `No such option: -g`.
+
+- **`tb list --help` documented an interface that had been replaced** — a `*` legend for "pinned", a `<-` marker for the serving version, and pins living in `.toolbase/manifest.yaml`. Its sample is now copied from real output rather than written from memory, which is how the old one drifted.
+
+  Both were found by sweeping every command's help text for removed flags and stale markers, then checking the sweep rather than trusting it: all 18 documented examples that carry flags were extracted and confirmed to parse.
+
+- **`tb uninstall` could silently leave every pin in place.** The cleanup that clears version records is wrapped in a broad `except`, intended for absent or unreadable manifests, which also swallowed real errors into a dimmed note. A failure there leaves records naming versions that no longer exist, and those make serve skip the toolkit outright. It now reports as a warning and says what the consequence is.
+
+### Changed
+
+- **The end-to-end harnesses all pass, and CI enforces it.** Seven of the thirteen had been failing for months against changes nobody updated them for — none of them product bugs, all stale expectations: hardcoded snake_case tool names where orchestral's MCP layer serves PascalCase, config written from outside a project expecting the user layer when scoped commands default to the project, assertions that `project init` writes a `manifest.yaml` when the directory itself is the marker, and a bundle map treated as one bundle per tool when it is a list.
+
+  One was failing at its own hand: it never left the repository root, and since `.toolbase/` is the project marker, the checkout is a project — so its own leftovers there supplied the config value the test asserts is unset. It graded its own residue, and differently in CI, which starts clean. The harnesses now run from their temporary trees, and CI fails if a run dirties the working copy.
+
+  The unit suite was red on CI while green locally for one assertion, on a phrase Rich wrapped mid-line: where the break lands moves with the length of a temp path, and CI's shorter one split the phrase. Console width is pinned for the suite now — 76 assertions match multi-word phrases against captured output, and every one of them was a wrap away from the same failure.
+
+- **The synthetic toolkit fixture is a calculator.** It stood for a real third-party toolkit, named throughout test data that has nothing to do with it. The flow under test is unchanged.
+
 ## [0.12.0] — 2026-08-02
 
 Reworks how toolbase decides **which version of a toolkit serves**, and separates that decision from installing and from exposing. The model is now one rule with no exceptions: `install` places bits, `tb use` chooses a version, `tb activate` exposes tools. `install` previously did fragments of all three depending on flags, which is where most of the defects below came from.
