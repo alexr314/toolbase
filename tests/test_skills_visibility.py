@@ -246,3 +246,14 @@ class TestStatus:
         _toolkit(skills=[])
         _run("activate", "demo-kit")
         assert "Skills" not in _run("status").output
+
+    def test_state_is_the_skills_own_setting_not_the_net_outcome(self, env):
+        """An inactive toolkit surfaces nothing, but its skill's own
+        setting is still "on". Collapsing the two would lose the
+        difference between a skill you turned off and a toolkit you
+        never activated; a consumer wanting the net answer reads
+        ``state == "on" and active``."""
+        _toolkit(skills=["searching"])
+        rec = json.loads(_run("list", "--json").output)[0]
+        assert rec["active"] is False
+        assert rec["skills"][0]["state"] == "on"

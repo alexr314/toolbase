@@ -5507,10 +5507,18 @@ def list_cmd(as_json, verbose):
                 # a subset install. Matches the raw ``bundles`` field in
                 # ``.install_meta.yaml``.
                 "installed_bundles": (e.install_meta or {}).get("bundles"),
-                # ``skills``: what this slot ships and whether each would
-                # be surfaced -- "on", "off" (deactivated), or "gated"
-                # (its bundle's config requirements are unmet). Empty
-                # list for a toolkit that ships none.
+                # ``skills``: what this slot ships and each one's own
+                # setting -- "on", "off" (deactivated), or "gated" (its
+                # bundle's config requirements are unmet). Empty list
+                # for a toolkit that ships none.
+                #
+                # This is the skill's setting, not the net outcome: an
+                # inactive toolkit surfaces nothing whatever its skills
+                # say, so a consumer wanting "is this in front of an
+                # agent" reads ``state == "on" and active``. Kept
+                # separate because collapsing them would lose the
+                # difference between a skill you turned off and a
+                # toolkit you never activated.
                 "skills": [
                     {"slug": slug, "state": state, "bundle": detail}
                     for slug, state, detail in _toolkit_skill_status(
