@@ -6,6 +6,32 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ---
 
+## [0.14.0] — 2026-08-03
+
+### Added
+
+- **Skills are visible in the read commands.** Every command that *changed* a skill knew about them — `tb activate <toolkit>__<skill>`, `tb deactivate`, `tb install --no-skills` — and no command that *showed* anything did. A toolkit's skills were undiscoverable short of listing its `skills/` directory.
+
+  That made `tb deactivate <toolkit>__<skill>` effectively write-only: skills default on and nothing displayed their state, so turning one off left no trace on any surface. The only evidence was a missing file under `~/.claude/skills/`.
+
+  ```console
+  $ tb list -v
+      [skills]
+        ✓ using_symbolic
+        ✗ heavy_workflow   (needs the heavy bundle)
+        ✗ old_guide        (deactivated — `tb activate calculator__old_guide`)
+  ```
+
+  `tb status` grows a `Skills` section for active toolkits, and says when no harness is wired — skills reach an agent by being copied into the harness's own directory at `tb connect` time, not served over MCP, so an active toolkit's skills are not in front of anyone until something is wired. `tb list --json` grows a `skills` key carrying each skill's own state; combine it with `active` for whether a skill is actually surfaced, since collapsing the two would lose the difference between a skill you turned off and a toolkit you never activated.
+
+  A skill's state is computed once and rendered by every surface, applying the same filters `surface_skills` applies in the same order, so a listing shows what `tb connect` would actually write.
+
+### Fixed
+
+- **`tb activate <toolkit>__<skill>` claimed success on a skill that stayed hidden.** A skill scoped to a bundle is withheld while that bundle's config keys are unset, and activating manages a different filter — the per-skill blocklist — so it could report "already active" about something that would never reach an agent. It now names the bundle and the config keys it is waiting on.
+
+- **`tb install --help` described surfacing it does not do.** Step 4 read "Surface the toolkit's skills into `~/.claude/skills/`", and `--no-skills` claimed to prevent that. Install only *reports* which skills a toolkit ships; `tb connect` surfaces them, per harness, and install's `--no-skills` suppresses the note and nothing else.
+
 ## [0.13.0] — 2026-08-03
 
 ### Added
