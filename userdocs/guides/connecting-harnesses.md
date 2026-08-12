@@ -59,7 +59,34 @@ args = ["serve"]
 ```
 
 Codex loads a project's `.codex/config.toml` only after you trust the project,
-so run `codex` there and approve it once.
+so run `codex` there and approve it once. Its `.codex/skills/` load either way.
+
+## Skills follow the scope you connected
+
+A toolkit's skills (`skills/*.md`) are copied into the harness's own skill
+directory rather than served over MCP, at the same scope as the server entry:
+
+```bash
+tb connect codex          # .codex/config.toml  + .codex/skills/   (this project)
+tb connect codex -u       # ~/.codex/config.toml + ~/.codex/skills/ (everywhere)
+```
+
+| harness | user scope | project scope |
+| --- | --- | --- |
+| Claude Code | `~/.claude/skills/` | `./.claude/skills/` |
+| Codex | `$CODEX_HOME/skills/` | `./.codex/skills/` |
+| Antigravity | `~/.gemini/config/skills/` | `./.agents/skills/` |
+| OpenCode | `~/.config/opencode/skills/` | `./.opencode/skills/` |
+
+Harnesses read both scopes at once, so a project connect adds to anything you
+surfaced with `-u`. `tb connect` tells you when the other scope is holding
+skills, and `tb disconnect <harness> -u` clears that one.
+
+Each connect **syncs** rather than appends: it writes the activated toolkits'
+skills and removes the toolbase-owned entries that no longer belong (a
+deactivated toolkit or guide, a bundle whose config gate closed, a guide
+dropped by a new version). Skills you wrote yourself are never touched. Use
+`--no-skills` to wire the server without touching the skill surface at all.
 
 ## Orchestral
 

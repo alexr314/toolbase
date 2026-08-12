@@ -239,6 +239,26 @@ def test_skill_target_is_dir_layout_in_global_root(tmp_path: Path, monkeypatch):
     assert target.keep_frontmatter is True
 
 
+def test_project_skill_target_is_the_workspace_root(tmp_path: Path):
+    """``skills/`` lives in the customization root beside mcp_config.json,
+    and there are two of those roots — so the scope map is the same one."""
+    from toolbase.connect.antigravity import WORKSPACE_ROOT_DIR
+    target = _adapter().skill_target("project", tmp_path)
+    assert target.root == tmp_path / WORKSPACE_ROOT_DIR / "skills"
+    assert target.root.parent == _adapter().config_path("project", tmp_path).parent
+    assert target.layout == "dir"
+
+
+def test_project_skill_target_needs_a_root():
+    with pytest.raises(ValueError):
+        _adapter().skill_target("project", None)
+
+
+def test_unknown_skill_scope_is_rejected(tmp_path: Path):
+    with pytest.raises(ValueError):
+        _adapter().skill_target("workspace", tmp_path)
+
+
 def test_surface_writes_skill_md_with_frontmatter(tmp_path: Path):
     from toolbase import skills as sk
     tk = tmp_path / "tk"

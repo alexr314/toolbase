@@ -79,16 +79,35 @@ class OpenCodeAdapter(HarnessAdapter):
     def supported_scopes(self) -> Dict[str, str]:
         return {"user": "global", "project": "project"}
 
-    def skill_target(self):
-        # ~/.config/opencode/command/<toolkit>__<skill>.md — one flat file per
-        # skill, each a `/<toolkit>__<skill>` slash-command prompt. OpenCode
-        # honors a `description` frontmatter field (shown in its TUI), so we
-        # keep just that key and drop toolbase's `name`/`bundle`.
+    def skill_target(self, scope="user", project_root=None):
+        # <root>/skills/<toolkit>__<skill>/SKILL.md — OpenCode's skill loader
+        # scans `**/SKILL.md` under ~/.config/opencode/skills and a project's
+        # .opencode/skills, and surfaces each to the model by its
+        # `description`. Frontmatter is kept: a skill without a description is
+        # filtered out and never reaches the model.
         from ..skills import SkillTarget
+        if scope == "user":
+            root = _config_home() / "opencode" / "skills"
+        elif scope == "project":
+            if project_root is None:
+                raise ValueError("project scope requires a project_root")
+            root = project_root / ".opencode" / "skills"
+        else:
+            raise ValueError(f"unknown scope {scope!r}")
         return SkillTarget(
+            harness=self.name, root=root, layout="dir", keep_frontmatter=True,
+        )
+
+    def legacy_skill_targets(self):
+        # We used to write flat `command/` prompt files, from before OpenCode
+        # had skills. Those are user-invoked `/<name>` slash commands only --
+        # never model-facing -- and OpenCode still reads them, so they have to
+        # go when the real skill lands.
+        from ..skills import SkillTarget
+        return [SkillTarget(
             harness=self.name, root=_config_home() / "opencode" / "command",
             layout="flat", keep_frontmatter=False, frontmatter_keys=["description"],
-        )
+        )]
 
     # ── paths ────────────────────────────────────────────────────────
 

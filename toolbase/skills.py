@@ -4,38 +4,46 @@ A toolkit's ``skills/`` entries are agent-facing how-to guides, shipped either
 as a flat ``skills/<name>.md`` or as ``skills/<name>/SKILL.md`` — a directory
 that can carry ``references/``, ``scripts/`` and assets beside the guide (see
 :class:`SkillSource`). Surfacing
-is a per-harness ``tb connect`` concern (each harness has its own skill
-location and format), driven through a :class:`SkillTarget` an adapter
-returns. ``tb connect <harness>`` surfaces the activated toolkits' skills
-into that target; ``tb disconnect`` (and uninstalling the toolkit) clears
-them. On publish we validate that skills carry the frontmatter Claude Code
-expects.
+is a per-harness, per-scope ``tb connect`` concern (each harness has its own
+skill location and format, at a user and a project root), driven through a
+:class:`SkillTarget` an adapter returns for the scope being wired.
+``tb connect <harness>`` surfaces the activated toolkits' skills into that
+target; ``tb disconnect`` (and uninstalling the toolkit) clears them. On
+publish we validate that skills carry the frontmatter Claude Code expects.
 
-Two layouts, one per supported harness:
+Every supported harness now has a real skill concept, and they agree on the
+layout — a directory per skill holding ``SKILL.md``:
 
-    Claude Code  (dir)   ~/.claude/skills/<toolkit>__<skill>/SKILL.md
-    Antigravity  (dir)   ~/.gemini/config/skills/<toolkit>__<skill>/SKILL.md
-    Codex        (flat)  ~/.codex/prompts/<toolkit>__<skill>.md
+    Claude Code   ~/.claude/skills/<toolkit>__<skill>/SKILL.md
+    Antigravity   ~/.gemini/config/skills/<toolkit>__<skill>/SKILL.md
+    Codex         $CODEX_HOME/skills/<toolkit>__<skill>/SKILL.md
+    OpenCode      ~/.config/opencode/skills/<toolkit>__<skill>/SKILL.md
 
-Claude Code watches its dir and both auto-surfaces each skill to the model
-and exposes it as a ``/<name>`` slash command; frontmatter is required, so
-we preserve it (synthesizing when missing). Codex has no model-facing skill
-concept — a prompt file is a user-invoked ``/<name>`` slash command — so we
-strip frontmatter to the body. Either way the ``<toolkit>__`` namespace
-mirrors the tool-namespacing convention and prevents collisions.
+Each scans its root and loads a guide on demand; frontmatter is required —
+the description is what decides when a skill applies — so we preserve it,
+synthesizing when missing. The ``<toolkit>__`` namespace mirrors the
+tool-namespacing convention and prevents collisions.
+
+The ``flat`` layout is what we used to approximate skills with before those
+concepts existed (Codex prompts, OpenCode commands): one markdown file per
+skill, a user-invoked ``/<name>`` slash command the model never sees. No
+adapter surfaces into it now; it survives because those directories still
+hold files an older toolbase wrote, and ``legacy_skill_targets`` has to be
+able to clear them.
 
 Ownership so we never clobber a user's own file: the dir layout drops an
 ``OWNED_MARKER`` in each ``<toolkit>__<skill>/`` dir; the flat layout (no
 dir to mark) records each file in a ``MANIFEST_NAME`` JSON manifest at the
 target root. Unsurfacing only removes what we own.
 
-The dir layout symlinks a complete-frontmatter source (so editable installs
-propagate edits) and falls back to a copy when it must rewrite (synthesized
-frontmatter) or can't symlink (Windows/FUSE). The flat layout always copies,
-since stripping frontmatter changes the content.
+A connect is a *sync*, not an append: :func:`surface_skills` writes what
+should be there and :func:`prune_skills` removes the toolbase-owned entries
+that shouldn't, so a surface converges on the current answer rather than
+accumulating every answer it has ever given.
 
-New code should call :func:`surface_skills` / :func:`unsurface_skills` with
-an explicit :class:`SkillTarget` (typically ``adapter.skill_target()``).
+New code should call :func:`surface_skills` / :func:`prune_skills` /
+:func:`unsurface_skills` with an explicit :class:`SkillTarget` (typically
+``adapter.skill_target(scope, project_root)``).
 ``install_skills_for_toolkit`` / ``uninstall_skills_for_toolkit`` remain as
 Claude-dir back-compat wrappers.
 """
@@ -43,7 +51,6 @@ Claude-dir back-compat wrappers.
 from __future__ import annotations
 
 import json
-import os
 import re
 import shutil
 from dataclasses import dataclass
@@ -51,14 +58,6 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import yaml
-
-
-def _can_symlink() -> bool:
-    """Symlinks are reliable on POSIX. On Windows they require admin or
-    Developer Mode and we'd rather copy than fail mid-install. The
-    install code path always uses copy-on-failure as a safety net too.
-    """
-    return os.name == "posix"
 
 
 CLAUDE_SKILLS_DIR = Path.home() / ".claude" / "skills"
@@ -94,30 +93,28 @@ MANIFEST_NAME = ".toolbase-managed.json"
 class SkillTarget:
     """Where and how one harness surfaces a toolkit's skills.
 
-    A harness's ``connect`` adapter returns a target (or ``None`` if it has
-    no skill surface). Two layouts, because the two harnesses that support
-    skills expect different things:
+    A harness's ``connect`` adapter returns a target for the scope being
+    wired (or ``None`` if it has no skill surface there). Two layouts:
 
-    - ``"dir"`` — a directory per skill holding ``SKILL.md``. Claude Code
-      watches ``~/.claude/skills/<name>/SKILL.md`` and both auto-surfaces
-      the skill to the model and exposes it as a ``/<name>`` slash command.
-      Frontmatter is required, so it is preserved (synthesized when
-      missing). Ownership is tracked by an ``OWNED_MARKER`` file in each dir.
-    - ``"flat"`` — a single markdown file per skill. Codex reads
-      ``~/.codex/prompts/<name>.md`` as a ``/<name>`` slash-command prompt
-      (user-invoked only; Codex has no model-facing skill concept), so
-      frontmatter is stripped to the body — Codex would otherwise render the
-      YAML block as prose. OpenCode reads ``~/.config/opencode/command/<name>.md``
-      the same way but *does* honor a ``description`` frontmatter field (it
-      shows in the TUI), so its target keeps only that key via
-      ``frontmatter_keys``. A flat file has no dir to mark, so ownership is
-      tracked by a JSON manifest at ``<root>/<MANIFEST_NAME>``.
+    - ``"dir"`` — a directory per skill holding ``SKILL.md``. What every
+      supported harness reads, and what every adapter surfaces into today.
+      Frontmatter is preserved (synthesized when missing) and a dir-form
+      source's ``references/`` come along. ``SKILL.md`` is written as a real
+      file, never a symlink: Codex's scanner does not follow one, and a
+      surfaced skill that no scanner can see is worse than a stale copy.
+      Ownership is tracked by an ``OWNED_MARKER`` file in each dir.
+    - ``"flat"`` — a single markdown file per skill, a ``/<name>``
+      slash-command prompt the user invokes and the model never sees. Only
+      ``legacy_skill_targets`` returns these now, to clear what an older
+      toolbase wrote into Codex's ``prompts/`` and OpenCode's ``command/``.
+      A flat file has no dir to mark, so ownership is tracked by a JSON
+      manifest at ``<root>/<MANIFEST_NAME>``, and supporting files have
+      nowhere to go.
 
     ``frontmatter_keys`` (flat layout only) narrows the emitted frontmatter to
     the listed keys when ``keep_frontmatter`` is False: ``None`` strips the
-    block entirely (Codex), a list rewrites it to just those keys pulled from
-    the source (OpenCode → ``["description"]``). Ignored when
-    ``keep_frontmatter`` is True.
+    block entirely, a list rewrites it to just those keys pulled from the
+    source. Ignored when ``keep_frontmatter`` is True.
     """
 
     harness: str
@@ -252,15 +249,43 @@ def skill_dirs_without_doc(toolkit_dir: Path) -> List[Path]:
     )
 
 
-def _slug(stem: str) -> str:
-    """Normalize a skill stem to a filesystem-safe slug.
+def normalize_slug(value: str) -> str:
+    """Canonical form of a skill slug: lowercase, words separated by ``-``.
 
     Skill files are named freely by authors (``getting_started.md``,
-    ``Searching arXiv.md`` etc.). We keep alphanumerics, underscores, and
-    hyphens; everything else collapses to underscore.
+    ``Searching arXiv.md``, ``pythia-cards/``), and the slug is what every
+    harness *displays* — so it should look like every other skill in the
+    ecosystem rather than like a Python identifier. Codex ships
+    ``openai-docs`` and ``skill-installer``; Claude Code ``code-review``;
+    OpenCode documents "lowercase hyphen-separated" outright. Underscores
+    were the odd one out.
+
+    Every run of non-alphanumerics collapses to a single ``-``. Case is not
+    split on: ``PythiaCards`` is one word here, because nothing can tell it
+    apart from ``ArXiv``, where splitting would be wrong.
+
+    Idempotent, which is what lets it double as the comparison key for a
+    slug written in an older spelling — see ``slugs_match``.
     """
-    s = re.sub(r"[^A-Za-z0-9_-]+", "_", stem).strip("_")
+    s = re.sub(r"[^A-Za-z0-9]+", "-", value).strip("-")
     return s.lower() or "skill"
+
+
+def slugs_match(a: str, b: str) -> bool:
+    """Whether two skill slugs name the same skill.
+
+    Compared canonically so a loadout written before slugs were
+    hyphenated still matches: ``tb deactivate tk__my_guide`` recorded
+    ``my_guide``, and the skill is now ``my-guide``. A literal comparison
+    would silently stop matching and put a deactivated guide back in front
+    of the agent -- the exact failure the prune was added to end.
+    """
+    return normalize_slug(a) == normalize_slug(b)
+
+
+def _slug(stem: str) -> str:
+    """Slug for a skill as the author named it on disk."""
+    return normalize_slug(stem)
 
 
 def surface_skills(
@@ -294,12 +319,19 @@ def surface_skills(
     if not sources:
         return []
 
+    # Canonicalised, so a loadout written before slugs were hyphenated
+    # still matches the skill it was meant to turn off.
+    disabled_keys = (
+        {normalize_slug(s) for s in disabled_slugs}
+        if disabled_slugs is not None else None
+    )
+
     target.root.mkdir(parents=True, exist_ok=True)
     manifest = _read_manifest(target.root) if target.layout == "flat" else None
     surfaced: List[str] = []
     for src in sources:
         bare_slug = src.slug
-        if disabled_slugs is not None and bare_slug in disabled_slugs:
+        if disabled_keys is not None and normalize_slug(bare_slug) in disabled_keys:
             # Individually deactivated in the active loadout.
             continue
 
@@ -318,7 +350,7 @@ def surface_skills(
 
         slug = f"{toolkit_name}__{bare_slug}"
         if target.layout == "dir":
-            _surface_dir(target.root, toolkit_name, slug, src, text, fm)
+            _surface_dir(target.root, toolkit_name, slug, src, text, body, fm)
         else:
             _surface_flat(
                 target.root, slug, text, body, fm,
@@ -333,11 +365,57 @@ def surface_skills(
     return surfaced
 
 
+# Frontmatter keys that mean something to toolbase and nothing to a
+# harness. They are curation inputs, not part of the guide, and a harness
+# that validates its frontmatter has no reason to accept them.
+_INTERNAL_FM_KEYS = {"bundle"}
+
+
+def _emit_frontmatter(slug: str, toolkit_name: str, text: str,
+                      fm: Optional[SkillFrontmatter]) -> str:
+    """The frontmatter block a surfaced skill carries.
+
+    ``name`` is always the qualified slug — the directory name, the thing
+    ``tb activate <toolkit>__<skill>`` toggles, and what every harness
+    displays. Passing the author's ``name`` through instead meant the
+    ``<toolkit>__`` namespace existed only on disk: the UI showed whatever
+    prose the author wrote, two toolkits shipping a ``mg5`` guide were
+    indistinguishable, and the name you saw was not the name you could
+    deactivate. Every harness documents the same convention (``name``
+    matches the folder), so this is also what they expect.
+
+    ``description`` is the author's, untouched — it is the trigger text the
+    model reads, and the one field we have no business rewriting. It is
+    synthesized only when absent, since a skill without one is filtered out
+    before it reaches the model. Any other key the author set is preserved;
+    toolbase's own are dropped.
+    """
+    raw = dict(fm.raw) if fm is not None else {}
+    description = (fm.description if fm else None) or _first_line_summary(text)
+    emitted = {
+        "name": slug,
+        "description": description or f"Guidance for {toolkit_name}.",
+    }
+    for key, value in raw.items():
+        if key in emitted or key in _INTERNAL_FM_KEYS:
+            continue
+        emitted[key] = value
+    block = yaml.safe_dump(
+        emitted, default_flow_style=False, allow_unicode=True, sort_keys=False,
+        # One key per line. A description is routinely a few hundred
+        # characters and the default 80-column wrap folds it across lines --
+        # valid YAML, but it reads as a broken file and only a real parser
+        # puts it back together.
+        width=10 ** 6,
+    )
+    return f"---\n{block}---\n"
+
+
 def _surface_dir(
     root: Path, toolkit_name: str, slug: str, src: "SkillSource", text: str,
-    fm: Optional[SkillFrontmatter],
+    body: str, fm: Optional[SkillFrontmatter],
 ) -> None:
-    """Write one skill as ``<root>/<slug>/SKILL.md`` (Claude Code layout).
+    """Write one skill as ``<root>/<slug>/SKILL.md`` (the dir layout).
 
     A directory-form source also gets its supporting files mirrored beside
     the guide, so ``references/`` and friends resolve as the author wrote
@@ -348,43 +426,26 @@ def _surface_dir(
     # Drop the marker so we know we own this directory.
     (dest_dir / OWNED_MARKER).write_text(toolkit_name + "\n")
 
-    needs_synthesis = fm is None or not fm.is_complete()
-
     skill_path = dest_dir / "SKILL.md"
     # If a previous surface left a file/symlink here, replace it.
     if skill_path.exists() or skill_path.is_symlink():
         skill_path.unlink()
 
-    if needs_synthesis:
-        # Synthesize frontmatter on disk because we can't safely mutate the
-        # source file. Using the file stem as `name` and the first
-        # descriptive line as `description` is a backward-compat fallback
-        # for toolkits that predate the requirement.
-        synthesized_name = (
-            src.root.stem.replace("_", " ").replace("-", " ").strip().title()
-        )
-        description = _first_line_summary(text) or f"Guidance for {toolkit_name}."
-        text = (
-            "---\n"
-            f"name: {synthesized_name}\n"
-            f"description: {description}\n"
-            "---\n\n"
-            + text
-        )
-        skill_path.write_text(text, encoding="utf-8")
-    elif _can_symlink():
-        # Symlink to the source file. Edits to the source show up the next
-        # time Claude Code re-reads, which matters for editable / dev
-        # installs where the toolkit dir is the author's working copy.
-        try:
-            skill_path.symlink_to(src.doc.resolve())
-        except OSError:
-            # Fall back to a copy (filesystem doesn't support symlinks,
-            # e.g. some FUSE mounts).
-            skill_path.write_text(text, encoding="utf-8")
-    else:
-        # Windows or non-symlinkable filesystem: write a copy.
-        skill_path.write_text(text, encoding="utf-8")
+    # A real file, never a symlink. This used to link the source so edits
+    # to an editable checkout showed up without re-connecting, and that
+    # convenience cost the whole feature on Codex: its skill scanner does
+    # not follow a symlinked SKILL.md, so a surfaced skill was silently
+    # invisible -- discovered by every other harness and by nothing that
+    # would tell you why. A copy is what every scanner agrees on, and
+    # re-connecting to pick up an edit is the same step every other state
+    # change already needs. Writing our own frontmatter is free once we
+    # are copying anyway.
+    guide = body if fm is not None else text
+    skill_path.write_text(
+        _emit_frontmatter(slug, toolkit_name, text, fm)
+        + "\n" + guide.lstrip("\n"),
+        encoding="utf-8",
+    )
 
     if src.is_dir:
         _mirror_supporting_files(dest_dir, src.root)
@@ -393,12 +454,12 @@ def _surface_dir(
 def _mirror_supporting_files(dest_dir: Path, src_dir: Path) -> None:
     """Mirror a dir-form skill's non-SKILL.md contents into ``dest_dir``.
 
-    Per-child symlinks rather than a symlink to the whole directory: the
+    Per-child copies rather than a copy of the whole directory: the
     surfaced dir has to stay ours to write ``OWNED_MARKER`` into, and
-    linking the top level would mean writing that marker into the author's
-    toolkit. Copies where symlinks aren't available. Stale children from an
-    earlier surface are cleared first, so a removed reference file doesn't
-    linger.
+    mirroring the top level would mean writing that marker into the
+    author's toolkit. Real files for the same reason ``SKILL.md`` is one —
+    see ``_surface_dir``. Stale children from an earlier surface are
+    cleared first, so a removed reference file doesn't linger.
     """
     keep = {OWNED_MARKER, SKILL_DOC}
     for child in dest_dir.iterdir():
@@ -413,12 +474,6 @@ def _mirror_supporting_files(dest_dir: Path, src_dir: Path) -> None:
         if child.name == SKILL_DOC or child.name.startswith("."):
             continue
         dest = dest_dir / child.name
-        if _can_symlink():
-            try:
-                dest.symlink_to(child.resolve())
-                continue
-            except OSError:
-                pass
         if child.is_dir():
             shutil.copytree(child, dest)
         else:
@@ -494,6 +549,115 @@ def unsurface_all(target: SkillTarget) -> List[str]:
     return _unsurface_flat(target.root, toolkit_name=None)
 
 
+def owned_slugs(target: SkillTarget) -> List[str]:
+    """Qualified slugs toolbase currently owns in ``target``.
+
+    A read-only inventory of what a surface holds, by the same ownership
+    evidence the removal paths use. Both scopes of a harness are read at
+    once, so this is how one connect can tell the user the other scope
+    still has skills in front of the agent.
+    """
+    if not target.root.exists():
+        return []
+    if target.layout == "dir":
+        return sorted(
+            e.name for e in target.root.iterdir()
+            if e.is_dir() and (e / OWNED_MARKER).exists()
+        )
+    return sorted(
+        f[:-3] if f.endswith(".md") else f
+        for f in _read_manifest(target.root)
+    )
+
+
+def prune_skills(
+    target: SkillTarget,
+    *,
+    keep: set,
+    skip_owners: Optional[set] = None,
+) -> List[str]:
+    """Remove toolbase-owned entries from ``target`` that aren't in ``keep``.
+
+    Surfacing alone only ever adds. Everything that *stops* a skill from
+    being surfaced — its toolkit dropping out of the active loadout, a ``tb
+    deactivate <toolkit>__<skill>``, a bundle gate closing, the author
+    deleting the guide in a new version — leaves the last-written copy in
+    place, still in front of the agent and contradicting what ``tb list``
+    reports. Pruning against the set just surfaced is what makes a connect
+    converge on the current answer instead of accumulating every answer
+    it has ever given.
+
+    ``keep`` is the qualified slugs (``<toolkit>__<skill>``) that were just
+    surfaced. ``skip_owners`` names toolkits to leave entirely alone —
+    surfacing is best-effort per toolkit, and one that failed contributed
+    no slugs to ``keep``, so pruning it would delete a working skill
+    because of an unrelated error.
+
+    Only entries toolbase owns are considered, by the same evidence
+    ``unsurface_skills`` uses: an ``OWNED_MARKER`` for the dir layout, a
+    manifest entry for the flat one. Returns the removed slugs.
+    """
+    if not target.root.exists():
+        return []
+    skip = skip_owners or set()
+    if target.layout == "dir":
+        return _prune_dir(target.root, keep=keep, skip_owners=skip)
+    return _prune_flat(target.root, keep=keep, skip_owners=skip)
+
+
+def _prune_dir(root: Path, *, keep: set, skip_owners: set) -> List[str]:
+    removed: List[str] = []
+    for entry in sorted(root.iterdir()):
+        if not entry.is_dir() or entry.name in keep:
+            continue
+        if not (entry / OWNED_MARKER).exists():
+            continue  # not ours
+        if _dir_owner(entry) in skip_owners:
+            continue
+        try:
+            shutil.rmtree(entry)
+        except OSError:
+            continue  # leave it; the user can clean up manually
+        removed.append(entry.name)
+    return removed
+
+
+def _dir_owner(entry: Path) -> Optional[str]:
+    """The toolkit that owns a surfaced skill dir.
+
+    ``OWNED_MARKER`` records it. Falling back to the ``<toolkit>__`` prefix
+    covers a marker we can't read, so an unreadable file can't quietly cost
+    a toolkit the protection ``skip_owners`` is giving it.
+    """
+    try:
+        owner = (entry / OWNED_MARKER).read_text(encoding="utf-8").strip()
+    except OSError:
+        owner = ""
+    if owner:
+        return owner
+    return entry.name.split("__", 1)[0] if "__" in entry.name else None
+
+
+def _prune_flat(root: Path, *, keep: set, skip_owners: set) -> List[str]:
+    manifest = _read_manifest(root)
+    removed: List[str] = []
+    for fname, owner in list(manifest.items()):
+        slug = fname[:-3] if fname.endswith(".md") else fname
+        if slug in keep or owner in skip_owners:
+            continue
+        fpath = root / fname
+        try:
+            if fpath.exists():
+                fpath.unlink()
+        except OSError:
+            # Keep the manifest entry so a later run retries.
+            continue
+        removed.append(slug)
+        del manifest[fname]
+    _write_manifest(root, manifest)
+    return removed
+
+
 def _unsurface_dir(root: Path, *, toolkit_name: Optional[str]) -> List[str]:
     prefix = f"{toolkit_name}__" if toolkit_name is not None else None
     removed: List[str] = []
@@ -553,7 +717,7 @@ def install_skills_for_toolkit(
 ) -> List[str]:
     """Back-compat wrapper: surface into the Claude Code ``~/.claude/skills/``
     dir layout. New code should call :func:`surface_skills` with an explicit
-    :class:`SkillTarget` (typically ``adapter.skill_target()``)."""
+    :class:`SkillTarget` (typically ``adapter.skill_target(scope, root)``)."""
     return surface_skills(
         toolkit_name, toolkit_dir, _claude_dir_target(skills_dir),
         available_bundles=available_bundles,

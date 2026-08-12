@@ -104,15 +104,31 @@ class HarnessAdapter(ABC):
         (e.g. a first-use trust prompt). ``None`` means nothing to add."""
         return None
 
-    def skill_target(self) -> Optional["SkillTarget"]:
-        """Where this harness surfaces a toolkit's skills, or ``None`` if it
-        has no skill surface.
+    def skill_target(
+        self, scope: str = "user", project_root: Optional[Path] = None,
+    ) -> Optional["SkillTarget"]:
+        """Where this harness surfaces a toolkit's skills for ``scope``, or
+        ``None`` if it has no skill surface at that scope.
 
-        Skill surfacing is user-global for the harnesses that support it
-        (Claude Code watches ``~/.claude/skills``; Codex reads
-        ``~/.codex/prompts``), so this takes no scope — unlike the MCP
-        server entry, which is written per scope. ``tb connect`` surfaces
-        the activated toolkits' skills here after wiring the server;
-        ``tb disconnect`` clears them. Default ``None`` keeps skill-less
-        harnesses opt-out."""
+        Scoped the same way ``config_path`` is, and for the same reason: a
+        harness that reads a project's MCP config generally reads a project's
+        skills too, and surfacing the two at different scopes means the guide
+        for a tool is in front of every agent while the tool is only in front
+        of one. ``tb connect`` surfaces the activated toolkits' skills into
+        the scope it wired; ``tb disconnect`` clears that scope.
+
+        Raise ``ValueError`` for an unknown scope, as ``config_path`` does.
+        Returning ``None`` says "this harness has no skill surface here" —
+        the default, which keeps skill-less harnesses opt-out."""
         return None
+
+    def legacy_skill_targets(self) -> List["SkillTarget"]:
+        """Surfaces an older toolbase wrote skills into and this one no
+        longer uses.
+
+        A harness that grows a skill concept moves us off whatever we were
+        approximating it with, and the files left behind keep being read.
+        ``tb connect`` / ``tb disconnect`` clear these before surfacing, so
+        the move happens on the next connect rather than needing a manual
+        sweep. Default empty: no harness has moved."""
+        return []

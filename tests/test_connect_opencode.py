@@ -4,7 +4,8 @@ Mirrors ``test_connect_codex.py`` for OpenCode's JSON config: create when
 absent, preserve other servers / top-level keys / $schema, overwrite a stale
 entry, idempotency, refuse malformed JSON, JSONC-with-comments handling,
 dry-run, env block, uninstall, and status reporting — plus the skill-target
-(``~/.config/opencode/command`` flat prompts keeping only ``description``).
+(``~/.config/opencode/skills`` native skills, with the retired ``command/``
+prompt surface declared as legacy so it gets cleared).
 """
 
 from __future__ import annotations
@@ -178,15 +179,43 @@ def test_has_project_scope_note():
 # ── skill surface ──────────────────────────────────────────────────────
 
 
-def test_skill_target_is_command_dir_with_description_only(tmp_path: Path, monkeypatch):
+def test_skill_target_is_the_native_skills_dir(tmp_path: Path, monkeypatch):
+    """OpenCode grew a real skill loader (`**/SKILL.md`, surfaced to the
+    model by its description). We used to approximate it with flat
+    `command/` prompt files, which are user-invoked slash commands only --
+    the model never learned they existed."""
     monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
     target = _adapter().skill_target()
     assert target is not None
     assert target.harness == "opencode"
-    assert target.root == tmp_path / "opencode" / "command"
-    assert target.layout == "flat"
-    assert target.keep_frontmatter is False
-    assert target.frontmatter_keys == ["description"]
+    assert target.root == tmp_path / "opencode" / "skills"
+    assert target.layout == "dir"
+    assert target.keep_frontmatter is True
+
+
+def test_project_skill_target_is_the_project_skills_dir(tmp_path: Path):
+    target = _adapter().skill_target("project", tmp_path)
+    assert target.root == tmp_path / ".opencode" / "skills"
+    assert target.layout == "dir"
+
+
+def test_legacy_command_surface_is_declared(tmp_path: Path, monkeypatch):
+    """OpenCode still reads command/, so a skill left there would be the
+    same guide a second time, stripped to a prompt."""
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    legacy = _adapter().legacy_skill_targets()
+    assert [t.root for t in legacy] == [tmp_path / "opencode" / "command"]
+    assert legacy[0].layout == "flat"
+
+
+def test_project_skill_target_needs_a_root():
+    with pytest.raises(ValueError):
+        _adapter().skill_target("project", None)
+
+
+def test_unknown_skill_scope_is_rejected(tmp_path: Path):
+    with pytest.raises(ValueError):
+        _adapter().skill_target("global", tmp_path)
 
 
 def test_surface_keeps_only_description(tmp_path: Path):

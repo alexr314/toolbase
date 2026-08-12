@@ -183,3 +183,25 @@ def test_skill_target_is_claude_skills_dir():
     assert target.root == CLAUDE_SKILLS_DIR
     assert target.layout == "dir"
     assert target.keep_frontmatter is True
+
+
+def test_project_skill_target_is_the_project_claude_dir(tmp_path):
+    """Claude Code reads <project>/.claude/skills for one project the same
+    way it reads ~/.claude/skills for every one — the split its MCP config
+    already has, so surfacing follows it."""
+    target = _adapter().skill_target("project", tmp_path)
+    assert target.root == tmp_path / ".claude" / "skills"
+    assert target.layout == "dir"
+    assert target.keep_frontmatter is True
+
+
+def test_project_skill_target_needs_a_root():
+    with pytest.raises(ValueError):
+        _adapter().skill_target("project", None)
+
+
+def test_unknown_skill_scope_is_rejected(tmp_path):
+    """Same contract as ``config_path``: an unknown scope is a bug, not a
+    silent fall-through to the user surface."""
+    with pytest.raises(ValueError):
+        _adapter().skill_target("global", tmp_path)

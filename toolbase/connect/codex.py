@@ -1,9 +1,14 @@
 """Codex CLI adapter for ``tb connect``.
 
 Scopes (toolbase -> Codex):
-- ``user``    -> ``~/.codex/config.toml``, ``[mcp_servers.toolbase]`` (all projects)
+- ``user``    -> ``$CODEX_HOME/config.toml``, ``[mcp_servers.toolbase]`` (all projects)
 - ``project`` -> ``<root>/.codex/config.toml``, ``[mcp_servers.toolbase]``
   (git-tracked, team-shared; Codex loads it only for *trusted* projects)
+
+Skills go to ``$CODEX_HOME/skills/<toolkit>__<skill>/SKILL.md``, the native
+layout Codex reads. (Earlier toolbase wrote flat ``$CODEX_HOME/prompts/*.md``
+slash-command files, from before Codex had skills; ``legacy_skill_targets``
+clears those on the next connect.)
 
 The entry is a stdio MCP server::
 
@@ -34,6 +39,13 @@ from .base import (
 _SERVERS_TABLE = "mcp_servers"
 
 
+def _codex_home() -> Path:
+    """``$CODEX_HOME`` if set, else ``~/.codex`` — how Codex resolves its own
+    home, so config and skills can't land in two different ones."""
+    env = os.environ.get("CODEX_HOME")
+    return Path(env).expanduser() if env else Path.home() / ".codex"
+
+
 class CodexConfigError(HarnessConfigError):
     """Existing Codex config is unreadable / malformed."""
 
@@ -44,7 +56,8 @@ class CodexAdapter(HarnessAdapter):
     def project_scope_note(self) -> str:
         return (
             "Codex loads a project's .codex/config.toml only after you trust "
-            "the project (run `codex` in the repo and approve it once)."
+            "the project (run `codex` in the repo and approve it once); "
+            "its .codex/skills load either way."
         )
 
     # ── detection ────────────────────────────────────────────────────
@@ -52,8 +65,9 @@ class CodexAdapter(HarnessAdapter):
     def is_available(self) -> AvailabilityStatus:
         if shutil.which("codex"):
             return AvailabilityStatus(True, "codex CLI found on PATH")
-        if (Path.home() / ".codex").exists():
-            return AvailabilityStatus(True, "found ~/.codex")
+        home = _codex_home()
+        if home.exists():
+            return AvailabilityStatus(True, f"found {home}")
         return AvailabilityStatus(
             False, "no `codex` CLI on PATH and no ~/.codex"
         )
@@ -61,22 +75,42 @@ class CodexAdapter(HarnessAdapter):
     def supported_scopes(self) -> Dict[str, str]:
         return {"user": "user", "project": "project"}
 
-    def skill_target(self):
-        # ~/.codex/prompts/<toolkit>__<skill>.md — one flat file per skill,
-        # frontmatter stripped. Codex has no model-facing skill concept;
-        # each file becomes a `/<toolkit>__<skill>` slash-command prompt the
-        # user invokes. Prompts are user-global (no project scope).
+    def skill_target(self, scope="user", project_root=None):
+        # <root>/skills/<toolkit>__<skill>/SKILL.md — the native skill layout
+        # Codex reads (same shape as Claude Code's), so frontmatter is kept
+        # and a dir-form skill's references/ come with it. Codex scans both
+        # $CODEX_HOME/skills and a project's .codex/skills; unlike the MCP
+        # entry beside it, project skills load without the trust step (see
+        # ``project_scope_note``).
         from ..skills import SkillTarget
+        if scope == "user":
+            root = _codex_home() / "skills"
+        elif scope == "project":
+            if project_root is None:
+                raise ValueError("project scope requires a project_root")
+            root = project_root / ".codex" / "skills"
+        else:
+            raise ValueError(f"unknown scope {scope!r}")
         return SkillTarget(
-            harness=self.name, root=Path.home() / ".codex" / "prompts",
-            layout="flat", keep_frontmatter=False,
+            harness=self.name, root=root, layout="dir", keep_frontmatter=True,
         )
+
+    def legacy_skill_targets(self):
+        # Before Codex had skills we approximated them as flat prompt files
+        # in $CODEX_HOME/prompts. Codex still reads those, so they have to
+        # go when we surface the real thing — otherwise every skill shows up
+        # twice, once stripped of its frontmatter.
+        from ..skills import SkillTarget
+        return [SkillTarget(
+            harness=self.name, root=_codex_home() / "prompts",
+            layout="flat", keep_frontmatter=False,
+        )]
 
     # ── paths ────────────────────────────────────────────────────────
 
     def config_path(self, scope: str, project_root: Optional[Path]) -> Path:
         if scope == "user":
-            return Path.home() / ".codex" / "config.toml"
+            return _codex_home() / "config.toml"
         if scope == "project":
             if project_root is None:
                 raise ValueError("project scope requires a project_root")
