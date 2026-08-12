@@ -40,8 +40,13 @@ def env(tmp_path, monkeypatch):
 
 
 def _toolkit(name="demo-kit", version="1.0.0", *, skills=None, bundles=None,
-             tools=("do_thing",)):
-    """A cache slot with a real toolkit.yaml and skills/ on disk."""
+             tools=("do_thing",), tool_bundles=None, installed=None):
+    """A cache slot with a real toolkit.yaml and skills/ on disk.
+
+    ``tool_bundles`` maps a tool name to the bundles it declares;
+    ``installed`` records a subset install (the ``bundles`` key in the
+    install meta), i.e. which bundles' deps were actually pip-installed.
+    """
     slot = cache_dir(name, version)
     (slot / "skills").mkdir(parents=True, exist_ok=True)
     doc = [
@@ -54,6 +59,8 @@ def _toolkit(name="demo-kit", version="1.0.0", *, skills=None, bundles=None,
         for t in tools:
             doc += [f"  - name: {t}", f"    function: tools.{t}",
                     "    description: x"]
+            if (tool_bundles or {}).get(t):
+                doc.append(f"    bundle: [{', '.join(tool_bundles[t])}]")
     if bundles:
         doc.append("bundles:")
         for b, reqs in bundles.items():
@@ -75,8 +82,11 @@ def _toolkit(name="demo-kit", version="1.0.0", *, skills=None, bundles=None,
     Path(py).parent.mkdir(parents=True, exist_ok=True)
     Path(py).write_text("#!/bin/sh\n")
     Path(py).chmod(0o755)
+    extras = {"python_path": py}
+    if installed is not None:
+        extras["bundles"] = list(installed)
     write_install_meta(slot, name=name, version=version, install_method="venv",
-                       python_version="3.12", extras={"python_path": py})
+                       python_version="3.12", extras=extras)
     write_legacy_meta(slot, {"name": name, "version": version,
                              "environment": "venv", "python_path": py,
                              "python_version": "3.12"})
@@ -113,7 +123,7 @@ class TestSkillStatus:
         slot = _toolkit(skills=[("heavy_guide", "heavy")],
                         bundles={"heavy": ["heavy_path"]})
         assert cli._toolkit_skill_status("demo-kit", slot) == [
-            ("heavy_guide", "gated", "heavy")]
+            ("heavy-guide", "gated", "heavy")]
 
     def test_deactivation_wins_over_gating(self, env):
         """Same order surface_skills applies them in."""
@@ -123,11 +133,79 @@ class TestSkillStatus:
         _run("deactivate", "demo-kit__heavy_guide")
         assert cli._toolkit_skill_status("demo-kit", slot)[0][1] == "off"
 
+    def test_a_skill_of_a_bundle_that_was_never_installed_is_gated(self, env):
+        """A subset install (`tb install demo-kit[other]`) never brought in
+        this bundle's deps, so its tools can't be served whatever the
+        config says — and the guide to them would promise as much."""
+        slot = _toolkit(skills=[("heavy_guide", "heavy")],
+                        bundles={"heavy": []}, installed=["other"])
+        assert cli._toolkit_skill_status("demo-kit", slot) == [
+            ("heavy-guide", "gated", "heavy")]
+
+    def test_a_full_install_gates_nothing_by_scope(self, env):
+        """No recorded bundle subset means the whole toolkit came in."""
+        slot = _toolkit(skills=[("heavy_guide", "heavy")],
+                        bundles={"heavy": []})
+        assert cli._toolkit_skill_status("demo-kit", slot) == [
+            ("heavy-guide", "on", "heavy")]
+
+    def test_a_deactivated_skill_keeps_its_bundle(self, env):
+        """It is what groups the skill under that bundle in `tb list -v`,
+        which is as true of one you turned off as of one that is gated."""
+        slot = _toolkit(skills=[("heavy_guide", "heavy")],
+                        bundles={"heavy": []})
+        _run("activate", "demo-kit")
+        _run("deactivate", "demo-kit__heavy_guide")
+        assert cli._toolkit_skill_status("demo-kit", slot) == [
+            ("heavy-guide", "off", "heavy")]
+
     def test_an_unreadable_guide_does_not_hide_the_skill(self, env):
         slot = _toolkit(skills=["searching"])
         (slot / "skills" / "searching.md").write_bytes(b"\xff\xfe\x00bad")
         rows = cli._toolkit_skill_status("demo-kit", slot)
         assert [r[0] for r in rows] == ["searching"]
+
+
+class TestSlugSpelling:
+    """The slug is what a harness displays, so it is lowercase-dash like
+    every other skill in the ecosystem. Both spellings are accepted on the
+    command line, and what gets written is always the canonical one --
+    otherwise a loadout recorded before hyphenation would silently stop
+    matching and put a deactivated guide back in front of the agent.
+    """
+
+    def test_an_underscored_source_gets_a_dashed_slug(self, env):
+        slot = _toolkit(skills=["run_cards"])
+        assert cli._toolkit_skill_status("demo-kit", slot)[0][0] == "run-cards"
+
+    def test_the_old_spelling_still_deactivates(self, env):
+        slot = _toolkit(skills=["run_cards"])
+        _run("activate", "demo-kit")
+        _run("deactivate", "demo-kit__run_cards")
+        assert cli._toolkit_skill_status("demo-kit", slot)[0][1] == "off"
+
+    def test_the_canonical_spelling_deactivates(self, env):
+        slot = _toolkit(skills=["run_cards"])
+        _run("activate", "demo-kit")
+        _run("deactivate", "demo-kit__run-cards")
+        assert cli._toolkit_skill_status("demo-kit", slot)[0][1] == "off"
+
+    def test_the_canonical_slug_is_what_gets_written(self, env):
+        """However it was typed -- so the loadout does not accumulate two
+        spellings of the same skill."""
+        _toolkit(skills=["run_cards"])
+        _run("activate", "demo-kit")
+        _run("deactivate", "demo-kit__run_cards")
+        rec = json.loads(_run("list", "--json").output)[0]
+        assert rec["skills"] == [
+            {"slug": "run-cards", "state": "off", "bundle": None}]
+
+    def test_activating_by_the_old_spelling_clears_it(self, env):
+        slot = _toolkit(skills=["run_cards"])
+        _run("activate", "demo-kit")
+        _run("deactivate", "demo-kit__run-cards")
+        _run("activate", "demo-kit__run_cards")
+        assert cli._toolkit_skill_status("demo-kit", slot)[0][1] == "on"
 
 
 # ── tb list ─────────────────────────────────────────────────────────────
@@ -181,6 +259,78 @@ class TestListVerbose:
         assert "[skills]" not in _run("list").output
 
 
+class TestSkillsGroupUnderTheirBundle:
+    """A skill's ``bundle:`` ties it to that bundle's availability exactly
+    as a tool's does — the same gate drops both. Listing skills in one
+    trailing block made that tie invisible: the bundle header's "needs
+    config" note read as if it applied only to tools, and the skill's own
+    "needs the X bundle" line sat far from the X it named.
+    """
+
+    def _kit(self, **kw):
+        return _toolkit(
+            tools=("do_thing", "heavy_tool"),
+            tool_bundles={"heavy_tool": ["heavy"]},
+            bundles={"heavy": ["heavy_path"]},
+            **kw,
+        )
+
+    def test_a_bundled_skill_prints_under_its_bundle(self, env):
+        self._kit(skills=[("heavy_guide", "heavy")])
+        out = _run("list", "-v").output
+        block = out[out.index("[heavy]"):]
+        assert "heavy-guide" in block.split("[skills]")[0]
+
+    def test_it_is_marked_a_skill_not_a_tool(self, env):
+        """Under a bundle header it sits in the same column as the
+        bundle's tools, so it has to say which it is."""
+        self._kit(skills=[("heavy_guide", "heavy")])
+        out = " ".join(_run("list", "-v").output.split())
+        assert "heavy-guide (skill)" in out
+
+    def test_no_trailing_block_when_every_skill_is_bundled(self, env):
+        self._kit(skills=[("heavy_guide", "heavy")])
+        assert "[skills]" not in _run("list", "-v").output
+
+    def test_unbundled_skills_still_get_the_trailing_block(self, env):
+        self._kit(skills=["searching", ("heavy_guide", "heavy")])
+        out = _run("list", "-v").output
+        trailing = out[out.index("[skills]"):]
+        assert "searching" in trailing
+        assert "heavy-guide" not in trailing
+
+    def test_the_bundle_header_carries_the_reason_so_the_row_does_not(self, env):
+        """The trailing block has to say "needs the heavy bundle"; under
+        the header that named it, repeating it is noise."""
+        self._kit(skills=[("heavy_guide", "heavy")])
+        out = " ".join(_run("list", "-v").output.split())
+        assert "needs config: heavy_path" in out
+        assert "needs the heavy bundle" not in out
+
+    def test_a_deactivated_bundled_skill_still_says_how_to_get_it_back(self, env):
+        """Deactivation is the user's own doing and no bundle header
+        explains it, so that line survives the move."""
+        self._kit(skills=[("heavy_guide", "heavy")])
+        _run("activate", "demo-kit")
+        _run("deactivate", "demo-kit__heavy_guide")
+        out = " ".join(_run("list", "-v").output.split())
+        assert "tb activate demo-kit__heavy-guide" in out
+
+    def test_a_skill_of_an_uninstalled_bundle_is_named_with_its_tools(self, env):
+        """A not-installed bundle prints names only — dropping the skill
+        would make it undiscoverable until the bundle is installed."""
+        self._kit(skills=[("heavy_guide", "heavy")], installed=[])
+        out = " ".join(_run("list", "-v").output.split())
+        assert "heavy_tool, heavy-guide (skill)" in out
+
+    def test_a_skill_scoped_to_an_undeclared_bundle_falls_back(self, env):
+        """No header to group it under; the trailing block is where it
+        can still be seen."""
+        self._kit(skills=[("stray", "nonesuch")])
+        out = _run("list", "-v").output
+        assert "stray" in out[out.index("[skills]"):]
+
+
 class TestListJson:
     def test_skills_are_in_the_payload(self, env):
         _toolkit(skills=["searching"])
@@ -193,7 +343,7 @@ class TestListJson:
                  bundles={"heavy": ["heavy_path"]})
         rec = json.loads(_run("list", "--json").output)[0]
         assert rec["skills"] == [
-            {"slug": "heavy_guide", "state": "gated", "bundle": "heavy"}]
+            {"slug": "heavy-guide", "state": "gated", "bundle": "heavy"}]
 
     def test_a_toolkit_with_no_skills_gets_an_empty_list(self, env):
         _toolkit(skills=[])

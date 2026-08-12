@@ -6,6 +6,73 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Skills are surfaced at the scope you connected.** `skill_target()` took no scope, so every adapter wrote to a user-global directory while the MCP server entry beside it went wherever `-u` / `-p` said. `tb connect codex -p` put the server in this repo's `.codex/config.toml` and the guides for its tools in front of every project's agent — and there was no way to say "these skills belong to this repo."
+
+  All four harnesses read a project skill directory as well as a global one, which is the split `config_path` already models, so `skill_target(scope, project_root)` now takes the same pair:
+
+  | harness | user | project |
+  | --- | --- | --- |
+  | Claude Code | `~/.claude/skills/` | `<root>/.claude/skills/` |
+  | Codex | `$CODEX_HOME/skills/` | `<root>/.codex/skills/` |
+  | Antigravity | `~/.gemini/config/skills/` | `<root>/.agents/skills/` |
+  | OpenCode | `~/.config/opencode/command/` | `<root>/.opencode/command/` |
+
+  `tb disconnect` clears the scope it unwired (`--all` clears both), and `tb uninstall` reaps a gone toolkit's guides from both. Harnesses read both scopes at once, so `tb connect` now says when the other scope is also holding toolbase skills — otherwise the duplicate only shows up in the harness. Codex's project-scope note gained the detail that its `.codex/skills/` load even before the project is trusted, unlike the `config.toml` next to them.
+
+### Fixed
+
+- **Skill slugs are lowercase-dash, like every other skill in the ecosystem.** The slug is what a harness *displays*, and toolbase's kept underscores — `heptapod__pythia_forward_run_cards` where Codex ships `openai-docs` and `skill-installer`, Claude Code ships `code-review`, and OpenCode documents "lowercase hyphen-separated" outright. `skills/run_cards.md`, `skills/run-cards/`, and `skills/Run Cards.md` now all surface as `<toolkit>__run-cards`.
+
+  Case is deliberately not split on: `PythiaCards` stays one word, because nothing distinguishes it from `ArXiv`, where splitting would be wrong. Name skill files the way you want them to read.
+
+  Both spellings are accepted by `tb activate` / `tb deactivate`, and the canonical one is what gets written, so a loadout can't accumulate two spellings of the same skill. Existing `skills.disabled` entries are matched canonically — a literal comparison would have silently stopped matching after this change and put a deactivated guide back in front of the agent, which is the exact failure the prune was added to end. New in `toolbase.skills`: `normalize_slug()` and `slugs_match()`.
+
+- **A surfaced skill is named `<toolkit>__<skill>` in the harness, not whatever the author wrote.** The `<toolkit>__` namespace existed only as a directory name: harnesses display the frontmatter `name`, which was passed through verbatim. A guide whose author wrote prose there (`name: Writing Pythia 8 run cards for forward production`) showed up as that prose, so the namespace was invisible, two toolkits shipping an `mg5` guide were indistinguishable, and the name on screen was not the name `tb deactivate` accepts. Every harness documents the same convention — `name` matches the folder — so this is also what they expect.
+
+  The author's `description` is never rewritten: it is the trigger text the model reads to decide when a skill applies, and it is synthesized only when absent (a skill without one is filtered out before it reaches the model). Other author keys survive; toolbase's own `bundle:` is dropped rather than leaked into a harness's frontmatter. Long descriptions are emitted on one line instead of YAML-wrapped at 80 columns.
+
+- **A surfaced `SKILL.md` is a real file, not a symlink — Codex could not see one.** The dir layout symlinked a complete-frontmatter source so edits to an editable checkout showed up without re-connecting. Codex's skill scanner does not follow a symlinked `SKILL.md`: the skill was written, the connect reported success, `tb list -v` ticked it, and Codex silently never loaded it. Bisected against `codex app-server`'s `skills/list` — a name that doesn't match the folder, a `.toolbase-managed` marker, and `__` in the folder name are all fine; the symlink alone was fatal. Claude Code, Antigravity, and OpenCode all tolerate it, which is why it went unnoticed.
+
+  Supporting files (`references/`, `scripts/`, assets) were per-child symlinks for the same reason and are now copies too. The cost is that an edit to an editable checkout's guide lands on the next `tb connect` rather than immediately — the same step every other state change already needs.
+
+- **OpenCode skills go to OpenCode's skill directory.** OpenCode grew a skill loader (`**/SKILL.md` under `~/.config/opencode/skills` and a project's `.opencode/skills`, surfaced to the model by `description`), and toolbase was still writing flat `command/` prompt files — user-invoked `/<name>` slash commands the model never learns about, with `name` and `bundle` stripped out. Same shape of bug as the Codex prompts one, and fixed the same way: the real surface, frontmatter intact, supporting files alongside, with `command/` declared as a legacy target so the old files are cleared on the next connect.
+
+  With this, all four harnesses use the dir layout. The `flat` layout survives only to clear the two retired surfaces.
+
+- **A connect is a sync, not an append.** Surfacing only ever added. Everything that *stops* a skill from being surfaced — its toolkit dropping out of the active loadout, a `tb deactivate <toolkit>__<skill>`, a bundle's config gate closing, a new version deleting the guide — left the last-written copy on disk, still read by the harness and contradicting every read command that had stopped listing it. `tb deactivate calculator__old_guide` followed by `tb connect` left the guide exactly where it was; only a full `tb disconnect` ever cleared anything.
+
+  `tb connect` now prunes the toolbase-owned entries it didn't just write, so a surface converges on the current answer instead of accumulating every answer it has ever given, and reports what it removed. Ownership is the same evidence the removal paths already used (an `OWNED_MARKER` file per dir, a manifest entry per flat file), so skills you wrote yourself are untouched. Surfacing stays best-effort per toolkit and a toolkit whose surfacing raised is excluded from the prune, so an unrelated error can't cost it the skills it already had. `--no-skills` now means "don't touch the skill surface" in both directions.
+
+  New in `toolbase.skills`: `prune_skills(target, keep=..., skip_owners=...)` and `owned_slugs(target)`.
+
+- **Codex skills go to Codex's skill directory.** Codex has a native skill concept now — `$CODEX_HOME/skills/<name>/SKILL.md`, the same shape Claude Code reads — and toolbase was still writing to the surface that predated it: flat `$CODEX_HOME/prompts/<toolkit>__<skill>.md` files. That surface is a user-invoked slash-command prompt, so nothing a skill said ever reached the model unless the user typed its name; the frontmatter carrying the description that decides *when* a skill applies was stripped on the way in; and a directory-form skill's `references/`, `scripts/` and assets were dropped silently, leaving guides pointing at files that weren't there.
+
+  `tb connect codex` now surfaces into `$CODEX_HOME/skills/`, frontmatter intact and supporting files alongside. Both paths honour `$CODEX_HOME` (as does the `config.toml` the MCP entry is written to, which previously assumed `~/.codex` regardless).
+
+  The old prompt files are cleared on the next `tb connect codex` / `tb disconnect codex` — Codex still reads them, so leaving them would list every skill twice. Only files toolbase owns per the `.toolbase-managed.json` manifest are removed. Adapters declare a moved-from surface via the new `HarnessAdapter.legacy_skill_targets()`.
+
+- **`tb list -v` groups a bundle-scoped skill under its bundle.** A skill's `bundle:` frontmatter ties it to that bundle's availability exactly as a tool's does — the same gate drops both — but skills were listed in one trailing `[skills]` block whatever they were scoped to. The bundle header's `⚠ needs config:` note read as though it applied only to tools, and the skill's own `needs the X bundle` line sat far from the `[X]` it named.
+
+  ```console
+  $ tb list -v
+      [mg5]  ⚠ needs config: mg5_path
+        ✗ MadGraphFromRunCard
+        ✗ ValidateProcess
+        ✗ mg5 (skill)
+      [skills]
+        ✓ getting_started
+  ```
+
+  Skills scoped to no bundle keep the trailing block. `tb list --json` is unchanged in shape, but a deactivated skill now reports its `bundle` instead of `null`.
+
+- **A skill scoped to a bundle that was never installed is no longer surfaced.** A subset install (`tb install heptapod[pdg]`) never pip-installs the other bundles' deps, so their tools can't be served whatever the config says — and `tb list -v` marked them accordingly. Skill surfacing checked only the config gate, so a guide to tools that provably weren't there was surfaced with a tick beside it. It is now gated by install scope too, matching the orchestrator and the tool rows.
+
+---
+
 ## [0.14.0] — 2026-08-03
 
 ### Added

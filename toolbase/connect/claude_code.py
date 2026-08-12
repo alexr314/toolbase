@@ -50,15 +50,23 @@ class ClaudeCodeAdapter(HarnessAdapter):
     def supported_scopes(self) -> Dict[str, str]:
         return {"user": "user", "project": "project"}
 
-    def skill_target(self):
-        # ~/.claude/skills/<toolkit>__<skill>/SKILL.md — a dir per skill,
+    def skill_target(self, scope="user", project_root=None):
+        # <root>/skills/<toolkit>__<skill>/SKILL.md — a dir per skill,
         # frontmatter preserved (Claude Code requires it). Claude Code both
         # auto-surfaces these to the model and exposes each as a slash
-        # command.
+        # command. It reads ~/.claude/skills for every session and
+        # <project>/.claude/skills for one, the same split as its MCP config.
         from ..skills import SkillTarget, CLAUDE_SKILLS_DIR
+        if scope == "user":
+            root = CLAUDE_SKILLS_DIR
+        elif scope == "project":
+            if project_root is None:
+                raise ValueError("project scope requires a project_root")
+            root = project_root / ".claude" / "skills"
+        else:
+            raise ValueError(f"unknown scope {scope!r}")
         return SkillTarget(
-            harness=self.name, root=CLAUDE_SKILLS_DIR,
-            layout="dir", keep_frontmatter=True,
+            harness=self.name, root=root, layout="dir", keep_frontmatter=True,
         )
 
     # ── paths ────────────────────────────────────────────────────────

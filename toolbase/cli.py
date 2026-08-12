@@ -4128,13 +4128,19 @@ def _write_path_install_meta(
 
 
 def _available_bundles_for_surface(name: str, toolkit_dir: Path):
-    """Bundles whose config requirements are met, for skill surfacing.
+    """Bundles a skill can be scoped to and still reach an agent.
 
     Returns ``None`` when the toolkit declares no ``bundles:`` block (no
     gating — surface every skill). Otherwise returns the set of available
     bundle names, evaluated against the resolved two-layer config, so a
     skill scoped to an unconfigured bundle isn't surfaced — the same
     availability the orchestrator uses to drop the bundle's tools.
+
+    Narrowed further by the slot's install scope: a subset install
+    (``tb install heptapod[pdg]``) never pip-installed the other bundles'
+    deps, so their tools can't be served whatever the config says, and a
+    guide to them would promise what the agent cannot do. Same gate the
+    orchestrator and the ``tb list -v`` tool rows apply.
     """
     try:
         import yaml as _yaml
@@ -4153,7 +4159,15 @@ def _available_bundles_for_surface(name: str, toolkit_dir: Path):
         resolved = resolve_toolkit_config(name, project_root)
     except Exception:
         resolved = {}
-    return set(evaluate_bundles(bundles_block, resolved).available_bundles)
+    available = set(evaluate_bundles(bundles_block, resolved).available_bundles)
+    try:
+        from .envs.cache import installed_bundles as _installed_bundles
+        installed = _installed_bundles(toolkit_dir)
+    except Exception:
+        installed = None
+    if installed is not None:
+        available &= set(installed)
+    return available
 
 
 def _note_skills_available(name: str, slot: Path, no_skills: bool = False) -> None:
@@ -5824,6 +5838,20 @@ def _list_print_tools_verbose(
         for bundle in name_to_bundles[tool] or [None]:
             by_bundle.setdefault(bundle, []).append(tool)
 
+    # Skills group the same way. A skill's ``bundle:`` frontmatter ties it
+    # to that bundle's availability exactly as a tool's does -- the same
+    # gate drops both -- so listing them apart made the tie invisible and
+    # left the header's "needs config" note looking like it applied only
+    # to tools. A skill scoped to a bundle the toolkit doesn't declare
+    # falls through to the trailing block rather than inventing a header.
+    skills_by_bundle: Dict[str, List[tuple]] = {}
+    loose_skills: List[tuple] = []
+    for row in _toolkit_skill_status(name, disc.path):
+        if row[2] is not None and row[2] in by_bundle:
+            skills_by_bundle.setdefault(row[2], []).append(row)
+        else:
+            loose_skills.append(row)
+
     def _gated(bundle: Optional[str]) -> bool:
         if bundle is None:
             return False
@@ -5871,7 +5899,11 @@ def _list_print_tools_verbose(
                 # Names only. Per-tool status would be a column of ✗ all
                 # explained by the header, but dropping the names makes
                 # the tools undiscoverable until the bundle is installed.
-                console.print(f"      [dim]{', '.join(tools)}[/dim]")
+                names = tools + [
+                    f"{r[0]} (skill)"
+                    for r in skills_by_bundle.get(bundle) or []
+                ]
+                console.print(f"      [dim]{', '.join(names)}[/dim]")
                 continue
 
         for tool in tools:
@@ -5896,23 +5928,43 @@ def _list_print_tools_verbose(
                 )
             console.print(f"      {mk} {tool}{btag}{clash}")
 
-    # Skills, under their own header. A toolkit's skills are as much of
-    # what it offers as its tools -- they reach the agent by the same
-    # act of activating it -- and nothing else in a read command showed
-    # they existed.
-    _list_print_skills(name, disc.path, toolkit_active)
+        # This bundle's skills, right under its tools. The header already
+        # gave the reason a gated bundle's rows are ✗, so they don't
+        # repeat it the way the trailing block has to.
+        for slug, state, _b in skills_by_bundle.get(bundle) or []:
+            if state == "off":
+                console.print(
+                    f"      [red]✗[/red] {slug} [dim](skill — deactivated; "
+                    f"`tb activate {name}__{slug}`)[/dim]"
+                )
+                continue
+            served = toolkit_active and state == "on"
+            mk = "[green]✓[/green]" if served else "[red]✗[/red]"
+            console.print(f"      {mk} {slug} [dim](skill)[/dim]")
+
+    # Skills that belong to no bundle, under their own header. A toolkit's
+    # skills are as much of what it offers as its tools -- they reach the
+    # agent by the same act of activating it -- and nothing else in a read
+    # command showed they existed.
+    _list_print_skills(name, disc.path, toolkit_active, rows=loose_skills)
 
 
 def _list_print_skills(
-    name: str, toolkit_dir: Path, toolkit_active: bool,
+    name: str, toolkit_dir: Path, toolkit_active: bool, *, rows=None,
 ) -> None:
     """Print a toolkit's skills with the same served/hidden marks tools use.
 
     ``toolkit_active`` gates the tick the same way it gates a tool's: an
     inactive toolkit surfaces nothing, so a ✓ beside its skill would say
     the opposite of what is true.
+
+    ``rows`` narrows the block to a caller-chosen subset — the verbose
+    listing prints each bundle's skills under that bundle and passes only
+    the bundle-less remainder here. ``None`` prints them all, for the
+    caller that has no bundles to group under.
     """
-    rows = _toolkit_skill_status(name, toolkit_dir)
+    if rows is None:
+        rows = _toolkit_skill_status(name, toolkit_dir)
     if not rows:
         return
     console.print("    [cyan]\\[skills][/cyan]")
@@ -6502,23 +6554,29 @@ def uninstall(name, yes, no_, no_input):
     # Skills + default-loadout cleanup — only when ALL versions are gone.
     if not _list_versions(name):
         # Remove this toolkit's surfaced skills from every harness that has
-        # a skill surface (Claude Code's ~/.claude/skills, Codex's
-        # ~/.codex/prompts). connect surfaces them per-harness; uninstall
-        # reaps them everywhere so no dangling guide outlives its tools.
+        # a skill surface, at both scopes. connect surfaces them per-harness
+        # per-scope; uninstall reaps them everywhere so no dangling guide
+        # outlives its tools. Only this project's scope is reachable from
+        # here — another checkout's .claude/skills is cleaned by its own
+        # next connect, whose prune drops a toolkit that no longer exists.
         try:
             from .skills import unsurface_skills
             from .connect import all_adapters
+            _, here = _resolve_connect_scope(
+                user_scope=False, project_scope=False
+            )
             for adapter in all_adapters():
-                target = adapter.skill_target()
-                if target is None:
-                    continue
-                removed_skills = unsurface_skills(name, target)
-                if removed_skills:
-                    console.print(
-                        f"[dim]  {len(removed_skills)} skill"
-                        f"{'s' if len(removed_skills) != 1 else ''} removed "
-                        f"from {_display_path(target.root)}/[/dim]"
-                    )
+                for scope, root in (("user", None), ("project", here)):
+                    target = _skill_target_for(adapter, scope, root)
+                    if target is None:
+                        continue
+                    removed_skills = unsurface_skills(name, target)
+                    if removed_skills:
+                        console.print(
+                            f"[dim]  {len(removed_skills)} skill"
+                            f"{'s' if len(removed_skills) != 1 else ''} removed "
+                            f"from {_display_path(target.root)}/[/dim]"
+                        )
         except Exception as e:
             console.print(
                 f"[yellow]Could not clean up surfaced skill entries: {e}[/yellow]"
@@ -7125,21 +7183,36 @@ def _scope_flags(f):
     return f
 
 
-def _skill_route(tk: str, sub: str) -> bool:
-    """Whether ``<tk>__<sub>`` should be treated as a skill rather than a
-    tool. True only when ``sub`` matches a surfaced skill slug and is *not*
-    also a tool name (so existing tool references keep their meaning). On a
-    genuine name collision the tool wins and a note is printed."""
-    if sub not in _toolkit_skill_slugs(tk):
-        return False
+def _skill_route(tk: str, sub: str):
+    """The skill slug ``<tk>__<sub>`` names, or ``None`` if it names a tool.
+
+    Returns the toolkit's own spelling rather than the user's, so what gets
+    written into the loadout is canonical however it was typed --
+    ``tk__my_guide`` and ``tk__my-guide`` both resolve to the one skill.
+    That matching is what keeps a loadout written before slugs were
+    hyphenated working, and it costs nothing to accept both on the command
+    line too.
+
+    ``None`` when ``sub`` matches no skill, and when it is *also* a tool
+    name (existing tool references keep their meaning); on a genuine
+    collision the tool wins and a note is printed.
+    """
+    from .skills import normalize_slug
+    key = normalize_slug(sub)
+    match = next(
+        (s for s in sorted(_toolkit_skill_slugs(tk)) if normalize_slug(s) == key),
+        None,
+    )
+    if match is None:
+        return None
     if sub in _toolkit_declared_tool_names(tk):
         console.print(
             f"[yellow]Note: '{tk}__{sub}' names both a tool and a skill; "
             "acting on the tool. Rename the skill file to toggle it "
             "separately.[/yellow]"
         )
-        return False
-    return True
+        return None
+    return match
 
 
 @main.command()
@@ -7172,16 +7245,17 @@ def activate(item, user_scope, project_scope):
         sys.exit(1)
     try:
         kind, tk2, sub = parse_item(item)
-        if kind == "tool" and _skill_route(tk2, sub):
+        skill_slug = _skill_route(tk2, sub) if kind == "tool" else None
+        if skill_slug is not None:
             result = _activate_skill(
-                tk2, sub, scope=scope, project_root=project_root,
+                tk2, skill_slug, scope=scope, project_root=project_root,
             )
             _print_mutation(result)
             # Activating clears a `tb deactivate`; it cannot clear a
             # bundle gate. Without this the command reports success (or
             # "already active") on a skill that stays unsurfaced, which
             # is the one case where the message and the outcome disagree.
-            _warn_if_skill_is_gated(tk2, sub)
+            _warn_if_skill_is_gated(tk2, skill_slug)
             return
         result = _activate(item, scope=scope, project_root=project_root)
     except LoadoutItemError as e:
@@ -7253,9 +7327,10 @@ def deactivate(item, user_scope, project_scope):
     scope, project_root = _resolve_loadout_scope(user_scope, project_scope)
     try:
         kind, tk2, sub = parse_item(item)
-        if kind == "tool" and _skill_route(tk2, sub):
+        skill_slug = _skill_route(tk2, sub) if kind == "tool" else None
+        if skill_slug is not None:
             result = _deactivate_skill(
-                tk2, sub, scope=scope, project_root=project_root,
+                tk2, skill_slug, scope=scope, project_root=project_root,
             )
         else:
             result = _deactivate(item, scope=scope, project_root=project_root)
@@ -7685,7 +7760,7 @@ def _toolkit_slot_dir(name: str):
 
 
 def _toolkit_skill_slugs(name: str) -> set:
-    """Bare surfaced-skill slugs a toolkit ships (``debug_guide`` etc.)."""
+    """Bare surfaced-skill slugs a toolkit ships (``debug-guide`` etc.)."""
     slot = _toolkit_slot_dir(name)
     if slot is None:
         return set()
@@ -7694,23 +7769,31 @@ def _toolkit_skill_slugs(name: str) -> set:
 
 
 def _resolve_disabled_skills(name: str) -> set:
-    """Bare skill slugs the active loadout blocklists for ``name``."""
+    """Bare skill slugs the active loadout blocklists for ``name``.
+
+    Returned canonicalised (``skills.normalize_slug``) so an entry written
+    before slugs were hyphenated still matches the skill it names."""
+    from .skills import normalize_slug
     _resolved, _active = _list_resolve_active()
     if _resolved is None:
         return set()
     sel = _resolved.toolkits.get(name)
     if sel is None:
         return set()
-    return set(getattr(sel, "disabled_skills", []) or [])
+    return {normalize_slug(s) for s in (getattr(sel, "disabled_skills", []) or [])}
 
 
 def _toolkit_skill_status(name: str, toolkit_dir: Path) -> "list[tuple]":
     """A toolkit's skills and whether each would be surfaced.
 
-    Returns ``[(slug, state, detail)]`` sorted by slug, where state is
+    Returns ``[(slug, state, bundle)]`` sorted by slug, where state is
     ``"on"``, ``"off"`` (deactivated in the active loadout) or
     ``"gated"`` (scoped to a bundle whose config requirements aren't
     met, so its tools aren't served either and the guide would mislead).
+    ``bundle`` is the skill's ``bundle:`` frontmatter (``None`` for a
+    toolkit-wide skill) whatever the state — it is what groups a skill
+    under its bundle in ``tb list -v``, which is as true of one that is
+    off as of one that is gated.
 
     One function because three surfaces report this -- ``tb list -v``,
     ``tb status``, and the surfacing that ``tb connect`` actually
@@ -7718,7 +7801,7 @@ def _toolkit_skill_status(name: str, toolkit_dir: Path) -> "list[tuple]":
     two filters ``skills.surface_skills`` applies, in the same order, so
     what is shown is what would be written into a harness.
     """
-    from .skills import discover_skills, parse_frontmatter
+    from .skills import discover_skills, normalize_slug, parse_frontmatter
 
     sources = discover_skills(toolkit_dir)
     if not sources:
@@ -7728,9 +7811,6 @@ def _toolkit_skill_status(name: str, toolkit_dir: Path) -> "list[tuple]":
 
     rows = []
     for src in sources:
-        if src.slug in disabled:
-            rows.append((src.slug, "off", None))
-            continue
         bundle = None
         try:
             fm, _body = parse_frontmatter(
@@ -7740,6 +7820,9 @@ def _toolkit_skill_status(name: str, toolkit_dir: Path) -> "list[tuple]":
             # An unreadable guide is the author's problem, not a reason
             # to hide the skill from a listing.
             pass
+        if normalize_slug(src.slug) in disabled:
+            rows.append((src.slug, "off", bundle))
+            continue
         if bundle is not None and available is not None and bundle not in available:
             rows.append((src.slug, "gated", bundle))
         else:
@@ -7747,41 +7830,135 @@ def _toolkit_skill_status(name: str, toolkit_dir: Path) -> "list[tuple]":
     return sorted(rows)
 
 
-def _surface_skills_for_connect(adapter, *, no_skills: bool = False) -> None:
-    """Surface every activated toolkit's skills into ``adapter``'s skill
-    surface (``~/.claude/skills`` or ``~/.codex/prompts``). Best-effort:
-    a failure never fails the connect."""
+def _skill_target_for(adapter, scope, project_root):
+    """``adapter.skill_target(scope, project_root)``, or ``None`` if this
+    harness has no skill surface at that scope. Never raises: a scope the
+    adapter rejects is reported as "no surface" rather than failing a
+    connect whose MCP entry was already written."""
+    try:
+        return adapter.skill_target(scope, project_root)
+    except Exception:
+        return None
+
+
+def _surface_skills_for_connect(
+    adapter, scope, project_root, *, no_skills: bool = False,
+) -> None:
+    """Sync every activated toolkit's skills into ``adapter``'s skill surface
+    for ``scope``.
+
+    A sync, not an append. Surfacing writes what should be there and
+    ``prune_skills`` removes the toolbase-owned entries that shouldn't —
+    a toolkit no longer in the loadout, a skill you ran ``tb deactivate``
+    on, a bundle whose gate has closed. Without the prune those keep being
+    read by the harness long after every read command stopped listing them.
+
+    Best-effort: a failure never fails the connect, and a toolkit whose
+    surfacing raised is excluded from the prune so an unrelated error can't
+    cost it the skills it already had.
+    """
     if no_skills:
         return
-    target = adapter.skill_target()
+    target = _skill_target_for(adapter, scope, project_root)
     if target is None:
-        return  # this harness has no skill surface (e.g. nothing to do)
-    from .skills import surface_skills
+        return  # this harness has no skill surface at this scope
+    _clear_legacy_skill_surfaces(adapter)
+    from .skills import prune_skills, surface_skills
     dirs = _activated_toolkit_dirs()
-    surfaced = 0
+    surfaced: list = []
+    failed: set = set()
     for name, slot in sorted(dirs.items()):
         try:
-            surfaced += len(surface_skills(
+            surfaced += surface_skills(
                 name, slot, target,
                 available_bundles=_available_bundles_for_surface(name, slot),
                 disabled_slugs=_resolve_disabled_skills(name),
-            ))
+            )
         except Exception as e:
+            failed.add(name)
             console.print(
                 f"[yellow]Could not surface {name} skills to {target.root}: {e}[/yellow]"
             )
     if surfaced:
         console.print(
-            f"[dim]  {surfaced} skill"
-            f"{'s' if surfaced != 1 else ''} → "
+            f"[dim]  {len(surfaced)} skill"
+            f"{'s' if len(surfaced) != 1 else ''} → "
             f"{_display_path(target.root)}/[/dim]"
         )
+    try:
+        stale = prune_skills(
+            target, keep=set(surfaced), skip_owners=failed,
+        )
+    except Exception as e:
+        console.print(
+            f"[yellow]Could not prune stale skills from {target.root}: {e}[/yellow]"
+        )
+        stale = []
+    if stale:
+        console.print(
+            f"[dim]  {len(stale)} no longer active, removed: "
+            f"{', '.join(sorted(stale))}[/dim]"
+        )
+    _note_other_scope_skills(adapter, scope, project_root)
 
 
-def _unsurface_skills_for_connect(adapter) -> None:
-    """Remove every toolbase-owned skill from ``adapter``'s skill surface
-    (called on ``connect --remove`` / ``disconnect``). Best-effort."""
-    target = adapter.skill_target()
+def _note_other_scope_skills(adapter, scope, project_root) -> None:
+    """Say when the *other* scope's surface also holds toolbase skills.
+
+    Both scopes are read at once, so skills surfaced at user scope stay in
+    front of the agent in this project too — the same guide twice, and a
+    `tb deactivate` here won't touch the copy over there. Cheap to say,
+    and invisible otherwise until the duplicate shows up in the harness.
+    """
+    other = "user" if scope == "project" else "project"
+    if other == "project" and project_root is None:
+        return
+    target = _skill_target_for(adapter, other, project_root)
+    if target is None or not target.root.exists():
+        return
+    from .skills import owned_slugs
+    try:
+        held = owned_slugs(target)
+    except Exception:
+        return
+    if not held:
+        return
+    console.print(
+        f"[dim]  note: {len(held)} toolbase skill"
+        f"{'s' if len(held) != 1 else ''} also surfaced at {other} scope "
+        f"({_display_path(target.root)}/); {adapter.name} reads both. "
+        f"Clear that one with `tb disconnect {adapter.name} "
+        f"{'-u' if other == 'user' else '-p'}`.[/dim]"
+    )
+
+
+def _clear_legacy_skill_surfaces(adapter) -> None:
+    """Remove toolbase-owned skills from surfaces this adapter has moved off.
+
+    Codex grew a native skill directory, so the flat prompt files an older
+    toolbase wrote are now a duplicate of every skill, stripped of its
+    frontmatter. Best-effort, and silent when there is nothing to clear."""
+    from .skills import unsurface_all
+    for stale in adapter.legacy_skill_targets():
+        try:
+            removed = unsurface_all(stale)
+        except Exception:
+            continue  # a leftover we can't clear must never fail the connect
+        if removed:
+            console.print(
+                f"[dim]  {len(removed)} skill"
+                f"{'s' if len(removed) != 1 else ''} removed from the old "
+                f"{_display_path(stale.root)}/ surface[/dim]"
+            )
+
+
+def _unsurface_skills_for_connect(adapter, scope, project_root) -> None:
+    """Remove every toolbase-owned skill from ``adapter``'s skill surface for
+    ``scope`` (called on ``connect --remove`` / ``disconnect``). Scoped so
+    unwiring one scope leaves the other's skills alone, exactly as it leaves
+    the other's MCP entry alone. Best-effort."""
+    _clear_legacy_skill_surfaces(adapter)
+    target = _skill_target_for(adapter, scope, project_root)
     if target is None:
         return
     from .skills import unsurface_all
@@ -7922,7 +8099,7 @@ def connect(harness, user_scope, project_scope, loadout_name, remove, dry_run,
             )
         else:
             console.print(f"[dim]No toolbase entry in {path}; nothing to remove.[/dim]")
-        _unsurface_skills_for_connect(adapter)
+        _unsurface_skills_for_connect(adapter, scope, project_root)
         return
 
     command = _resolve_connect_command(abspath=abspath, portable=portable, scope=scope)
@@ -7950,8 +8127,11 @@ def connect(harness, user_scope, project_scope, loadout_name, remove, dry_run,
     if loadout_name is not None:
         _connect_set_loadout(loadout_name, scope, project_root)
 
-    # Surface the activated toolkits' skills into this harness (best-effort).
-    _surface_skills_for_connect(adapter, no_skills=no_skills)
+    # Sync the activated toolkits' skills into the scope we just wired
+    # (best-effort).
+    _surface_skills_for_connect(
+        adapter, scope, project_root, no_skills=no_skills,
+    )
 
     if scope == "project":
         note = adapter.project_scope_note()
@@ -8233,8 +8413,9 @@ def disconnect(harness, user_scope, project_scope, all_scopes):
             console.print(
                 f"[dim]No toolbase entry in {path}; nothing to remove.[/dim]"
             )
-
-    _unsurface_skills_for_connect(adapter)
+        # Per scope, in the same loop: --all-scopes has to clear both
+        # surfaces, and a single-scope disconnect must not touch the other.
+        _unsurface_skills_for_connect(adapter, scope, project_root)
 
 
 @main.command()

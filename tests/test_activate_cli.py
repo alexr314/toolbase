@@ -253,10 +253,11 @@ def test_skillpack_skills_surface_via_activated_dirs(isolated: Path, tmp_path: P
     CliRunner().invoke(cli.main, ["activate", "mypack", "-u"])
     dirs = cli._activated_toolkit_dirs()
     assert "mypack" in dirs, dirs
-    # Surfacing that dir yields the guide (flat/Codex layout here).
+    # Surfacing that dir yields the guide (flat slash-command layout here).
     from toolbase import skills as skills_mod
     target = skills_mod.SkillTarget(
-        "codex", tmp_path / "prompts", layout="flat", keep_frontmatter=False,
+        "flat-harness", tmp_path / "prompts", layout="flat",
+        keep_frontmatter=False,
     )
     surfaced = skills_mod.surface_skills("mypack", dirs["mypack"], target)
     assert surfaced == ["mypack__guide"]

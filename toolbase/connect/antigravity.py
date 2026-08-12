@@ -93,16 +93,23 @@ class AntigravityAdapter(HarnessAdapter):
     def supported_scopes(self) -> Dict[str, str]:
         return {"user": "global", "project": "workspace"}
 
-    def skill_target(self):
-        # ~/.gemini/config/skills/<toolkit>__<skill>/SKILL.md -- Antigravity's
-        # native skill layout is Claude Code's: a directory per skill holding a
-        # SKILL.md with name+description frontmatter, loaded on demand. Skills
-        # sit in the customization root next to mcp_config.json; we use the
-        # global root, matching the other harnesses' user-global surfacing.
+    def skill_target(self, scope="user", project_root=None):
+        # <customization root>/skills/<toolkit>__<skill>/SKILL.md --
+        # Antigravity's native skill layout is Claude Code's: a directory per
+        # skill holding a SKILL.md with name+description frontmatter, loaded
+        # on demand. ``skills/`` sits in the customization root next to
+        # mcp_config.json, so it follows the same two-root scope map.
         from ..skills import SkillTarget
+        if scope == "user":
+            root = _global_root() / "skills"
+        elif scope == "project":
+            if project_root is None:
+                raise ValueError("project scope requires a project_root")
+            root = project_root / WORKSPACE_ROOT_DIR / "skills"
+        else:
+            raise ValueError(f"unknown scope {scope!r}")
         return SkillTarget(
-            harness=self.name, root=_global_root() / "skills",
-            layout="dir", keep_frontmatter=True,
+            harness=self.name, root=root, layout="dir", keep_frontmatter=True,
         )
 
     # ── paths ────────────────────────────────────────────────────────

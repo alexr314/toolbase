@@ -94,18 +94,33 @@ alongside its tools or on their own. Each is either a file
 (`skills/exact_math.md`) or a directory (`skills/exact_math/SKILL.md`) that
 carries reference files and scripts beside the guide. `tb connect` surfaces
 the activated toolkits' skills into the harness you connect, in that
-harness's native format:
+harness's native format and **at the scope you connected**:
 
-- **Claude Code** → `~/.claude/skills/<toolkit>__<skill>/` — auto-surfaced
-  to the model *and* available as a `/<toolkit>__<skill>` slash command.
-- **Codex** → `~/.codex/prompts/<toolkit>__<skill>.md` — a
-  `/<toolkit>__<skill>` slash-command prompt.
-- **OpenCode** → `~/.config/opencode/command/<toolkit>__<skill>.md` — a
-  `/<toolkit>__<skill>` slash-command prompt (its `description` shows in
-  the TUI).
-- **Antigravity** → `~/.gemini/config/skills/<toolkit>__<skill>/` — a
-  native skill in the global customization root, loaded on demand by the
-  `agy` CLI and the IDE alike.
+| harness | `-u` (user) | `-p` (project, default) |
+|---|---|---|
+| Claude Code | `~/.claude/skills/<toolkit>__<skill>/` | `./.claude/skills/…` |
+| Codex | `$CODEX_HOME/skills/<toolkit>__<skill>/` | `./.codex/skills/…` |
+| Antigravity | `~/.gemini/config/skills/<toolkit>__<skill>/` | `./.agents/skills/…` |
+| OpenCode | `~/.config/opencode/skills/<toolkit>__<skill>/` | `./.opencode/skills/…` |
+
+All four load these on demand as native skills, keyed on the `description`
+in each guide's frontmatter, and expose each as a `/<toolkit>__<skill>`
+slash command. Codex loads a project's skills even before you trust the
+project — unlike the `config.toml` beside them.
+
+The surfaced guide is named `<toolkit>__<skill>` in the harness whatever
+the author called it, so what you see is what `tb deactivate` accepts and
+two toolkits shipping an `mg5` guide stay distinct. The slug is lowercase
+with words separated by `-`, matching every other skill in the ecosystem:
+`skills/run_cards.md`, `skills/run-cards/`, and `skills/Run Cards.md` all
+surface as `<toolkit>__run-cards`. The author's `description` is passed
+through untouched — it's what the model reads to decide when the skill
+applies.
+
+Skills go where the server entry goes, so a tool and its guide reach the
+same agents. Every harness reads both scopes at once, so a project connect
+adds to whatever you surfaced with `-u`; `tb connect` says so when the
+other scope is holding skills.
 
 Skills follow the same curation as tools: a guide is surfaced only when
 its toolkit is active, and you toggle a single one with the activation
@@ -116,11 +131,18 @@ tb deactivate calculator__advanced_guide   # stop surfacing this one guide
 tb activate   calculator__advanced_guide   # bring it back
 ```
 
-`tb connect --no-skills` wires the MCP server without surfacing any
-skills; `tb disconnect` removes the surfaced skills too. Surfacing is a
-`connect`-time step, so `tb install` alone reports a toolkit's skills but
-doesn't surface them — connect (and the set you've activated) decides
-what lands in the harness.
+**A connect is a sync, not an append.** It writes what should be there and
+removes the toolbase-owned entries that shouldn't — a toolkit you
+deactivated, a guide you toggled off, a bundle whose config gate closed, a
+guide a new version dropped. Skills you wrote yourself are never touched.
+Re-run `tb connect <harness>` after changing what's active and the surface
+catches up.
+
+`tb connect --no-skills` wires the MCP server without touching the skill
+surface in either direction; `tb disconnect` removes the surfaced skills
+for that scope (`--all` for both). Surfacing is a `connect`-time step, so
+`tb install` alone reports a toolkit's skills but doesn't surface them —
+connect (and the set you've activated) decides what lands in the harness.
 
 A toolkit that ships *only* skills is a **skill pack**: it declares no
 tools and serves nothing over MCP, but its guides surface through
