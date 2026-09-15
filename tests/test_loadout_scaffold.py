@@ -216,6 +216,65 @@ def test_activate_skill_noop_when_not_disabled(tmp_path: Path):
     assert "already active" in res.message
 
 
+def _pin_skills(base: Path, tk: str, slugs: list):
+    """Put the toolkit into allowlist mode with ``skills.enabled``."""
+    import yaml as _yaml
+    path = default_loadout_path("user", user_base=base)
+    data = _yaml.safe_load(path.read_text())
+    data["toolkits"][tk] = {"skills": {"enabled": list(slugs)}}
+    path.write_text(_yaml.safe_dump(data))
+
+
+def test_activate_skill_adds_to_allowlist(tmp_path: Path):
+    """With skills.enabled pinned, activating must ADD to it.
+
+    Touching only the blocklist would report "already active" for a skill the
+    allowlist keeps out — the one case where the user most needs the command
+    to do something.
+    """
+    _act(tmp_path, "heptapod")
+    _pin_skills(tmp_path, "heptapod", ["feynrules"])
+    res = _act_skill(tmp_path, "heptapod", "mg5")
+    assert res.changed
+    data = _read(tmp_path)
+    assert data["toolkits"]["heptapod"]["skills"]["enabled"] == ["feynrules", "mg5"]
+
+
+def test_deactivate_skill_removes_from_allowlist(tmp_path: Path):
+    """In allowlist mode, removal IS the deactivation.
+
+    Adding to `disabled` as well would leave one slug in two lists describing
+    a single state.
+    """
+    _act(tmp_path, "heptapod")
+    _pin_skills(tmp_path, "heptapod", ["feynrules", "mg5"])
+    res = _deact_skill(tmp_path, "heptapod", "mg5")
+    assert res.changed
+    entry = _read(tmp_path)["toolkits"]["heptapod"]
+    assert entry["skills"]["enabled"] == ["feynrules"]
+    assert "disabled" not in entry["skills"]
+
+
+def test_emptied_allowlist_is_kept_not_pruned(tmp_path: Path):
+    """`enabled: []` means NO skills; an absent block means EVERY skill.
+
+    Pruning the empty list would silently invert what the user just asked for.
+    """
+    _act(tmp_path, "heptapod")
+    _pin_skills(tmp_path, "heptapod", ["feynrules"])
+    _deact_skill(tmp_path, "heptapod", "feynrules")
+    entry = _read(tmp_path)["toolkits"]["heptapod"]
+    assert entry["skills"]["enabled"] == []
+
+
+def test_deactivate_skill_absent_from_allowlist_is_a_noop(tmp_path: Path):
+    _act(tmp_path, "heptapod")
+    _pin_skills(tmp_path, "heptapod", ["feynrules"])
+    res = _deact_skill(tmp_path, "heptapod", "mg5")
+    assert not res.changed
+    assert "already not surfaced" in res.message
+
+
 def test_skill_and_tool_disabled_coexist(tmp_path: Path):
     _act(tmp_path, "heptapod")
     _deact(tmp_path, "heptapod__some_tool")
