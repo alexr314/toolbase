@@ -5296,15 +5296,9 @@ def status_cmd():
         for qualified, state, detail, tk, slug in skill_rows:
             if state == "on":
                 console.print(f"  {qualified}")
-            elif state == "off":
-                console.print(
-                    f"  {qualified:<40} [dim]off — "
-                    f"`tb activate {tk}__{slug}`[/dim]"
-                )
             else:
-                console.print(
-                    f"  {qualified:<40} [dim]needs the {detail} bundle[/dim]"
-                )
+                hint = _skill_state_hint(state, tk, slug, detail)
+                console.print(f"  {qualified:<40} [dim]{hint}[/dim]")
         # Only worth saying when something would actually be surfaced;
         # with every skill off or gated, an unwired harness is not what
         # is standing between the agent and these.
@@ -5522,9 +5516,10 @@ def list_cmd(as_json, verbose):
                 # ``.install_meta.yaml``.
                 "installed_bundles": (e.install_meta or {}).get("bundles"),
                 # ``skills``: what this slot ships and each one's own
-                # setting -- "on", "off" (deactivated), or "gated" (its
-                # bundle's config requirements are unmet). Empty list
-                # for a toolkit that ships none.
+                # setting -- "on", "off" (deactivated), "not-enabled"
+                # (the loadout declares skills.enabled and this is not in
+                # it), or "gated" (its bundle's config requirements are
+                # unmet). Empty list for a toolkit that ships none.
                 #
                 # This is the skill's setting, not the net outcome: an
                 # inactive toolkit surfaces nothing whatever its skills
@@ -5954,6 +5949,30 @@ def _list_print_tools_verbose(
     _list_print_skills(name, disc.path, toolkit_active, rows=loose_skills)
 
 
+def _skill_state_hint(state: str, name: str, slug: str,
+                      bundle: Optional[str]) -> str:
+    """How to fix a skill that isn't surfaced, for a read command's dim note.
+
+    One phrasing for every surface. The reasons are fixed differently, and
+    the previous split -- each caller writing its own text, with a trailing
+    ``else`` that assumed "gated" -- told a user whose skill was left out of
+    ``skills.enabled`` to go set a config value, and printed "needs the None
+    bundle" for a skill that declares no bundle at all.
+
+    Each hint opens with the state itself, the same word ``tb skills`` and
+    ``tb list --json`` use, so one vocabulary describes a skill wherever you
+    meet it.
+    """
+    if state == "off":
+        return f"off — `tb activate {name}__{slug}`"
+    if state == "not-enabled":
+        return (f"not-enabled — not in this loadout's skills.enabled; "
+                f"`tb activate {name}__{slug}`")
+    if state == "gated" and bundle is not None:
+        return f"gated — needs the {bundle} bundle"
+    return state
+
+
 def _list_print_skills(
     name: str, toolkit_dir: Path, toolkit_active: bool, *, rows=None,
 ) -> None:
@@ -5977,15 +5996,10 @@ def _list_print_skills(
         if state == "on":
             mk = "[green]✓[/green]" if toolkit_active else "[red]✗[/red]"
             console.print(f"      {mk} {slug}")
-        elif state == "off":
-            console.print(
-                f"      [red]✗[/red] {slug} "
-                f"[dim](deactivated — `tb activate {name}__{slug}`)[/dim]"
-            )
         else:
+            hint = _skill_state_hint(state, name, slug, detail)
             console.print(
-                f"      [red]✗[/red] {slug} "
-                f"[dim](needs the {detail} bundle)[/dim]"
+                f"      [red]✗[/red] {slug} [dim]({hint})[/dim]"
             )
 
 
@@ -7773,16 +7787,26 @@ def _toolkit_skill_slugs(name: str) -> set:
     return {s.slug for s in discover_skills(slot)}
 
 
+def _resolve_skill_selection(name: str, cli_loadout: Optional[str] = None):
+    """The active loadout's ``ToolkitSelection`` for ``name``, or None.
+
+    One resolution for both skill lists. Resolving per list meant two full
+    ``resolve_loadout()`` passes -- a directory walk and a YAML parse each --
+    for every toolkit every read command printed.
+    """
+    _resolved, _active = _list_resolve_active(cli_loadout)
+    if _resolved is None:
+        return None
+    return _resolved.toolkits.get(name)
+
+
 def _resolve_disabled_skills(name: str, cli_loadout: Optional[str] = None) -> set:
     """Bare skill slugs the active loadout blocklists for ``name``.
 
     Returned canonicalised (``skills.normalize_slug``) so an entry written
     before slugs were hyphenated still matches the skill it names."""
     from .skills import normalize_slug
-    _resolved, _active = _list_resolve_active(cli_loadout)
-    if _resolved is None:
-        return set()
-    sel = _resolved.toolkits.get(name)
+    sel = _resolve_skill_selection(name, cli_loadout)
     if sel is None:
         return set()
     return {normalize_slug(s) for s in (getattr(sel, "disabled_skills", []) or [])}
@@ -7795,10 +7819,7 @@ def _resolve_enabled_skills(name: str, cli_loadout: Optional[str] = None):
     everything past bundle gating" -- a fresh install hands over the toolkit's
     manual without anyone opting in to each page. A list is authoritative.
     """
-    _resolved, _active = _list_resolve_active(cli_loadout)
-    if _resolved is None:
-        return None
-    sel = _resolved.toolkits.get(name)
+    sel = _resolve_skill_selection(name, cli_loadout)
     if sel is None:
         return None
     return getattr(sel, "enabled_skills", None)
@@ -7808,29 +7829,30 @@ def _toolkit_skill_status(name: str, toolkit_dir: Path,
                           cli_loadout: Optional[str] = None) -> "list[tuple]":
     """A toolkit's skills and whether each would be surfaced.
 
-    Returns ``[(slug, state, bundle)]`` sorted by slug, where state is
-    ``"on"``, ``"off"`` (deactivated in the active loadout) or
-    ``"gated"`` (scoped to a bundle whose config requirements aren't
-    met, so its tools aren't served either and the guide would mislead).
-    ``bundle`` is the skill's ``bundle:`` frontmatter (``None`` for a
-    toolkit-wide skill) whatever the state — it is what groups a skill
-    under its bundle in ``tb list -v``, which is as true of one that is
-    off as of one that is gated.
+    Returns ``[(slug, state, bundle)]`` sorted by slug, where state is one
+    of ``toolbase.skills.SKILL_STATES``: ``"on"``, ``"off"`` (deactivated in
+    the active loadout), ``"not-enabled"`` (the loadout declares
+    ``skills.enabled`` and this is not in it), or ``"gated"`` (scoped to a
+    bundle whose config requirements aren't met, so its tools aren't served
+    either and the guide would mislead). ``bundle`` is the skill's
+    ``bundle:`` frontmatter (``None`` for a toolkit-wide skill) whatever the
+    state — it is what groups a skill under its bundle in ``tb list -v``,
+    which is as true of one that is off as of one that is gated.
 
-    One function because three surfaces report this -- ``tb list -v``,
-    ``tb status``, and the surfacing that ``tb connect`` actually
-    performs -- and they answer the same question. It applies the same
-    two filters ``skills.surface_skills`` applies, in the same order, so
-    what is shown is what would be written into a harness.
+    One function because four surfaces report this -- ``tb list -v``,
+    ``tb status``, ``tb skills``, and the surfacing ``tb connect`` actually
+    performs -- and they answer the same question. The decision itself is
+    ``loadouts.skill_state_for_selection``, the same one ``surface_skills``
+    goes through, so what is shown is what would be written into a harness.
+    Deriving the state here from parts is what let the reasons drift.
     """
-    from .skills import (discover_skills, normalize_slug, parse_frontmatter,
-                         skill_surfaces)
+    from .skills import discover_skills, parse_frontmatter
+    from .serve.loadouts import skill_state_for_selection
 
     sources = discover_skills(toolkit_dir)
     if not sources:
         return []
-    disabled = _resolve_disabled_skills(name, cli_loadout)
-    enabled = _resolve_enabled_skills(name, cli_loadout)
+    selection = _resolve_skill_selection(name, cli_loadout)
     available = _available_bundles_for_surface(name, toolkit_dir)
 
     rows = []
@@ -7844,21 +7866,10 @@ def _toolkit_skill_status(name: str, toolkit_dir: Path,
             # An unreadable guide is the author's problem, not a reason
             # to hide the skill from a listing.
             pass
-        gated = (bundle is not None and available is not None
-                 and bundle not in available)
-        # Report the REASON, not just the outcome, because the three are
-        # fixed differently: "gated" wants a config value, "off" wants
-        # `tb activate`, and "not-enabled" wants an edit to the loadout's
-        # skills.enabled list.
-        if normalize_slug(src.slug) in disabled:
-            state = "off"
-        elif enabled is not None and not skill_surfaces(
-                src.slug, enabled=list(enabled)):
-            state = "not-enabled"
-        elif gated:
-            state = "gated"
-        else:
-            state = "on"
+        state = skill_state_for_selection(
+            src.slug, bundle, selection,
+            bundle_available=(available is None or bundle in available),
+        )
         rows.append((src.slug, state, bundle))
     return sorted(rows)
 

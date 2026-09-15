@@ -8,6 +8,11 @@ What the agent sees is controlled per-bundle and per-tool, not just per-toolkit.
 | `<toolkit>` | whole toolkit | `tb activate calculator` |
 | `<toolkit>/<bundle>` | one bundle | `tb activate calculator/scientific` |
 | `<toolkit>__<tool>` | one tool | `tb deactivate calculator__log` |
+| `<toolkit>__<skill>` | one skill | `tb deactivate calculator__solving-odes` |
+
+One argument, one level — there is no `<toolkit>/<bundle>/<tool>` form. To
+serve a single tool out of a bundle, name the tool:
+`tb activate calculator__log`.
 
 A **bundle** is a self-contained capability an author carves out of a
 toolkit: a coherent group of tools and the skills that go with them, meant to
@@ -81,6 +86,52 @@ It's harmless — tools are served namespaced (`calculator__add`, `matrix__add`)
 so they stay distinct — but the flag lets you spot redundant toolkits or names
 that would clash if ever served un-namespaced. See
 [Troubleshooting](../troubleshooting.md#two-toolkits-expose-the-same-tool-name).
+
+## Curating skills
+
+Skills are the written guides a toolkit ships beside its tools. They follow
+the same `activate` / `deactivate` verbs, with two differences worth knowing.
+
+**Skills are on by default.** Activating a toolkit hands over its whole
+manual. A tool's schema sits in the agent's context permanently, so tools need
+an allowlist; a skill contributes one description line and its body is read
+only when the agent decides it applies, so the cost of an extra one is small
+and the cost of a missing one is not.
+
+```bash
+tb skills                      # what the active loadout resolves to
+tb skills calculator --json    # same, machine-readable
+tb deactivate calculator__solving-odes
+tb activate calculator__solving-odes
+```
+
+```console
+  on           calculator__using-the-basics
+  gated        calculator__solving-odes (symbolic)
+  not-enabled  calculator__matrix-tricks
+```
+
+A skill is withheld for one of three reasons, and each is fixed differently:
+
+| State | Meaning | Fix |
+|---|---|---|
+| `off` | you ran `tb deactivate` on it | `tb activate <toolkit>__<skill>` |
+| `gated` | its `bundle:` needs config you haven't set | [set the config](configuring-toolkits.md) |
+| `not-enabled` | the loadout pins `skills.enabled` and this isn't listed | `tb activate <toolkit>__<skill>`, or edit the list |
+
+**Changes take effect on the next `tb connect`.** Tools are resolved every time
+`tb serve` starts, so deactivating one takes hold on the next restart. Skills
+are *files*, copied into the harness's own skill directory (`~/.claude/skills/`
+and friends) when you connect. Until you connect again, the guide you just
+deactivated is still on disk and still in front of the agent:
+
+```bash
+tb deactivate calculator__solving-odes
+tb connect claude-code            # syncs: writes what should be there,
+                                  # removes what shouldn't
+```
+
+`tb skills` reports the *resolved* answer — what the next connect would write.
 
 ## Next
 

@@ -288,18 +288,29 @@ def _slug(stem: str) -> str:
     return normalize_slug(stem)
 
 
-def skill_surfaces(
+# The states :func:`skill_state` can return, in check order. Reporting
+# commands render all four; anything that only needs "is it surfaced" asks
+# :func:`skill_surfaces` instead of comparing strings.
+SKILL_STATES = ("off", "not-enabled", "gated", "on")
+
+
+def skill_state(
     slug: str,
     *,
     bundle_available: bool = True,
     enabled: Optional[List[str]] = None,
     disabled: Optional[List[str]] = None,
-) -> bool:
-    """Whether one skill should be written into a harness.
+) -> str:
+    """Why one skill is or isn't written into a harness.
 
     The single decision, kept pure so every surface answers it the same way:
     ``tb connect``'s surfacing, ``tb list -v``, ``tb status`` and ``tb skills``
-    all route here rather than each re-deriving the rules.
+    all route here rather than each re-deriving the rules. It returns the
+    REASON rather than a boolean because the three ways a skill can be
+    withheld are fixed differently -- "gated" wants a config value,
+    "off" wants ``tb activate``, "not-enabled" wants an edit to the loadout's
+    ``skills.enabled`` -- and a caller that re-derives the reason from parts
+    is how the surfaces drifted before.
 
     Order -- which does not change the OUTCOME, since every step that fires
     rejects, but does decide which reason a caller reports. Most explicit act
@@ -330,17 +341,46 @@ def skill_surfaces(
         disabled: ``skills.disabled``.
 
     Returns:
-        True when the skill should be surfaced.
+        One of :data:`SKILL_STATES`. Only ``"on"`` is surfaced.
     """
     key = normalize_slug(slug)
     if key in {normalize_slug(s) for s in (disabled or [])}:
-        return False
+        return "off"
     if enabled is not None:
         if key not in {normalize_slug(s) for s in enabled}:
-            return False
+            return "not-enabled"
     if not bundle_available:
-        return False
-    return True
+        return "gated"
+    return "on"
+
+
+def skill_surfaces(
+    slug: str,
+    *,
+    bundle_available: bool = True,
+    enabled: Optional[List[str]] = None,
+    disabled: Optional[List[str]] = None,
+) -> bool:
+    """Whether one skill should be written into a harness.
+
+    The boolean face of :func:`skill_state`, which holds the rules and the
+    rationale. For callers that act on the answer rather than report it.
+
+    Args:
+        slug: The skill's bare slug (not ``<toolkit>__<slug>``).
+        bundle_available: False when the skill's bundle is gated off.
+        enabled: ``skills.enabled``, or None when undeclared.
+        disabled: ``skills.disabled``.
+
+    Returns:
+        True when the skill should be surfaced.
+    """
+    return skill_state(
+        slug,
+        bundle_available=bundle_available,
+        enabled=enabled,
+        disabled=disabled,
+    ) == "on"
 
 
 def surface_skills(

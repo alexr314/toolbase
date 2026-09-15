@@ -178,39 +178,61 @@ def tool_is_served(
     return True
 
 
-def skill_is_surfaced(
+def skill_state_for_selection(
     slug: str,
     skill_bundle: Optional[str],
     selection: Optional["ToolkitSelection"],
-    availability,
-) -> bool:
-    """Is this skill surfaced, given a loadout selection?
+    bundle_available: bool,
+) -> str:
+    """Why this skill is or isn't surfaced, given a loadout selection.
 
-    The loadout-facing adapter over :func:`toolbase.skills.skill_surfaces`,
-    which holds the actual rules. Everything that reports skill state --
+    The loadout-facing adapter over :func:`toolbase.skills.skill_state`,
+    which holds the actual rules: it unpacks a ``ToolkitSelection`` and
+    leaves the decision there. Everything that reports skill state --
     ``tb list -v``, ``tb status``, ``tb skills``, and the surfacing that
-    ``tb connect`` performs -- goes through one of these two so the answers
-    cannot drift, the same arrangement :func:`tool_is_served` has for tools.
+    ``tb connect`` performs -- goes through this or :func:`skill_is_surfaced`
+    so the answers cannot drift, the same arrangement
+    :func:`tool_is_served` has for tools.
+
+    ``bundle_available`` is the caller's, because the two callers compute it
+    from different sources: the orchestrator has a ``BundleAvailability``,
+    while the CLI's read commands resolve config and install scope
+    themselves. A skill with no ``bundle:`` ignores it.
 
     Args:
         slug: The skill's bare slug.
         skill_bundle: Its frontmatter ``bundle:``, or None.
         selection: The loadout's entry for this toolkit, or None for "no
             loadout opinion" -- everything past bundle gating surfaces.
-        availability: Provides ``is_bundle_available(bundle)``.
+        bundle_available: Whether ``skill_bundle`` is available.
 
     Returns:
-        True when the skill should be written into the harness.
+        One of ``toolbase.skills.SKILL_STATES``.
     """
-    from ..skills import skill_surfaces
+    from ..skills import skill_state
 
-    return skill_surfaces(
+    return skill_state(
         slug,
-        bundle_available=(skill_bundle is None
-                          or availability.is_bundle_available(skill_bundle)),
+        bundle_available=(skill_bundle is None or bundle_available),
         enabled=(selection.enabled_skills if selection is not None else None),
         disabled=(selection.disabled_skills if selection is not None else None),
     )
+
+
+def skill_is_surfaced(
+    slug: str,
+    skill_bundle: Optional[str],
+    selection: Optional["ToolkitSelection"],
+    availability,
+) -> bool:
+    """Is this skill surfaced, given a loadout selection and a
+    ``BundleAvailability``? The boolean face of
+    :func:`skill_state_for_selection`."""
+    return skill_state_for_selection(
+        slug, skill_bundle, selection,
+        bundle_available=(skill_bundle is None
+                          or availability.is_bundle_available(skill_bundle)),
+    ) == "on"
 
 
 @dataclass

@@ -239,7 +239,9 @@ class TestListVerbose:
         _run("activate", "demo-kit")
         _run("deactivate", "demo-kit__searching")
         out = " ".join(_run("list", "-v").output.split())
-        assert "deactivated" in out
+        # "off" is the state name `tb skills` and `tb list --json` use; every
+        # surface opens the hint with it rather than a synonym of its own.
+        assert "off" in out
         assert "tb activate demo-kit__searching" in out
 
     def test_a_gated_skill_names_the_bundle(self, env):
@@ -481,3 +483,94 @@ class TestActivateGatedSkill:
         _run("activate", "demo-kit")
         assert "Not surfaced" not in _run(
             "activate", "demo-kit__do_thing").output
+
+
+# ── the reason a skill is withheld, not just that it is ─────────────────
+
+
+def _pin_skills_enabled(*slugs, toolkit="demo-kit"):
+    """Rewrite the project loadout so ``toolkit`` pins ``skills.enabled``.
+
+    Written straight to the file rather than through `tb activate`, because
+    these tests are about what the READ commands say about an allowlist, not
+    about how one gets there.
+    """
+    import yaml
+    path = Path(".toolbase") / "loadouts" / "default.yaml"
+    data = yaml.safe_load(path.read_text()) or {}
+    entry = data.setdefault("toolkits", {}).get(toolkit) or {}
+    entry["skills"] = {"enabled": list(slugs)}
+    data["toolkits"][toolkit] = entry
+    path.write_text(yaml.safe_dump(data))
+
+
+class TestWithheldSkillsSayWhy:
+    """Three states withhold a skill and each is fixed differently, so a
+    read command that names the wrong one sends the user somewhere useless.
+
+    Every surface routes through ``_skill_state_hint`` for this. They used
+    to each write their own text, with a trailing ``else`` that assumed
+    "gated" -- which told someone whose skill was merely left out of
+    ``skills.enabled`` to go set a config value, and rendered a bundle-less
+    skill as "needs the None bundle".
+    """
+
+    def test_status_reports_a_not_enabled_skill(self, env):
+        _toolkit(skills=["searching"])
+        _run("activate", "demo-kit")
+        _pin_skills_enabled()          # an empty allowlist: no skills
+        out = " ".join(_run("status").output.split())
+        assert "not-enabled" in out
+        assert "skills.enabled" in out
+
+    def test_a_bundleless_skill_never_claims_to_need_a_bundle(self, env):
+        """The literal regression: `detail` is None for a toolkit-wide
+        skill, and the gated branch interpolated it anyway."""
+        _toolkit(skills=["searching"])
+        _run("activate", "demo-kit")
+        _pin_skills_enabled()
+        for cmd in (("status",), ("list", "-v")):
+            out = " ".join(_run(*cmd).output.split())
+            assert "None bundle" not in out
+            assert "needs the" not in out
+
+    def test_a_not_enabled_bundled_skill_does_not_blame_its_bundle(self, env):
+        """Its bundle is configured and available; the allowlist is what
+        leaves it out, and that is what has to be said."""
+        _toolkit(skills=[("heavy_guide", "heavy")],
+                 bundles={"heavy": ["heavy_path"]})
+        _run("activate", "demo-kit")
+        _run("config", "set", "-u", "demo-kit", "heavy_path", "/opt/heavy")
+        _pin_skills_enabled()
+        out = " ".join(_run("status").output.split())
+        assert "not-enabled" in out
+        assert "needs the heavy bundle" not in out
+
+    def test_a_genuinely_gated_skill_still_names_its_bundle(self, env):
+        """The fix must not cost the case that was already right."""
+        _toolkit(skills=[("heavy_guide", "heavy")],
+                 bundles={"heavy": ["heavy_path"]})
+        _run("activate", "demo-kit")
+        out = " ".join(_run("status").output.split())
+        assert "needs the heavy bundle" in out
+
+    def test_json_carries_the_new_state(self, env):
+        """`tb list --json` documents its state vocabulary; a consumer
+        keying on it has to be able to see this one."""
+        _toolkit(skills=["searching"])
+        _run("activate", "demo-kit")
+        _pin_skills_enabled()
+        payload = json.loads(_run("list", "--json").output)
+        entry = next(e for e in payload if e["name"] == "demo-kit")
+        assert entry["skills"] == [
+            {"slug": "searching", "state": "not-enabled", "bundle": None}]
+
+    def test_the_status_helper_covers_every_state(self, env):
+        """SKILL_STATES is the vocabulary; a state with no hint would fall
+        through to printing its own name, which helps nobody."""
+        from toolbase.skills import SKILL_STATES
+        for state in SKILL_STATES:
+            if state == "on":
+                continue
+            hint = cli._skill_state_hint(state, "demo-kit", "searching", "heavy")
+            assert hint != state and state in hint
