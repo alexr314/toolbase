@@ -5294,11 +5294,15 @@ def status_cmd():
         console.print()
         console.print("[bold]Skills[/bold] [dim]— surfaced to harnesses[/dim]")
         for qualified, state, detail, tk, slug in skill_rows:
+            # Same ✓/✗ the tool rows carry in `tb list -v`: a bare name
+            # beside hinted ones reads as "no information yet", when it
+            # is in fact the one row that needs none.
             if state == "on":
-                console.print(f"  {qualified}")
+                console.print(f"  [green]✓[/green] {qualified}")
             else:
                 hint = _skill_state_hint(state, tk, slug, detail)
-                console.print(f"  {qualified:<40} [dim]{hint}[/dim]")
+                console.print(
+                    f"  [red]✗[/red] {qualified:<40} [dim]{hint}[/dim]")
         # Only worth saying when something would actually be surfaced;
         # with every skill off or gated, an unwired harness is not what
         # is standing between the agent and these.
@@ -5932,15 +5936,16 @@ def _list_print_tools_verbose(
         # gave the reason a gated bundle's rows are ✗, so they don't
         # repeat it the way the trailing block has to.
         for slug, state, _b in skills_by_bundle.get(bundle) or []:
-            if state == "off":
-                console.print(
-                    f"      [red]✗[/red] {slug} [dim](skill — deactivated; "
-                    f"`tb activate {name}__{slug}`)[/dim]"
-                )
-                continue
             served = toolkit_active and state == "on"
             mk = "[green]✓[/green]" if served else "[red]✗[/red]"
-            console.print(f"      {mk} {slug} [dim](skill)[/dim]")
+            # The header explains a gated bundle's rows, and the toolkit
+            # header explains an inactive toolkit's, so neither repeats
+            # it. "off" and "not-enabled" are the user's own doing and no
+            # header accounts for them.
+            note = ""
+            if state in ("off", "not-enabled"):
+                note = f": {_skill_state_hint(state, name, slug, None)}"
+            console.print(f"      {mk} {slug} [dim](skill{note})[/dim]")
 
     # Skills that belong to no bundle, under their own header. A toolkit's
     # skills are as much of what it offers as its tools -- they reach the
