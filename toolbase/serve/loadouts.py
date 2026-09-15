@@ -84,15 +84,32 @@ class ToolkitSelection:
     bundles: Optional[List[str]] = None
     enabled_tools: Optional[List[str]] = None
     disabled_tools: List[str] = field(default_factory=list)
-    # Per-toolkit skill blocklist (bare skill slugs, e.g. ``debug_guide``).
-    # Skills surface by default when the toolkit is active; this subtracts
-    # individual ones. Consumed by skill surfacing (``tb connect``), not by
-    # the tool orchestrator.
+    # Per-toolkit skill ALLOWLIST (bare skill slugs, e.g. ``debug_guide``).
+    # ``None`` means "not declared" -- every non-gated skill surfaces, which is
+    # what a fresh install should do: the skills are the toolkit's manual and
+    # opting in to each one would leave most of them undiscovered. A list makes
+    # the declaration AUTHORITATIVE and only those skills surface.
+    #
+    # This mirrors ``enabled_tools`` deliberately. A blocklist alone could not
+    # express "this configuration contains exactly these skills", so a skill
+    # added by a later release of the toolkit silently joined every loadout
+    # that already had it -- the same widening that ``enabled_tools`` exists to
+    # prevent for tools, with none of the protection. A measured configuration
+    # has to be able to pin its full set.
+    enabled_skills: Optional[List[str]] = None
+    # Per-toolkit skill blocklist, subtracted last. Written by
+    # ``tb deactivate <toolkit>__<skill>``; still the right shape for "I want
+    # everything except this one" and retained for that.
     disabled_skills: List[str] = field(default_factory=list)
 
     @property
     def is_allowlist(self) -> bool:
         return self.bundles is not None or self.enabled_tools is not None
+
+    @property
+    def skills_is_allowlist(self) -> bool:
+        """Whether this selection pins its skill set rather than filtering it."""
+        return self.enabled_skills is not None
 
 
 def tool_is_served(
@@ -159,6 +176,41 @@ def tool_is_served(
     if tool_name in global_disabled:
         return False
     return True
+
+
+def skill_is_surfaced(
+    slug: str,
+    skill_bundle: Optional[str],
+    selection: Optional["ToolkitSelection"],
+    availability,
+) -> bool:
+    """Is this skill surfaced, given a loadout selection?
+
+    The loadout-facing adapter over :func:`toolbase.skills.skill_surfaces`,
+    which holds the actual rules. Everything that reports skill state --
+    ``tb list -v``, ``tb status``, ``tb skills``, and the surfacing that
+    ``tb connect`` performs -- goes through one of these two so the answers
+    cannot drift, the same arrangement :func:`tool_is_served` has for tools.
+
+    Args:
+        slug: The skill's bare slug.
+        skill_bundle: Its frontmatter ``bundle:``, or None.
+        selection: The loadout's entry for this toolkit, or None for "no
+            loadout opinion" -- everything past bundle gating surfaces.
+        availability: Provides ``is_bundle_available(bundle)``.
+
+    Returns:
+        True when the skill should be written into the harness.
+    """
+    from ..skills import skill_surfaces
+
+    return skill_surfaces(
+        slug,
+        bundle_available=(skill_bundle is None
+                          or availability.is_bundle_available(skill_bundle)),
+        enabled=(selection.enabled_skills if selection is not None else None),
+        disabled=(selection.disabled_skills if selection is not None else None),
+    )
 
 
 @dataclass
@@ -251,9 +303,19 @@ def _parse_toolkit_selection(name: str, raw, path: Path) -> ToolkitSelection:
     if skills_raw is not None:
         if not isinstance(skills_raw, dict):
             raise ServeConfigError(
-                f"{path}: toolkit '{name}' skills: must be a mapping with a "
-                "'disabled' list"
+                f"{path}: toolkit '{name}' skills: must be a mapping with an "
+                "'enabled' and/or 'disabled' list"
             )
+        enabled_skills = skills_raw.get("enabled")
+        if enabled_skills is not None:
+            if not isinstance(enabled_skills, list) or not all(
+                isinstance(s, str) for s in enabled_skills
+            ):
+                raise ServeConfigError(
+                    f"{path}: toolkit '{name}' skills.enabled must be a list "
+                    "of strings"
+                )
+            sel.enabled_skills = list(enabled_skills)
         disabled_skills = skills_raw.get("disabled")
         if disabled_skills is not None:
             if not isinstance(disabled_skills, list) or not all(
@@ -264,11 +326,12 @@ def _parse_toolkit_selection(name: str, raw, path: Path) -> ToolkitSelection:
                     "of strings"
                 )
             sel.disabled_skills = list(disabled_skills)
-        unknown_skill_keys = set(skills_raw.keys()) - {"disabled"}
+        unknown_skill_keys = set(skills_raw.keys()) - {"enabled", "disabled"}
         if unknown_skill_keys:
             raise ServeConfigError(
                 f"{path}: toolkit '{name}' skills has unknown key(s) "
-                f"{sorted(unknown_skill_keys)}. Recognized: 'disabled'."
+                f"{sorted(unknown_skill_keys)}. Recognized: 'enabled', "
+                f"'disabled'."
             )
 
     # ``version`` is tolerated here for the brief window it lived in the

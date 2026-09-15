@@ -5672,19 +5672,24 @@ def list_cmd(as_json, verbose):
         )
 
 
-def _list_resolve_active():
+def _list_resolve_active(cli_loadout: Optional[str] = None):
     """Best-effort active-loadout resolution for ``tb list``.
 
     Returns ``(resolved_loadout_or_None, active_toolkit_names)``. A toolkit
     is "active" when the active loadout names it and serve.yaml doesn't
     blocklist it. No active loadout (or a malformed one) yields
     ``(None, set())`` — list never errors over serve config.
+
+    ``cli_loadout`` resolves a NAMED loadout instead of the active one, the
+    same one-shot override ``tb serve --loadout`` takes. Reporting commands
+    need it because the configuration a caller asks about is often not the
+    one currently set as default -- a benchmark arm, say.
     """
     from .serve.loadouts import resolve_loadout
     from .serve.config import ServeConfigError
     try:
         project_root, _src = _resolve_active_project_root()
-        resolved = resolve_loadout(project_root)
+        resolved = resolve_loadout(project_root, cli_loadout=cli_loadout)
     except (ServeConfigError, Exception):
         return None, set()
     disabled = set(resolved.disabled_toolkits)
@@ -7728,7 +7733,7 @@ def _resolve_connect_command(*, abspath: bool, portable: bool, scope: str) -> st
     return _toolbase_abspath()
 
 
-def _activated_toolkit_dirs() -> "dict[str, Path]":
+def _activated_toolkit_dirs(cli_loadout: Optional[str] = None) -> "dict[str, Path]":
     """``{name: slot_dir}`` for each activated, ready toolkit.
 
     "Activated" means the active loadout names it and serve.yaml doesn't
@@ -7739,7 +7744,7 @@ def _activated_toolkit_dirs() -> "dict[str, Path]":
         from .serve.orchestrator import discover_toolkits
     except Exception:
         return {}
-    _resolved, active = _list_resolve_active()
+    _resolved, active = _list_resolve_active(cli_loadout)
     dirs: "dict[str, Path]" = {}
     for d in discover_toolkits():
         if d.name in active and d.skip_reason is None:
@@ -7768,13 +7773,13 @@ def _toolkit_skill_slugs(name: str) -> set:
     return {s.slug for s in discover_skills(slot)}
 
 
-def _resolve_disabled_skills(name: str) -> set:
+def _resolve_disabled_skills(name: str, cli_loadout: Optional[str] = None) -> set:
     """Bare skill slugs the active loadout blocklists for ``name``.
 
     Returned canonicalised (``skills.normalize_slug``) so an entry written
     before slugs were hyphenated still matches the skill it names."""
     from .skills import normalize_slug
-    _resolved, _active = _list_resolve_active()
+    _resolved, _active = _list_resolve_active(cli_loadout)
     if _resolved is None:
         return set()
     sel = _resolved.toolkits.get(name)
@@ -7783,7 +7788,24 @@ def _resolve_disabled_skills(name: str) -> set:
     return {normalize_slug(s) for s in (getattr(sel, "disabled_skills", []) or [])}
 
 
-def _toolkit_skill_status(name: str, toolkit_dir: Path) -> "list[tuple]":
+def _resolve_enabled_skills(name: str, cli_loadout: Optional[str] = None):
+    """The active loadout's ``skills.enabled`` allowlist for ``name``.
+
+    Returns None when the loadout declares none, which means "surface
+    everything past bundle gating" -- a fresh install hands over the toolkit's
+    manual without anyone opting in to each page. A list is authoritative.
+    """
+    _resolved, _active = _list_resolve_active(cli_loadout)
+    if _resolved is None:
+        return None
+    sel = _resolved.toolkits.get(name)
+    if sel is None:
+        return None
+    return getattr(sel, "enabled_skills", None)
+
+
+def _toolkit_skill_status(name: str, toolkit_dir: Path,
+                          cli_loadout: Optional[str] = None) -> "list[tuple]":
     """A toolkit's skills and whether each would be surfaced.
 
     Returns ``[(slug, state, bundle)]`` sorted by slug, where state is
@@ -7801,12 +7823,14 @@ def _toolkit_skill_status(name: str, toolkit_dir: Path) -> "list[tuple]":
     two filters ``skills.surface_skills`` applies, in the same order, so
     what is shown is what would be written into a harness.
     """
-    from .skills import discover_skills, normalize_slug, parse_frontmatter
+    from .skills import (discover_skills, normalize_slug, parse_frontmatter,
+                         skill_surfaces)
 
     sources = discover_skills(toolkit_dir)
     if not sources:
         return []
-    disabled = _resolve_disabled_skills(name)
+    disabled = _resolve_disabled_skills(name, cli_loadout)
+    enabled = _resolve_enabled_skills(name, cli_loadout)
     available = _available_bundles_for_surface(name, toolkit_dir)
 
     rows = []
@@ -7820,13 +7844,22 @@ def _toolkit_skill_status(name: str, toolkit_dir: Path) -> "list[tuple]":
             # An unreadable guide is the author's problem, not a reason
             # to hide the skill from a listing.
             pass
+        gated = (bundle is not None and available is not None
+                 and bundle not in available)
+        # Report the REASON, not just the outcome, because the three are
+        # fixed differently: "gated" wants a config value, "off" wants
+        # `tb activate`, and "not-enabled" wants an edit to the loadout's
+        # skills.enabled list.
         if normalize_slug(src.slug) in disabled:
-            rows.append((src.slug, "off", bundle))
-            continue
-        if bundle is not None and available is not None and bundle not in available:
-            rows.append((src.slug, "gated", bundle))
+            state = "off"
+        elif enabled is not None and not skill_surfaces(
+                src.slug, enabled=list(enabled)):
+            state = "not-enabled"
+        elif gated:
+            state = "gated"
         else:
-            rows.append((src.slug, "on", bundle))
+            state = "on"
+        rows.append((src.slug, state, bundle))
     return sorted(rows)
 
 
@@ -7873,6 +7906,7 @@ def _surface_skills_for_connect(
                 name, slot, target,
                 available_bundles=_available_bundles_for_surface(name, slot),
                 disabled_slugs=_resolve_disabled_skills(name),
+                enabled_slugs=_resolve_enabled_skills(name),
             )
         except Exception as e:
             failed.add(name)
@@ -8350,6 +8384,83 @@ def _connect_orchestral(*, loadout_name, out, force, dry_run, remove) -> None:
         "[dim]Configure orchestral (LLM + API key), then launch with "
         "[cyan]tb orchestral[/cyan].[/dim]"
     )
+
+
+@main.command('skills')
+@click.argument('toolkit', required=False)
+@click.option('--loadout', 'loadout_name', default=None, metavar='NAME',
+              help='Resolve against NAME instead of the active loadout.')
+@click.option('--json', 'as_json', is_flag=True, default=False,
+              help='Machine-readable output, for programmatic consumers.')
+def skills_cmd(toolkit, loadout_name, as_json):
+    """Show which skills the active loadout resolves to, and where they live.
+
+    The read-only counterpart to the surfacing `tb connect` performs: the same
+    resolution, reported instead of written. `tb connect` is the only thing
+    that puts skills into a harness, so a consumer that materialises them
+    elsewhere -- a benchmark runner building a sandbox, a CI job, an agent
+    framework with its own layout -- previously had to re-derive bundle
+    gating, the loadout's allow/blocklists and slug normalisation for itself.
+    Re-derivation drifts; this is the query so it doesn't have to.
+
+    `--json` emits one object per skill with the fields such a consumer needs:
+
+    \b
+        toolkit     owning toolkit
+        slug        bare slug ("feynrules")
+        qualified   "<toolkit>__<slug>", the name tb activate/deactivate uses
+        state       on | gated | off | not-enabled
+        bundle      frontmatter bundle, or null
+        doc         absolute path to SKILL.md
+        root        absolute path to the skill DIRECTORY -- copy this, not
+                    just `doc`, or references/ and scripts/ are left behind
+    """
+    import json as _json
+
+    dirs = _activated_toolkit_dirs(loadout_name)
+    if toolkit is not None:
+        dirs = {k: v for k, v in dirs.items() if k == toolkit}
+        if not dirs:
+            console.print(
+                f"[red]'{toolkit}' is not installed or not activated.[/red]")
+            sys.exit(1)
+
+    from .skills import discover_skills
+
+    rows = []
+    for name, slot in sorted(dirs.items()):
+        by_slug = {src.slug: src for src in discover_skills(slot)}
+        for slug, state, bundle in _toolkit_skill_status(name, slot,
+                                                          loadout_name):
+            src = by_slug.get(slug)
+            rows.append({
+                "toolkit": name,
+                "slug": slug,
+                "qualified": f"{name}__{slug}",
+                "state": state,
+                "bundle": bundle,
+                "doc": str(src.doc) if src else None,
+                "root": str(src.root) if src else None,
+            })
+
+    if as_json:
+        click.echo(_json.dumps(rows, indent=2))
+        return
+
+    if not rows:
+        console.print("[dim]No skills from activated toolkits.[/dim]")
+        return
+    mark = {"on": "[green]on[/green]", "gated": "[yellow]gated[/yellow]",
+            "off": "[dim]off[/dim]",
+            "not-enabled": "[dim]not-enabled[/dim]"}
+    for r in rows:
+        b = f" [dim]({r['bundle']})[/dim]" if r["bundle"] else ""
+        console.print(f"  {mark.get(r['state'], r['state'])}  "
+                      f"{r['qualified']}{b}")
+    console.print(
+        "\n[dim]on = would be surfaced by `tb connect`. gated = its bundle's "
+        "config is unset. off = `tb deactivate`. not-enabled = the loadout "
+        "declares skills.enabled and this is not in it.[/dim]")
 
 
 @main.command()

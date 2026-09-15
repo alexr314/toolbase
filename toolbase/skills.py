@@ -288,6 +288,61 @@ def _slug(stem: str) -> str:
     return normalize_slug(stem)
 
 
+def skill_surfaces(
+    slug: str,
+    *,
+    bundle_available: bool = True,
+    enabled: Optional[List[str]] = None,
+    disabled: Optional[List[str]] = None,
+) -> bool:
+    """Whether one skill should be written into a harness.
+
+    The single decision, kept pure so every surface answers it the same way:
+    ``tb connect``'s surfacing, ``tb list -v``, ``tb status`` and ``tb skills``
+    all route here rather than each re-deriving the rules.
+
+    Order -- which does not change the OUTCOME, since every step that fires
+    rejects, but does decide which reason a caller reports. Most explicit act
+    first, because that is the one whose fix the user controls:
+
+    1. ``disabled`` -- an explicit ``tb deactivate``. Checked first so a skill
+       you turned off reads "off" rather than "gated", which would send you
+       looking for a config value you never needed to set.
+    2. ``enabled`` -- the loadout's ``skills.enabled`` allowlist. ``None``
+       means not declared, and then every skill surfaces: a fresh install
+       should hand over the toolkit's manual without the user opting in to
+       each page. A list is AUTHORITATIVE, mirroring ``tools.enabled``, so a
+       configuration can state its full skill set and a skill added by a later
+       release cannot join it silently.
+    3. ``bundle_available`` -- a skill declaring ``bundle:`` in its frontmatter
+       surfaces only when that bundle is available. Its guidance describes
+       tools that are not being served otherwise, and a guide to absent tools
+       is worse than silence. Callers compute this; a skill with no declared
+       bundle passes True.
+
+    Slugs are normalised on both sides, so an entry written before slugs were
+    hyphenated still matches the skill it names.
+
+    Args:
+        slug: The skill's bare slug (not ``<toolkit>__<slug>``).
+        bundle_available: False when the skill's bundle is gated off.
+        enabled: ``skills.enabled``, or None when undeclared.
+        disabled: ``skills.disabled``.
+
+    Returns:
+        True when the skill should be surfaced.
+    """
+    key = normalize_slug(slug)
+    if key in {normalize_slug(s) for s in (disabled or [])}:
+        return False
+    if enabled is not None:
+        if key not in {normalize_slug(s) for s in enabled}:
+            return False
+    if not bundle_available:
+        return False
+    return True
+
+
 def surface_skills(
     toolkit_name: str,
     toolkit_dir: Path,
@@ -295,6 +350,7 @@ def surface_skills(
     *,
     available_bundles: Optional[set] = None,
     disabled_slugs: Optional[set] = None,
+    enabled_slugs: Optional[set] = None,
 ) -> List[str]:
     """Surface a toolkit's skills into a harness's ``SkillTarget``.
 
@@ -314,38 +370,35 @@ def surface_skills(
     (from the active loadout's ``skills.disabled``, set by ``tb
     deactivate <toolkit>__<skill>``). A source whose slug is in the set is
     skipped — the per-skill analog of ``available_bundles``.
+
+    ``enabled_slugs`` is the loadout's ``skills.enabled`` allowlist. ``None``
+    means undeclared and everything past bundle gating surfaces; a set pins
+    the skill list exactly. See :func:`skill_surfaces`, which makes the
+    decision for every caller.
     """
     sources = discover_skills(toolkit_dir)
     if not sources:
         return []
-
-    # Canonicalised, so a loadout written before slugs were hyphenated
-    # still matches the skill it was meant to turn off.
-    disabled_keys = (
-        {normalize_slug(s) for s in disabled_slugs}
-        if disabled_slugs is not None else None
-    )
 
     target.root.mkdir(parents=True, exist_ok=True)
     manifest = _read_manifest(target.root) if target.layout == "flat" else None
     surfaced: List[str] = []
     for src in sources:
         bare_slug = src.slug
-        if disabled_keys is not None and normalize_slug(bare_slug) in disabled_keys:
-            # Individually deactivated in the active loadout.
-            continue
-
         text = src.doc.read_text(encoding="utf-8")
         fm, body = parse_frontmatter(text)
         bundle = fm.bundle if fm else None
-        if (
+        bundle_ok = not (
             bundle is not None
             and available_bundles is not None
             and bundle not in available_bundles
+        )
+        if not skill_surfaces(
+            bare_slug,
+            bundle_available=bundle_ok,
+            enabled=list(enabled_slugs) if enabled_slugs is not None else None,
+            disabled=list(disabled_slugs or []),
         ):
-            # Bundle unavailable (config requirements unmet) — skip its
-            # skill, mirroring how the orchestrator drops the bundle's
-            # tools.
             continue
 
         slug = f"{toolkit_name}__{bare_slug}"
