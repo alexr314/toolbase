@@ -6385,6 +6385,145 @@ def _drop_stale_version_records(name: str) -> None:
         )
 
 
+@main.command(name="migrate")
+@click.option("--dry-run", is_flag=True, default=False,
+              help="Show what would move and stop.")
+@_interactive_options
+def migrate_cmd(dry_run, yes, no_, no_input):
+    """Move pre-0.12 state onto the current layout.
+
+    \b
+    Reading both shapes forever is not the same as being migrated:
+    `profiles/` and `loadouts/` sitting side by side is a state nothing
+    intends and everything has to keep accounting for. This translates
+    once, so there is one place a loadout lives.
+
+    \b
+    Moves each scope's `profiles/*.yaml` into `loadouts/`, and rewrites
+    serve.yaml's `default.profile` key to `default.loadout`. A name
+    already present in `loadouts/` is left alone and reported, never
+    overwritten.
+
+    \b
+    Nothing here changes what resolves — discovery already reads both —
+    so this is safe to run at any time, and a no-op once done.
+    """
+    from .envs.paths import (
+        user_loadouts_dir, project_loadouts_dir,
+        legacy_user_profiles_dir, legacy_project_profiles_dir,
+    )
+    project_root, _src = _resolve_active_project_root()
+    scopes = [
+        ("user", legacy_user_profiles_dir(), user_loadouts_dir()),
+        ("project", legacy_project_profiles_dir(project_root),
+         project_loadouts_dir(project_root)),
+    ]
+
+    moves, clashes = [], []
+    for scope, legacy, current in scopes:
+        if not legacy.is_dir():
+            continue
+        for src in sorted(legacy.glob("*.yaml")):
+            dest = current / src.name
+            (clashes if dest.exists() else moves).append((scope, src, dest))
+
+    serve_yaml = _serve_yaml_needing_key_rename()
+
+    if not moves and not clashes and serve_yaml is None:
+        console.print("Nothing to migrate — already on the current layout.")
+        return
+
+    for scope, src, dest in moves:
+        console.print(
+            f"  {scope:<8} {src.name}  [dim]{_display_path(src.parent)} → "
+            f"{_display_path(dest.parent)}[/dim]"
+        )
+    for scope, src, dest in clashes:
+        console.print(
+            f"  [yellow]![/yellow] {scope:<6} {src.name} "
+            f"[dim]already exists in loadouts/ — left in place[/dim]"
+        )
+    if serve_yaml is not None:
+        console.print(
+            f"  serve.yaml  [dim]default.profile → default.loadout "
+            f"({_display_path(serve_yaml)})[/dim]"
+        )
+
+    if dry_run:
+        console.print("\n[dim]--dry-run: nothing moved.[/dim]")
+        return
+    mode = _resolve_prompt_mode(yes, no_, no_input)
+    if not _confirm("Migrate?", default=True, mode=mode):
+        console.print("[dim]Nothing moved.[/dim]")
+        return
+
+    moved = 0
+    for _scope, src, dest in moves:
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dest))
+            moved += 1
+        except OSError as exc:
+            console.print(f"[red]✗[/red] {src.name}: {exc}")
+    for _scope, legacy, _current in scopes:
+        # An emptied profiles/ is just a place for the next one to
+        # reappear; leave it if the user still has files there.
+        if legacy.is_dir() and not any(legacy.iterdir()):
+            try:
+                legacy.rmdir()
+            except OSError:
+                pass
+    if serve_yaml is not None:
+        _rename_serve_default_profile_key(serve_yaml)
+
+    console.print(
+        f"\n[green]✓[/green] migrated {moved} loadout"
+        f"{'s' if moved != 1 else ''}"
+        + ("; serve.yaml key updated" if serve_yaml is not None else "")
+    )
+    if clashes:
+        console.print(
+            "[dim]The names left in place already exist in loadouts/; "
+            "compare and delete the old file by hand.[/dim]"
+        )
+
+
+def _serve_yaml_needing_key_rename():
+    """The serve.yaml still spelling the active loadout ``default.profile``."""
+    path = toolbase_config_dir() / "serve.yaml"
+    if not path.is_file():
+        return None
+    try:
+        import yaml as _yaml
+        data = _yaml.safe_load(path.read_text()) or {}
+    except Exception:
+        return None
+    default = data.get("default")
+    if not isinstance(default, dict):
+        return None
+    return path if "profile" in default and "loadout" not in default else None
+
+
+def _rename_serve_default_profile_key(path: Path) -> None:
+    """Rewrite ``default.profile`` to ``default.loadout`` in place.
+
+    Line-oriented so comments and ordering survive -- a serve.yaml is a
+    file people edit, and rewriting it through a YAML round-trip to
+    change one key would reflow the rest.
+    """
+    try:
+        lines = path.read_text().splitlines(keepends=True)
+        for i, line in enumerate(lines):
+            stripped = line.lstrip()
+            if stripped.startswith("profile:"):
+                indent = line[: len(line) - len(stripped)]
+                lines[i] = f"{indent}loadout:{stripped[len('profile:'):]}"
+                break
+        path.write_text("".join(lines))
+    except Exception as exc:
+        console.print(f"[yellow]Could not update serve.yaml: {exc}[/yellow]")
+
+
 @main.command(name="clean")
 @click.option("--dry-run", is_flag=True, default=False,
               help="List what would be removed and stop.")

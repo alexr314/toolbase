@@ -460,10 +460,18 @@ def discover_loadouts(
     user loadout with the same basename -- the project file is used
     whole; the user file with that name is ignored (no merge).
 
-    Each scope falls back to its pre-0.12 ``profiles/`` directory when
-    the current one is absent, so a machine that hasn't migrated keeps
-    serving. Files are read in place and never rewritten here; the
-    directory converts when something writes a loadout.
+    Within a scope, the pre-0.12 ``profiles/`` directory is read first
+    and ``loadouts/`` over it, so a name present in both resolves to the
+    current file and one present only in the old place still resolves.
+
+    That has to be a merge rather than a choice. Reading whichever
+    directory exists means the first write to ``loadouts/`` orphans every
+    loadout still in ``profiles/`` -- and the write that triggers it need
+    have nothing to do with curation: ``tb use`` recording a version
+    creates ``loadouts/default.yaml``, which was enough to make seven
+    curated loadouts in a real project disappear at once, reported as
+    "No loadout named ...". Files are read in place and never rewritten
+    here; ``tb migrate`` moves them.
     """
     found: Dict[str, Loadout] = {}
 
@@ -474,26 +482,32 @@ def discover_loadouts(
             legacy_project_profiles_dir(project_root))]
           if project_root is not None else []),
     ):
-        directory = current if current.is_dir() else legacy
-        if not directory.is_dir():
+        directories = [d for d in (legacy, current) if d.is_dir()]
+        if not directories:
             continue
-        for entry in sorted(directory.glob("*.yaml")):
-            if entry.name.endswith(".local.yaml"):
-                continue  # a private layer, applied below
-            found[entry.stem] = load_loadout_file(entry, entry.stem, scope)
+        for directory in directories:
+            for entry in sorted(directory.glob("*.yaml")):
+                if entry.name.endswith(".local.yaml"):
+                    continue  # a private layer, applied below
+                found[entry.stem] = load_loadout_file(entry, entry.stem, scope)
         # Private layers: ``<name>.local.yaml`` merges over its committed
         # sibling toolkit by toolkit, field by field. Same relationship
         # the config layers have, and the reason it exists is the same:
         # a pin to a local checkout is true on one machine and would be
         # a dangling pin on a teammate's clone.
-        for entry in sorted(directory.glob("*.local.yaml")):
-            name = entry.name[: -len(".local.yaml")]
-            private = load_loadout_file(entry, name, scope)
-            base = found.get(name)
-            found[name] = (
-                _merge_private_layer(base, private) if base is not None
-                else private
-            )
+        #
+        # Both directories again, same order: a private layer left in
+        # profiles/ has to keep applying, or migrating the committed file
+        # alone would silently drop the machine's own overrides.
+        for directory in directories:
+            for entry in sorted(directory.glob("*.local.yaml")):
+                name = entry.name[: -len(".local.yaml")]
+                private = load_loadout_file(entry, name, scope)
+                base = found.get(name)
+                found[name] = (
+                    _merge_private_layer(base, private) if base is not None
+                    else private
+                )
 
     return found
 
@@ -502,8 +516,12 @@ def _merge_private_layer(base: Loadout, private: Loadout) -> Loadout:
     """Overlay a ``.local.yaml`` layer onto its committed sibling.
 
     Per toolkit, per field: a field the private layer doesn't set keeps
-    the committed value, so privately repointing one toolkit's version
-    leaves its curation — and every other toolkit — exactly as shared.
+    the committed value, so privately narrowing one toolkit's bundles
+    leaves every other toolkit exactly as shared. Versions merge as a
+    whole below, since they live in the loadout's own ``versions:``
+    block rather than inside a curation entry -- passing ``version=``
+    here raised ``AttributeError`` on every private layer that overlaid
+    a committed sibling.
     """
     merged = dict(base.toolkits)
     for name, overlay in private.toolkits.items():
@@ -512,10 +530,6 @@ def _merge_private_layer(base: Loadout, private: Loadout) -> Loadout:
             merged[name] = overlay
             continue
         merged[name] = ToolkitSelection(
-            version=(
-                overlay.version if overlay.version is not None
-                else current.version
-            ),
             bundles=(
                 overlay.bundles if overlay.bundles is not None
                 else current.bundles
