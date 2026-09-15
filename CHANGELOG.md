@@ -71,7 +71,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 - **A skill scoped to a bundle that was never installed is no longer surfaced.** A subset install (`tb install heptapod[pdg]`) never pip-installs the other bundles' deps, so their tools can't be served whatever the config says — and `tb list -v` marked them accordingly. Skill surfacing checked only the config gate, so a guide to tools that provably weren't there was surfaced with a tick beside it. It is now gated by install scope too, matching the orchestrator and the tool rows.
 
----
 
 ### Upgrading
 
