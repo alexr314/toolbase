@@ -99,19 +99,23 @@ only when the agent decides it applies, so the cost of an extra one is small
 and the cost of a missing one is not.
 
 ```bash
-tb skills                      # what the active loadout resolves to
-tb skills calculator --json    # same, machine-readable
 tb deactivate calculator__solving-odes
 tb activate calculator__solving-odes
+tb list -v                     # skills sit under their bundle, ✓ or ✗
+tb status                      # the same, across every active toolkit
 ```
 
 ```console
-  on           calculator__using-the-basics
-  gated        calculator__solving-odes (symbolic)
-  not-enabled  calculator__matrix-tricks
+    [basic]
+      ✓ add
+      ✓ using-the-basics (skill)
+    [symbolic]  ⚠ needs config: cas_path
+      ✗ solve
+      ✗ solving-odes (skill)
 ```
 
-A skill is withheld for one of three reasons, and each is fixed differently:
+A ✓ means the next `tb connect` will put it in front of the agent. A skill is
+withheld for one of three reasons, and each is fixed differently:
 
 | State | Meaning | Fix |
 |---|---|---|
@@ -131,7 +135,25 @@ tb connect claude-code            # syncs: writes what should be there,
                                   # removes what shouldn't
 ```
 
-`tb skills` reports the *resolved* answer — what the next connect would write.
+`tb list` reports the *resolved* answer — what the next connect would write,
+not what's on disk now.
+
+## Ask about another loadout
+
+Every read command above resolves against the active loadout. `--loadout NAME`
+asks about a different one without switching to it — useful when the
+configuration you're checking isn't the one you're sitting in:
+
+```bash
+tb list -v --loadout hep-symb
+tb list --json --loadout hep-symb
+```
+
+The JSON carries each skill's `state`, `bundle`, and its `doc` / `root` paths
+(`root` is the directory for a dir-form skill, the file itself for a flat one;
+`is_dir` says which). That's what a consumer materializing skills into its own
+layout — a benchmark sandbox, a CI job — should copy, rather than re-deriving
+bundle gating and the loadout lists for itself.
 
 ## Next
 

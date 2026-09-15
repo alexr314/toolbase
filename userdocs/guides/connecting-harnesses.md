@@ -90,9 +90,9 @@ dropped by a new version). Skills you wrote yourself are never touched. Use
 
 Connect is also the *only* thing that moves them. Tools are re-resolved every
 time `tb serve` starts; skills are files on disk, so a skill you deactivate
-stays in front of the agent until you connect again. `tb skills` shows what the
-next connect would write — compare it against the directory above if the agent
-seems to be reading something you turned off. See
+stays in front of the agent until you connect again. `tb list -v` and
+`tb status` show what the next connect would write — compare that against the
+directory above if the agent seems to be reading something you turned off. See
 [Curating skills](curating-tools.md#curating-skills).
 
 ## Orchestral

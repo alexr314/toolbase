@@ -5421,7 +5421,14 @@ def _sorted_versions(versions):
         "carry the reason on the group header."
     ),
 )
-def list_cmd(as_json, verbose):
+@click.option(
+    "--loadout", "loadout_name", default=None, metavar="NAME",
+    help=(
+        "Report against NAME instead of the active loadout — the same "
+        "one-shot override `tb serve --loadout` takes. Nothing is written."
+    ),
+)
+def list_cmd(as_json, verbose, loadout_name):
     """
     List all installed toolkits.
 
@@ -5492,7 +5499,7 @@ def list_cmd(as_json, verbose):
 
     # Resolve the active loadout to mark which toolkits are active (served).
     # Best-effort: no active loadout => everything inactive, no error.
-    resolved_loadout, active_set = _list_resolve_active()
+    resolved_loadout, active_set = _list_resolve_active(loadout_name)
     # Tool names shared by >1 active toolkit — annotated per row under -v so
     # overlap (harmless while namespaced, a clash if ever served bare) is
     # visible. Only meaningful with an active multi-toolkit loadout.
@@ -5532,11 +5539,16 @@ def list_cmd(as_json, verbose):
                 # separate because collapsing them would lose the
                 # difference between a skill you turned off and a
                 # toolkit you never activated.
-                "skills": [
-                    {"slug": slug, "state": state, "bundle": detail}
-                    for slug, state, detail in _toolkit_skill_status(
-                        e.name, e.path)
-                ],
+                #
+                # ``doc`` is the markdown to read; ``root`` is what the
+                # author named the skill -- the directory for a dir-form
+                # skill, the file itself for a file-form one, with
+                # ``is_dir`` saying which. A consumer materialising
+                # skills somewhere toolbase has no adapter for -- a
+                # benchmark sandbox, a CI job -- copies ``root``: take
+                # only ``doc`` and a guide whose substance is in
+                # ``references/`` arrives as an index of dangling links.
+                "skills": _json_skill_rows(e.name, e.path, loadout_name),
             }
             for e in _list_sorted_entries(entries)
         ]
@@ -5654,6 +5666,7 @@ def list_cmd(as_json, verbose):
                 name, resolved_loadout, _name_collisions,
                 resolution=resolution,
                 multi_version=multi_version,
+                cli_loadout=loadout_name,
             )
 
     if any_pin_applied and manifest_path is not None:
@@ -5759,7 +5772,7 @@ def _warn_install_name_collisions(new_toolkit: str) -> None:
 
 def _list_print_tools_verbose(
     name, resolved_loadout, collisions=None, *,
-    resolution=None, multi_version=False,
+    resolution=None, multi_version=False, cli_loadout=None,
 ) -> None:
     """Print a toolkit's declared tools with served/hidden status.
 
@@ -5803,7 +5816,8 @@ def _list_print_tools_verbose(
         )
         # Skills are discovered from the filesystem, not the tool
         # declaration, so they are knowable even here.
-        _list_print_skills(name, disc.path, toolkit_active)
+        _list_print_skills(name, disc.path, toolkit_active,
+                           cli_loadout=cli_loadout)
         return
     if multi_version:
         console.print(f"    [dim]tools in {disc.path.name}:[/dim]")
@@ -5850,7 +5864,7 @@ def _list_print_tools_verbose(
     # falls through to the trailing block rather than inventing a header.
     skills_by_bundle: Dict[str, List[tuple]] = {}
     loose_skills: List[tuple] = []
-    for row in _toolkit_skill_status(name, disc.path):
+    for row in _toolkit_skill_status(name, disc.path, cli_loadout):
         if row[2] is not None and row[2] in by_bundle:
             skills_by_bundle.setdefault(row[2], []).append(row)
         else:
@@ -5951,7 +5965,41 @@ def _list_print_tools_verbose(
     # skills are as much of what it offers as its tools -- they reach the
     # agent by the same act of activating it -- and nothing else in a read
     # command showed they existed.
-    _list_print_skills(name, disc.path, toolkit_active, rows=loose_skills)
+    _list_print_skills(name, disc.path, toolkit_active,
+                       rows=loose_skills, cli_loadout=cli_loadout)
+
+
+def _json_skill_rows(name: str, toolkit_dir: Path,
+                     cli_loadout: Optional[str] = None) -> "list[dict]":
+    """A slot's skills for ``tb list --json``, with their paths.
+
+    The paths are what makes this answerable by a consumer that has to put
+    the skills somewhere itself: ``tb connect`` is the only thing that
+    materialises them, so anything with its own layout would otherwise
+    re-derive bundle gating, the loadout lists and slug normalisation, and
+    re-derivation drifts.
+
+    ``root`` is the unit to copy and ``is_dir`` says how -- a dir-form
+    skill's ``references/`` and ``scripts/`` live beside its ``SKILL.md``
+    and have to come along, while a file-form skill IS its markdown
+    (``root == doc``).
+    """
+    from .skills import discover_skills
+
+    by_slug = {src.slug: src for src in discover_skills(toolkit_dir)}
+    rows = []
+    for slug, state, bundle in _toolkit_skill_status(
+            name, toolkit_dir, cli_loadout):
+        src = by_slug.get(slug)
+        rows.append({
+            "slug": slug,
+            "state": state,
+            "bundle": bundle,
+            "doc": str(src.doc) if src else None,
+            "root": str(src.root) if src else None,
+            "is_dir": src.is_dir if src else None,
+        })
+    return rows
 
 
 def _skill_state_hint(state: str, name: str, slug: str,
@@ -5980,6 +6028,7 @@ def _skill_state_hint(state: str, name: str, slug: str,
 
 def _list_print_skills(
     name: str, toolkit_dir: Path, toolkit_active: bool, *, rows=None,
+    cli_loadout=None,
 ) -> None:
     """Print a toolkit's skills with the same served/hidden marks tools use.
 
@@ -5993,7 +6042,7 @@ def _list_print_skills(
     caller that has no bundles to group under.
     """
     if rows is None:
-        rows = _toolkit_skill_status(name, toolkit_dir)
+        rows = _toolkit_skill_status(name, toolkit_dir, cli_loadout)
     if not rows:
         return
     console.print("    [cyan]\\[skills][/cyan]")
@@ -8400,83 +8449,6 @@ def _connect_orchestral(*, loadout_name, out, force, dry_run, remove) -> None:
         "[dim]Configure orchestral (LLM + API key), then launch with "
         "[cyan]tb orchestral[/cyan].[/dim]"
     )
-
-
-@main.command('skills')
-@click.argument('toolkit', required=False)
-@click.option('--loadout', 'loadout_name', default=None, metavar='NAME',
-              help='Resolve against NAME instead of the active loadout.')
-@click.option('--json', 'as_json', is_flag=True, default=False,
-              help='Machine-readable output, for programmatic consumers.')
-def skills_cmd(toolkit, loadout_name, as_json):
-    """Show which skills the active loadout resolves to, and where they live.
-
-    The read-only counterpart to the surfacing `tb connect` performs: the same
-    resolution, reported instead of written. `tb connect` is the only thing
-    that puts skills into a harness, so a consumer that materialises them
-    elsewhere -- a benchmark runner building a sandbox, a CI job, an agent
-    framework with its own layout -- previously had to re-derive bundle
-    gating, the loadout's allow/blocklists and slug normalisation for itself.
-    Re-derivation drifts; this is the query so it doesn't have to.
-
-    `--json` emits one object per skill with the fields such a consumer needs:
-
-    \b
-        toolkit     owning toolkit
-        slug        bare slug ("feynrules")
-        qualified   "<toolkit>__<slug>", the name tb activate/deactivate uses
-        state       on | gated | off | not-enabled
-        bundle      frontmatter bundle, or null
-        doc         absolute path to SKILL.md
-        root        absolute path to the skill DIRECTORY -- copy this, not
-                    just `doc`, or references/ and scripts/ are left behind
-    """
-    import json as _json
-
-    dirs = _activated_toolkit_dirs(loadout_name)
-    if toolkit is not None:
-        dirs = {k: v for k, v in dirs.items() if k == toolkit}
-        if not dirs:
-            console.print(
-                f"[red]'{toolkit}' is not installed or not activated.[/red]")
-            sys.exit(1)
-
-    from .skills import discover_skills
-
-    rows = []
-    for name, slot in sorted(dirs.items()):
-        by_slug = {src.slug: src for src in discover_skills(slot)}
-        for slug, state, bundle in _toolkit_skill_status(name, slot,
-                                                          loadout_name):
-            src = by_slug.get(slug)
-            rows.append({
-                "toolkit": name,
-                "slug": slug,
-                "qualified": f"{name}__{slug}",
-                "state": state,
-                "bundle": bundle,
-                "doc": str(src.doc) if src else None,
-                "root": str(src.root) if src else None,
-            })
-
-    if as_json:
-        click.echo(_json.dumps(rows, indent=2))
-        return
-
-    if not rows:
-        console.print("[dim]No skills from activated toolkits.[/dim]")
-        return
-    mark = {"on": "[green]on[/green]", "gated": "[yellow]gated[/yellow]",
-            "off": "[dim]off[/dim]",
-            "not-enabled": "[dim]not-enabled[/dim]"}
-    for r in rows:
-        b = f" [dim]({r['bundle']})[/dim]" if r["bundle"] else ""
-        console.print(f"  {mark.get(r['state'], r['state'])}  "
-                      f"{r['qualified']}{b}")
-    console.print(
-        "\n[dim]on = would be surfaced by `tb connect`. gated = its bundle's "
-        "config is unset. off = `tb deactivate`. not-enabled = the loadout "
-        "declares skills.enabled and this is not in it.[/dim]")
 
 
 @main.command()

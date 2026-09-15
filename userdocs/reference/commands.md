@@ -14,10 +14,9 @@
 | `tb uninstall NAME` | Remove a toolkit — all versions, or one slot with `NAME@VERSION` (stale pins are cleaned up) | `-y`/`--no`/`--no-input` |
 | `tb use NAME@VERSION` | Choose which installed version serves — writes the pin only, no rebuild. Bare `NAME` clears the pin | `-u`, `-p`, `--private` |
 | `tb status` | What applies here: project, loadout, what would serve, and anything broken | none |
-| `tb list` | List installed toolkits, active/inactive, and which version serves (`-v` groups tools by bundle) | `-v/--verbose`, `--json` |
+| `tb list` | List installed toolkits, active/inactive, and which version serves (`-v` groups tools and skills by bundle; `--json` adds each skill's state and paths) | `-v/--verbose`, `--json`, `--loadout` |
 | `tb activate ITEM` | Expose a toolkit / `toolkit/bundle` / `toolkit__tool` / `toolkit__skill` | `-u`, `-p` |
 | `tb deactivate ITEM` | Hide a toolkit / bundle / tool / skill | `-u`, `-p` |
-| `tb skills [TOOLKIT]` | Which skills the active loadout resolves to, and where they live — the read-only counterpart to what `tb connect` writes | `--loadout`, `--json` |
 | `tb serve` | Serve the active loadout over MCP (the harness runs this) | `--loadout`, `--dry-run`, `--call-timeout`, `--bare`/`--qualified` |
 | `tb connect [HARNESS]` | Wire toolbase into a harness: `claude-code`/`codex` config, or scaffold an `orchestral` script | `-u`, `-p`, `--loadout`, `--abspath`, `--remove`, `--dry-run`, `--list`, `--harnesses`, `--out`, `--force` |
 | `tb disconnect HARNESS` | Remove toolbase from a harness | `-u`, `-p` |
