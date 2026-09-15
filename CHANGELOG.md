@@ -6,6 +6,54 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ---
 
+## [0.16.0] — 2026-09-15
+
+### Added
+
+- **`skills.enabled`: a loadout can state exactly which skills it contains.** Skills could only be narrowed by blocklist (`skills.disabled`), which cannot express "this configuration contains exactly these" — so a skill added by a later release of a toolkit silently joined every loadout that already had it. That is the same widening `tools.enabled` exists to prevent for tools, with none of the protection.
+
+  `skills.enabled` mirrors `tools.enabled`: absent means "surface everything past bundle gating", present means the list is authoritative, `[]` means no skills.
+
+  ```yaml
+  toolkits:
+    heptapod:
+      bundles: [llp, eda]
+      skills:
+        enabled: [pythia-forward-run-cards]
+  ```
+
+  The default stays on when nothing is declared. Skills are progressive disclosure — on costs a description line rather than the guide — and a fresh install should hand over the toolkit's manual. What was missing was not a different default but a way to pin the set.
+
+  `tb activate` / `tb deactivate` write whichever shape the loadout already uses. With an allowlist pinned, activating a skill adds it to `skills.enabled` and deactivating removes it from there; touching only the blocklist left `tb activate` reporting "already active" for a skill the allowlist kept out, and `tb deactivate` leaving a slug in both lists at once.
+
+- **`tb list --loadout NAME`** reports against a named loadout instead of the active one — the same one-shot override `tb serve --loadout` takes, for the common case where the configuration you are checking is not the one you are sitting in. It applies to `-v` and `--json` alike.
+
+- **`tb list --json` carries each skill's paths.** `doc` is the markdown, `root` the unit to copy, and `is_dir` says how: a dir-form skill's `references/` and `scripts/` live beside its `SKILL.md` and have to come along, while a flat skill *is* its markdown. `tb connect` is the only thing that materializes skills, so a consumer with its own layout — a benchmark runner building a sandbox, a CI job — previously had to re-derive bundle gating, the loadout lists and slug normalization for itself.
+
+- **`tb migrate`** moves pre-0.12 state onto the current layout: each scope's `profiles/*.yaml` into `loadouts/`, and `serve.yaml`'s `default.profile` key to `default.loadout` (rewritten line-wise, so comments survive). A name already present in `loadouts/` is reported and left alone. A no-op once done.
+
+### Fixed
+
+- **A loadout in `profiles/` no longer disappears the first time anything writes to `loadouts/`.** Discovery read whichever directory existed — `current if current.is_dir() else legacy` — so the first write to `loadouts/` orphaned every loadout still in `profiles/`. The write need have nothing to do with curation: `tb use` recording a version creates `loadouts/default.yaml`, and in a real project that single file made seven curated loadouts vanish at once, reported as "No loadout named ...". The loadouts were still on disk, still valid, just unreachable, and nothing said so. Both directories are read now, current winning per name, so a half-migrated tree resolves; `tb migrate` finishes the job.
+
+- **A project with a `<name>.local.yaml` layer no longer crashes.** `_merge_private_layer` still passed `version=` to `ToolkitSelection`, which lost that field when versions moved to the loadout's own `versions:` block — an `AttributeError` on any private layer overlaying a committed loadout of the same name. Reachable in 0.12 through 0.15, confirmed against the released wheel.
+
+- **A withheld skill says which of the three reasons applies.** `skills.enabled` added a fourth state, and only the new query rendered it: `tb list -v` and `tb status` ended in a trailing branch that assumed "gated", so a skill merely left out of the allowlist was reported as needing its bundle's config — and a skill declaring no bundle as needing "the None bundle". The decision is now one function (`skills.skill_state`, adapted by `loadouts.skill_state_for_selection`) that returns the reason, and every surface asks it rather than deriving the state from parts.
+
+- **A skill that will surface is marked like a tool that will serve.** `tb status` printed a bare name for it and a hinted line for every skill that would not, so the row carrying good news looked like the one still awaiting an answer. Both it and `tb list -v` now carry ✓ / ✗ with the reason beside it.
+
+### Removed
+
+- **`tb skills`**, added and removed without a release in between. It computed the states `tb list --json` already emitted — a second place to drift — and its human view says nothing `tb list -v` and `tb status` don't now say. `--loadout` and the skill paths moved onto `tb list`.
+
+- **`CLAUDE.md` is no longer tracked.** It is per-checkout agent context, not shared state.
+
+### Upgrading
+
+Nothing to do. `skills.enabled` is opt-in and absent from every existing loadout, so skill surfacing is unchanged until you declare one. If you have loadouts in a pre-0.12 `profiles/` directory, they resolve either way now — run `tb migrate` to end up with one place a loadout lives.
+
+---
+
 ## [0.15.0] — 2026-08-12
 
 ### Added

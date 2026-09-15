@@ -61,4 +61,5 @@
 
 | Command | Purpose | Key flags |
 |---|---|---|
+| `tb migrate` | Move pre-0.12 state onto the current layout: `profiles/*.yaml` into `loadouts/`, and `serve.yaml`'s `default.profile` key to `default.loadout`. A no-op once done; never overwrites a name already migrated | `--dry-run`, `-y`/`--no`/`--no-input` |
 | `tb reset` | Clean up `~/.toolbase/` state | `--dry-run`, `--all`, `--include-config` |
