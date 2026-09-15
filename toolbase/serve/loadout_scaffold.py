@@ -371,10 +371,18 @@ def deactivate(
 
 # ── skills (per-skill enable/disable) ─────────────────────────────────
 #
-# Skills surface by default when their toolkit is active, so the loadout
-# stores a per-toolkit blocklist under ``skills.disabled`` (bare slugs).
-# ``deactivate_skill`` adds a slug; ``activate_skill`` removes it. The CLI
-# resolves whether a ``<tk>__<name>`` item is a skill before calling these.
+# Two shapes, and these helpers have to write whichever one the loadout is
+# already using or they lie about what they did.
+#
+#   no ``skills`` block      skills surface by default; deactivate writes a
+#                            ``skills.disabled`` blocklist, activate clears it.
+#   ``skills.enabled``       the list is authoritative. Deactivating means
+#                            REMOVING from it, and activating means ADDING to
+#                            it -- touching only the blocklist would leave
+#                            `tb activate` reporting "already active" for a
+#                            skill the allowlist keeps out.
+#
+# The CLI resolves whether a ``<tk>__<name>`` item is a skill before calling.
 
 
 def deactivate_skill(
@@ -407,6 +415,26 @@ def deactivate_skill(
     if skills_block is None:
         skills_block = CommentedMap()
         entry["skills"] = skills_block
+
+    enabled = skills_block.get("enabled")
+    if enabled is not None:
+        # Allowlist mode: dropping it from the list IS the deactivation, and
+        # says so in the file. Adding to `disabled` as well would leave the
+        # slug in both lists describing one state.
+        if slug not in enabled:
+            return MutationResult(
+                False,
+                f"{tk}__{slug} is not in {tk}'s skills.enabled, so it is "
+                f"already not surfaced.",
+                path,
+            )
+        enabled.remove(slug)
+        # NOT deleted when it empties. `enabled: []` means "no skills"; an
+        # absent block means "every skill", which is the opposite of what the
+        # user just asked for.
+        _save(path, data)
+        return MutationResult(True, f"Deactivated skill {tk}__{slug}.", path)
+
     disabled = skills_block.get("disabled")
     if disabled is None:
         skills_block["disabled"] = [slug]
@@ -428,18 +456,33 @@ def activate_skill(
     project_root: Optional[Path] = None,
     user_base: Optional[Path] = None,
 ) -> MutationResult:
-    """Un-blocklist skill ``<tk>__<slug>`` (skills are on unless disabled)."""
+    """Make skill ``<tk>__<slug>`` surface, in whichever shape the loadout uses.
+
+    Un-blocklists it, and when the loadout pins ``skills.enabled`` also adds it
+    to that list -- otherwise the command would report "already active" for a
+    skill the allowlist keeps out, which is the one case where the user most
+    needs it to do something.
+    """
     path = default_loadout_path(scope, project_root, user_base=user_base)
     data = _load(path)
     toolkits: CommentedMap = data["toolkits"]
     entry = toolkits.get(tk) if tk in toolkits else None
     skills_block = entry.get("skills") if entry else None
     disabled = skills_block.get("disabled") if skills_block else None
-    if not disabled or slug not in disabled:
+    enabled = skills_block.get("enabled") if skills_block else None
+
+    changed = False
+    if disabled and slug in disabled:
+        disabled.remove(slug)
+        changed = True
+        if not disabled:
+            del skills_block["disabled"]
+    if enabled is not None and slug not in enabled:
+        enabled.append(slug)
+        changed = True
+
+    if not changed:
         return MutationResult(False, f"{tk}__{slug} skill is already active.", path)
-    disabled.remove(slug)
-    if not disabled:
-        del skills_block["disabled"]
     if skills_block is not None and not skills_block:
         del entry["skills"]
     _save(path, data)

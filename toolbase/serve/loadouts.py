@@ -84,15 +84,32 @@ class ToolkitSelection:
     bundles: Optional[List[str]] = None
     enabled_tools: Optional[List[str]] = None
     disabled_tools: List[str] = field(default_factory=list)
-    # Per-toolkit skill blocklist (bare skill slugs, e.g. ``debug_guide``).
-    # Skills surface by default when the toolkit is active; this subtracts
-    # individual ones. Consumed by skill surfacing (``tb connect``), not by
-    # the tool orchestrator.
+    # Per-toolkit skill ALLOWLIST (bare skill slugs, e.g. ``debug_guide``).
+    # ``None`` means "not declared" -- every non-gated skill surfaces, which is
+    # what a fresh install should do: the skills are the toolkit's manual and
+    # opting in to each one would leave most of them undiscovered. A list makes
+    # the declaration AUTHORITATIVE and only those skills surface.
+    #
+    # This mirrors ``enabled_tools`` deliberately. A blocklist alone could not
+    # express "this configuration contains exactly these skills", so a skill
+    # added by a later release of the toolkit silently joined every loadout
+    # that already had it -- the same widening that ``enabled_tools`` exists to
+    # prevent for tools, with none of the protection. A measured configuration
+    # has to be able to pin its full set.
+    enabled_skills: Optional[List[str]] = None
+    # Per-toolkit skill blocklist, subtracted last. Written by
+    # ``tb deactivate <toolkit>__<skill>``; still the right shape for "I want
+    # everything except this one" and retained for that.
     disabled_skills: List[str] = field(default_factory=list)
 
     @property
     def is_allowlist(self) -> bool:
         return self.bundles is not None or self.enabled_tools is not None
+
+    @property
+    def skills_is_allowlist(self) -> bool:
+        """Whether this selection pins its skill set rather than filtering it."""
+        return self.enabled_skills is not None
 
 
 def tool_is_served(
@@ -159,6 +176,63 @@ def tool_is_served(
     if tool_name in global_disabled:
         return False
     return True
+
+
+def skill_state_for_selection(
+    slug: str,
+    skill_bundle: Optional[str],
+    selection: Optional["ToolkitSelection"],
+    bundle_available: bool,
+) -> str:
+    """Why this skill is or isn't surfaced, given a loadout selection.
+
+    The loadout-facing adapter over :func:`toolbase.skills.skill_state`,
+    which holds the actual rules: it unpacks a ``ToolkitSelection`` and
+    leaves the decision there. Everything that reports skill state --
+    ``tb list -v``, ``tb status``, ``tb skills``, and the surfacing that
+    ``tb connect`` performs -- goes through this or :func:`skill_is_surfaced`
+    so the answers cannot drift, the same arrangement
+    :func:`tool_is_served` has for tools.
+
+    ``bundle_available`` is the caller's, because the two callers compute it
+    from different sources: the orchestrator has a ``BundleAvailability``,
+    while the CLI's read commands resolve config and install scope
+    themselves. A skill with no ``bundle:`` ignores it.
+
+    Args:
+        slug: The skill's bare slug.
+        skill_bundle: Its frontmatter ``bundle:``, or None.
+        selection: The loadout's entry for this toolkit, or None for "no
+            loadout opinion" -- everything past bundle gating surfaces.
+        bundle_available: Whether ``skill_bundle`` is available.
+
+    Returns:
+        One of ``toolbase.skills.SKILL_STATES``.
+    """
+    from ..skills import skill_state
+
+    return skill_state(
+        slug,
+        bundle_available=(skill_bundle is None or bundle_available),
+        enabled=(selection.enabled_skills if selection is not None else None),
+        disabled=(selection.disabled_skills if selection is not None else None),
+    )
+
+
+def skill_is_surfaced(
+    slug: str,
+    skill_bundle: Optional[str],
+    selection: Optional["ToolkitSelection"],
+    availability,
+) -> bool:
+    """Is this skill surfaced, given a loadout selection and a
+    ``BundleAvailability``? The boolean face of
+    :func:`skill_state_for_selection`."""
+    return skill_state_for_selection(
+        slug, skill_bundle, selection,
+        bundle_available=(skill_bundle is None
+                          or availability.is_bundle_available(skill_bundle)),
+    ) == "on"
 
 
 @dataclass
@@ -251,9 +325,19 @@ def _parse_toolkit_selection(name: str, raw, path: Path) -> ToolkitSelection:
     if skills_raw is not None:
         if not isinstance(skills_raw, dict):
             raise ServeConfigError(
-                f"{path}: toolkit '{name}' skills: must be a mapping with a "
-                "'disabled' list"
+                f"{path}: toolkit '{name}' skills: must be a mapping with an "
+                "'enabled' and/or 'disabled' list"
             )
+        enabled_skills = skills_raw.get("enabled")
+        if enabled_skills is not None:
+            if not isinstance(enabled_skills, list) or not all(
+                isinstance(s, str) for s in enabled_skills
+            ):
+                raise ServeConfigError(
+                    f"{path}: toolkit '{name}' skills.enabled must be a list "
+                    "of strings"
+                )
+            sel.enabled_skills = list(enabled_skills)
         disabled_skills = skills_raw.get("disabled")
         if disabled_skills is not None:
             if not isinstance(disabled_skills, list) or not all(
@@ -264,11 +348,12 @@ def _parse_toolkit_selection(name: str, raw, path: Path) -> ToolkitSelection:
                     "of strings"
                 )
             sel.disabled_skills = list(disabled_skills)
-        unknown_skill_keys = set(skills_raw.keys()) - {"disabled"}
+        unknown_skill_keys = set(skills_raw.keys()) - {"enabled", "disabled"}
         if unknown_skill_keys:
             raise ServeConfigError(
                 f"{path}: toolkit '{name}' skills has unknown key(s) "
-                f"{sorted(unknown_skill_keys)}. Recognized: 'disabled'."
+                f"{sorted(unknown_skill_keys)}. Recognized: 'enabled', "
+                f"'disabled'."
             )
 
     # ``version`` is tolerated here for the brief window it lived in the
@@ -375,10 +460,18 @@ def discover_loadouts(
     user loadout with the same basename -- the project file is used
     whole; the user file with that name is ignored (no merge).
 
-    Each scope falls back to its pre-0.12 ``profiles/`` directory when
-    the current one is absent, so a machine that hasn't migrated keeps
-    serving. Files are read in place and never rewritten here; the
-    directory converts when something writes a loadout.
+    Within a scope, the pre-0.12 ``profiles/`` directory is read first
+    and ``loadouts/`` over it, so a name present in both resolves to the
+    current file and one present only in the old place still resolves.
+
+    That has to be a merge rather than a choice. Reading whichever
+    directory exists means the first write to ``loadouts/`` orphans every
+    loadout still in ``profiles/`` -- and the write that triggers it need
+    have nothing to do with curation: ``tb use`` recording a version
+    creates ``loadouts/default.yaml``, which was enough to make seven
+    curated loadouts in a real project disappear at once, reported as
+    "No loadout named ...". Files are read in place and never rewritten
+    here; ``tb migrate`` moves them.
     """
     found: Dict[str, Loadout] = {}
 
@@ -389,26 +482,32 @@ def discover_loadouts(
             legacy_project_profiles_dir(project_root))]
           if project_root is not None else []),
     ):
-        directory = current if current.is_dir() else legacy
-        if not directory.is_dir():
+        directories = [d for d in (legacy, current) if d.is_dir()]
+        if not directories:
             continue
-        for entry in sorted(directory.glob("*.yaml")):
-            if entry.name.endswith(".local.yaml"):
-                continue  # a private layer, applied below
-            found[entry.stem] = load_loadout_file(entry, entry.stem, scope)
+        for directory in directories:
+            for entry in sorted(directory.glob("*.yaml")):
+                if entry.name.endswith(".local.yaml"):
+                    continue  # a private layer, applied below
+                found[entry.stem] = load_loadout_file(entry, entry.stem, scope)
         # Private layers: ``<name>.local.yaml`` merges over its committed
         # sibling toolkit by toolkit, field by field. Same relationship
         # the config layers have, and the reason it exists is the same:
         # a pin to a local checkout is true on one machine and would be
         # a dangling pin on a teammate's clone.
-        for entry in sorted(directory.glob("*.local.yaml")):
-            name = entry.name[: -len(".local.yaml")]
-            private = load_loadout_file(entry, name, scope)
-            base = found.get(name)
-            found[name] = (
-                _merge_private_layer(base, private) if base is not None
-                else private
-            )
+        #
+        # Both directories again, same order: a private layer left in
+        # profiles/ has to keep applying, or migrating the committed file
+        # alone would silently drop the machine's own overrides.
+        for directory in directories:
+            for entry in sorted(directory.glob("*.local.yaml")):
+                name = entry.name[: -len(".local.yaml")]
+                private = load_loadout_file(entry, name, scope)
+                base = found.get(name)
+                found[name] = (
+                    _merge_private_layer(base, private) if base is not None
+                    else private
+                )
 
     return found
 
@@ -417,8 +516,12 @@ def _merge_private_layer(base: Loadout, private: Loadout) -> Loadout:
     """Overlay a ``.local.yaml`` layer onto its committed sibling.
 
     Per toolkit, per field: a field the private layer doesn't set keeps
-    the committed value, so privately repointing one toolkit's version
-    leaves its curation — and every other toolkit — exactly as shared.
+    the committed value, so privately narrowing one toolkit's bundles
+    leaves every other toolkit exactly as shared. Versions merge as a
+    whole below, since they live in the loadout's own ``versions:``
+    block rather than inside a curation entry -- passing ``version=``
+    here raised ``AttributeError`` on every private layer that overlaid
+    a committed sibling.
     """
     merged = dict(base.toolkits)
     for name, overlay in private.toolkits.items():
@@ -427,10 +530,6 @@ def _merge_private_layer(base: Loadout, private: Loadout) -> Loadout:
             merged[name] = overlay
             continue
         merged[name] = ToolkitSelection(
-            version=(
-                overlay.version if overlay.version is not None
-                else current.version
-            ),
             bundles=(
                 overlay.bundles if overlay.bundles is not None
                 else current.bundles

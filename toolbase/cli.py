@@ -5294,17 +5294,15 @@ def status_cmd():
         console.print()
         console.print("[bold]Skills[/bold] [dim]— surfaced to harnesses[/dim]")
         for qualified, state, detail, tk, slug in skill_rows:
+            # Same ✓/✗ the tool rows carry in `tb list -v`: a bare name
+            # beside hinted ones reads as "no information yet", when it
+            # is in fact the one row that needs none.
             if state == "on":
-                console.print(f"  {qualified}")
-            elif state == "off":
-                console.print(
-                    f"  {qualified:<40} [dim]off — "
-                    f"`tb activate {tk}__{slug}`[/dim]"
-                )
+                console.print(f"  [green]✓[/green] {qualified}")
             else:
+                hint = _skill_state_hint(state, tk, slug, detail)
                 console.print(
-                    f"  {qualified:<40} [dim]needs the {detail} bundle[/dim]"
-                )
+                    f"  [red]✗[/red] {qualified:<40} [dim]{hint}[/dim]")
         # Only worth saying when something would actually be surfaced;
         # with every skill off or gated, an unwired harness is not what
         # is standing between the agent and these.
@@ -5423,7 +5421,14 @@ def _sorted_versions(versions):
         "carry the reason on the group header."
     ),
 )
-def list_cmd(as_json, verbose):
+@click.option(
+    "--loadout", "loadout_name", default=None, metavar="NAME",
+    help=(
+        "Report against NAME instead of the active loadout — the same "
+        "one-shot override `tb serve --loadout` takes. Nothing is written."
+    ),
+)
+def list_cmd(as_json, verbose, loadout_name):
     """
     List all installed toolkits.
 
@@ -5494,7 +5499,7 @@ def list_cmd(as_json, verbose):
 
     # Resolve the active loadout to mark which toolkits are active (served).
     # Best-effort: no active loadout => everything inactive, no error.
-    resolved_loadout, active_set = _list_resolve_active()
+    resolved_loadout, active_set = _list_resolve_active(loadout_name)
     # Tool names shared by >1 active toolkit — annotated per row under -v so
     # overlap (harmless while namespaced, a clash if ever served bare) is
     # visible. Only meaningful with an active multi-toolkit loadout.
@@ -5522,9 +5527,10 @@ def list_cmd(as_json, verbose):
                 # ``.install_meta.yaml``.
                 "installed_bundles": (e.install_meta or {}).get("bundles"),
                 # ``skills``: what this slot ships and each one's own
-                # setting -- "on", "off" (deactivated), or "gated" (its
-                # bundle's config requirements are unmet). Empty list
-                # for a toolkit that ships none.
+                # setting -- "on", "off" (deactivated), "not-enabled"
+                # (the loadout declares skills.enabled and this is not in
+                # it), or "gated" (its bundle's config requirements are
+                # unmet). Empty list for a toolkit that ships none.
                 #
                 # This is the skill's setting, not the net outcome: an
                 # inactive toolkit surfaces nothing whatever its skills
@@ -5533,11 +5539,16 @@ def list_cmd(as_json, verbose):
                 # separate because collapsing them would lose the
                 # difference between a skill you turned off and a
                 # toolkit you never activated.
-                "skills": [
-                    {"slug": slug, "state": state, "bundle": detail}
-                    for slug, state, detail in _toolkit_skill_status(
-                        e.name, e.path)
-                ],
+                #
+                # ``doc`` is the markdown to read; ``root`` is what the
+                # author named the skill -- the directory for a dir-form
+                # skill, the file itself for a file-form one, with
+                # ``is_dir`` saying which. A consumer materialising
+                # skills somewhere toolbase has no adapter for -- a
+                # benchmark sandbox, a CI job -- copies ``root``: take
+                # only ``doc`` and a guide whose substance is in
+                # ``references/`` arrives as an index of dangling links.
+                "skills": _json_skill_rows(e.name, e.path, loadout_name),
             }
             for e in _list_sorted_entries(entries)
         ]
@@ -5655,6 +5666,7 @@ def list_cmd(as_json, verbose):
                 name, resolved_loadout, _name_collisions,
                 resolution=resolution,
                 multi_version=multi_version,
+                cli_loadout=loadout_name,
             )
 
     if any_pin_applied and manifest_path is not None:
@@ -5672,19 +5684,24 @@ def list_cmd(as_json, verbose):
         )
 
 
-def _list_resolve_active():
+def _list_resolve_active(cli_loadout: Optional[str] = None):
     """Best-effort active-loadout resolution for ``tb list``.
 
     Returns ``(resolved_loadout_or_None, active_toolkit_names)``. A toolkit
     is "active" when the active loadout names it and serve.yaml doesn't
     blocklist it. No active loadout (or a malformed one) yields
     ``(None, set())`` — list never errors over serve config.
+
+    ``cli_loadout`` resolves a NAMED loadout instead of the active one, the
+    same one-shot override ``tb serve --loadout`` takes. Reporting commands
+    need it because the configuration a caller asks about is often not the
+    one currently set as default -- a benchmark arm, say.
     """
     from .serve.loadouts import resolve_loadout
     from .serve.config import ServeConfigError
     try:
         project_root, _src = _resolve_active_project_root()
-        resolved = resolve_loadout(project_root)
+        resolved = resolve_loadout(project_root, cli_loadout=cli_loadout)
     except (ServeConfigError, Exception):
         return None, set()
     disabled = set(resolved.disabled_toolkits)
@@ -5755,7 +5772,7 @@ def _warn_install_name_collisions(new_toolkit: str) -> None:
 
 def _list_print_tools_verbose(
     name, resolved_loadout, collisions=None, *,
-    resolution=None, multi_version=False,
+    resolution=None, multi_version=False, cli_loadout=None,
 ) -> None:
     """Print a toolkit's declared tools with served/hidden status.
 
@@ -5799,7 +5816,8 @@ def _list_print_tools_verbose(
         )
         # Skills are discovered from the filesystem, not the tool
         # declaration, so they are knowable even here.
-        _list_print_skills(name, disc.path, toolkit_active)
+        _list_print_skills(name, disc.path, toolkit_active,
+                           cli_loadout=cli_loadout)
         return
     if multi_version:
         console.print(f"    [dim]tools in {disc.path.name}:[/dim]")
@@ -5846,7 +5864,7 @@ def _list_print_tools_verbose(
     # falls through to the trailing block rather than inventing a header.
     skills_by_bundle: Dict[str, List[tuple]] = {}
     loose_skills: List[tuple] = []
-    for row in _toolkit_skill_status(name, disc.path):
+    for row in _toolkit_skill_status(name, disc.path, cli_loadout):
         if row[2] is not None and row[2] in by_bundle:
             skills_by_bundle.setdefault(row[2], []).append(row)
         else:
@@ -5932,25 +5950,85 @@ def _list_print_tools_verbose(
         # gave the reason a gated bundle's rows are ✗, so they don't
         # repeat it the way the trailing block has to.
         for slug, state, _b in skills_by_bundle.get(bundle) or []:
-            if state == "off":
-                console.print(
-                    f"      [red]✗[/red] {slug} [dim](skill — deactivated; "
-                    f"`tb activate {name}__{slug}`)[/dim]"
-                )
-                continue
             served = toolkit_active and state == "on"
             mk = "[green]✓[/green]" if served else "[red]✗[/red]"
-            console.print(f"      {mk} {slug} [dim](skill)[/dim]")
+            # The header explains a gated bundle's rows, and the toolkit
+            # header explains an inactive toolkit's, so neither repeats
+            # it. "off" and "not-enabled" are the user's own doing and no
+            # header accounts for them.
+            note = ""
+            if state in ("off", "not-enabled"):
+                note = f": {_skill_state_hint(state, name, slug, None)}"
+            console.print(f"      {mk} {slug} [dim](skill{note})[/dim]")
 
     # Skills that belong to no bundle, under their own header. A toolkit's
     # skills are as much of what it offers as its tools -- they reach the
     # agent by the same act of activating it -- and nothing else in a read
     # command showed they existed.
-    _list_print_skills(name, disc.path, toolkit_active, rows=loose_skills)
+    _list_print_skills(name, disc.path, toolkit_active,
+                       rows=loose_skills, cli_loadout=cli_loadout)
+
+
+def _json_skill_rows(name: str, toolkit_dir: Path,
+                     cli_loadout: Optional[str] = None) -> "list[dict]":
+    """A slot's skills for ``tb list --json``, with their paths.
+
+    The paths are what makes this answerable by a consumer that has to put
+    the skills somewhere itself: ``tb connect`` is the only thing that
+    materialises them, so anything with its own layout would otherwise
+    re-derive bundle gating, the loadout lists and slug normalisation, and
+    re-derivation drifts.
+
+    ``root`` is the unit to copy and ``is_dir`` says how -- a dir-form
+    skill's ``references/`` and ``scripts/`` live beside its ``SKILL.md``
+    and have to come along, while a file-form skill IS its markdown
+    (``root == doc``).
+    """
+    from .skills import discover_skills
+
+    by_slug = {src.slug: src for src in discover_skills(toolkit_dir)}
+    rows = []
+    for slug, state, bundle in _toolkit_skill_status(
+            name, toolkit_dir, cli_loadout):
+        src = by_slug.get(slug)
+        rows.append({
+            "slug": slug,
+            "state": state,
+            "bundle": bundle,
+            "doc": str(src.doc) if src else None,
+            "root": str(src.root) if src else None,
+            "is_dir": src.is_dir if src else None,
+        })
+    return rows
+
+
+def _skill_state_hint(state: str, name: str, slug: str,
+                      bundle: Optional[str]) -> str:
+    """How to fix a skill that isn't surfaced, for a read command's dim note.
+
+    One phrasing for every surface. The reasons are fixed differently, and
+    the previous split -- each caller writing its own text, with a trailing
+    ``else`` that assumed "gated" -- told a user whose skill was left out of
+    ``skills.enabled`` to go set a config value, and printed "needs the None
+    bundle" for a skill that declares no bundle at all.
+
+    Each hint opens with the state itself, the same word ``tb skills`` and
+    ``tb list --json`` use, so one vocabulary describes a skill wherever you
+    meet it.
+    """
+    if state == "off":
+        return f"off — `tb activate {name}__{slug}`"
+    if state == "not-enabled":
+        return (f"not-enabled — not in this loadout's skills.enabled; "
+                f"`tb activate {name}__{slug}`")
+    if state == "gated" and bundle is not None:
+        return f"gated — needs the {bundle} bundle"
+    return state
 
 
 def _list_print_skills(
     name: str, toolkit_dir: Path, toolkit_active: bool, *, rows=None,
+    cli_loadout=None,
 ) -> None:
     """Print a toolkit's skills with the same served/hidden marks tools use.
 
@@ -5964,7 +6042,7 @@ def _list_print_skills(
     caller that has no bundles to group under.
     """
     if rows is None:
-        rows = _toolkit_skill_status(name, toolkit_dir)
+        rows = _toolkit_skill_status(name, toolkit_dir, cli_loadout)
     if not rows:
         return
     console.print("    [cyan]\\[skills][/cyan]")
@@ -5972,15 +6050,10 @@ def _list_print_skills(
         if state == "on":
             mk = "[green]✓[/green]" if toolkit_active else "[red]✗[/red]"
             console.print(f"      {mk} {slug}")
-        elif state == "off":
-            console.print(
-                f"      [red]✗[/red] {slug} "
-                f"[dim](deactivated — `tb activate {name}__{slug}`)[/dim]"
-            )
         else:
+            hint = _skill_state_hint(state, name, slug, detail)
             console.print(
-                f"      [red]✗[/red] {slug} "
-                f"[dim](needs the {detail} bundle)[/dim]"
+                f"      [red]✗[/red] {slug} [dim]({hint})[/dim]"
             )
 
 
@@ -6310,6 +6383,145 @@ def _drop_stale_version_records(name: str) -> None:
             "    [dim]A pin naming a removed version makes serve skip the "
             "toolkit; check `tb status`.[/dim]"
         )
+
+
+@main.command(name="migrate")
+@click.option("--dry-run", is_flag=True, default=False,
+              help="Show what would move and stop.")
+@_interactive_options
+def migrate_cmd(dry_run, yes, no_, no_input):
+    """Move pre-0.12 state onto the current layout.
+
+    \b
+    Reading both shapes forever is not the same as being migrated:
+    `profiles/` and `loadouts/` sitting side by side is a state nothing
+    intends and everything has to keep accounting for. This translates
+    once, so there is one place a loadout lives.
+
+    \b
+    Moves each scope's `profiles/*.yaml` into `loadouts/`, and rewrites
+    serve.yaml's `default.profile` key to `default.loadout`. A name
+    already present in `loadouts/` is left alone and reported, never
+    overwritten.
+
+    \b
+    Nothing here changes what resolves — discovery already reads both —
+    so this is safe to run at any time, and a no-op once done.
+    """
+    from .envs.paths import (
+        user_loadouts_dir, project_loadouts_dir,
+        legacy_user_profiles_dir, legacy_project_profiles_dir,
+    )
+    project_root, _src = _resolve_active_project_root()
+    scopes = [
+        ("user", legacy_user_profiles_dir(), user_loadouts_dir()),
+        ("project", legacy_project_profiles_dir(project_root),
+         project_loadouts_dir(project_root)),
+    ]
+
+    moves, clashes = [], []
+    for scope, legacy, current in scopes:
+        if not legacy.is_dir():
+            continue
+        for src in sorted(legacy.glob("*.yaml")):
+            dest = current / src.name
+            (clashes if dest.exists() else moves).append((scope, src, dest))
+
+    serve_yaml = _serve_yaml_needing_key_rename()
+
+    if not moves and not clashes and serve_yaml is None:
+        console.print("Nothing to migrate — already on the current layout.")
+        return
+
+    for scope, src, dest in moves:
+        console.print(
+            f"  {scope:<8} {src.name}  [dim]{_display_path(src.parent)} → "
+            f"{_display_path(dest.parent)}[/dim]"
+        )
+    for scope, src, dest in clashes:
+        console.print(
+            f"  [yellow]![/yellow] {scope:<6} {src.name} "
+            f"[dim]already exists in loadouts/ — left in place[/dim]"
+        )
+    if serve_yaml is not None:
+        console.print(
+            f"  serve.yaml  [dim]default.profile → default.loadout "
+            f"({_display_path(serve_yaml)})[/dim]"
+        )
+
+    if dry_run:
+        console.print("\n[dim]--dry-run: nothing moved.[/dim]")
+        return
+    mode = _resolve_prompt_mode(yes, no_, no_input)
+    if not _confirm("Migrate?", default=True, mode=mode):
+        console.print("[dim]Nothing moved.[/dim]")
+        return
+
+    moved = 0
+    for _scope, src, dest in moves:
+        try:
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            shutil.move(str(src), str(dest))
+            moved += 1
+        except OSError as exc:
+            console.print(f"[red]✗[/red] {src.name}: {exc}")
+    for _scope, legacy, _current in scopes:
+        # An emptied profiles/ is just a place for the next one to
+        # reappear; leave it if the user still has files there.
+        if legacy.is_dir() and not any(legacy.iterdir()):
+            try:
+                legacy.rmdir()
+            except OSError:
+                pass
+    if serve_yaml is not None:
+        _rename_serve_default_profile_key(serve_yaml)
+
+    console.print(
+        f"\n[green]✓[/green] migrated {moved} loadout"
+        f"{'s' if moved != 1 else ''}"
+        + ("; serve.yaml key updated" if serve_yaml is not None else "")
+    )
+    if clashes:
+        console.print(
+            "[dim]The names left in place already exist in loadouts/; "
+            "compare and delete the old file by hand.[/dim]"
+        )
+
+
+def _serve_yaml_needing_key_rename():
+    """The serve.yaml still spelling the active loadout ``default.profile``."""
+    path = toolbase_config_dir() / "serve.yaml"
+    if not path.is_file():
+        return None
+    try:
+        import yaml as _yaml
+        data = _yaml.safe_load(path.read_text()) or {}
+    except Exception:
+        return None
+    default = data.get("default")
+    if not isinstance(default, dict):
+        return None
+    return path if "profile" in default and "loadout" not in default else None
+
+
+def _rename_serve_default_profile_key(path: Path) -> None:
+    """Rewrite ``default.profile`` to ``default.loadout`` in place.
+
+    Line-oriented so comments and ordering survive -- a serve.yaml is a
+    file people edit, and rewriting it through a YAML round-trip to
+    change one key would reflow the rest.
+    """
+    try:
+        lines = path.read_text().splitlines(keepends=True)
+        for i, line in enumerate(lines):
+            stripped = line.lstrip()
+            if stripped.startswith("profile:"):
+                indent = line[: len(line) - len(stripped)]
+                lines[i] = f"{indent}loadout:{stripped[len('profile:'):]}"
+                break
+        path.write_text("".join(lines))
+    except Exception as exc:
+        console.print(f"[yellow]Could not update serve.yaml: {exc}[/yellow]")
 
 
 @main.command(name="clean")
@@ -7728,7 +7940,7 @@ def _resolve_connect_command(*, abspath: bool, portable: bool, scope: str) -> st
     return _toolbase_abspath()
 
 
-def _activated_toolkit_dirs() -> "dict[str, Path]":
+def _activated_toolkit_dirs(cli_loadout: Optional[str] = None) -> "dict[str, Path]":
     """``{name: slot_dir}`` for each activated, ready toolkit.
 
     "Activated" means the active loadout names it and serve.yaml doesn't
@@ -7739,7 +7951,7 @@ def _activated_toolkit_dirs() -> "dict[str, Path]":
         from .serve.orchestrator import discover_toolkits
     except Exception:
         return {}
-    _resolved, active = _list_resolve_active()
+    _resolved, active = _list_resolve_active(cli_loadout)
     dirs: "dict[str, Path]" = {}
     for d in discover_toolkits():
         if d.name in active and d.skip_reason is None:
@@ -7768,45 +7980,72 @@ def _toolkit_skill_slugs(name: str) -> set:
     return {s.slug for s in discover_skills(slot)}
 
 
-def _resolve_disabled_skills(name: str) -> set:
+def _resolve_skill_selection(name: str, cli_loadout: Optional[str] = None):
+    """The active loadout's ``ToolkitSelection`` for ``name``, or None.
+
+    One resolution for both skill lists. Resolving per list meant two full
+    ``resolve_loadout()`` passes -- a directory walk and a YAML parse each --
+    for every toolkit every read command printed.
+    """
+    _resolved, _active = _list_resolve_active(cli_loadout)
+    if _resolved is None:
+        return None
+    return _resolved.toolkits.get(name)
+
+
+def _resolve_disabled_skills(name: str, cli_loadout: Optional[str] = None) -> set:
     """Bare skill slugs the active loadout blocklists for ``name``.
 
     Returned canonicalised (``skills.normalize_slug``) so an entry written
     before slugs were hyphenated still matches the skill it names."""
     from .skills import normalize_slug
-    _resolved, _active = _list_resolve_active()
-    if _resolved is None:
-        return set()
-    sel = _resolved.toolkits.get(name)
+    sel = _resolve_skill_selection(name, cli_loadout)
     if sel is None:
         return set()
     return {normalize_slug(s) for s in (getattr(sel, "disabled_skills", []) or [])}
 
 
-def _toolkit_skill_status(name: str, toolkit_dir: Path) -> "list[tuple]":
+def _resolve_enabled_skills(name: str, cli_loadout: Optional[str] = None):
+    """The active loadout's ``skills.enabled`` allowlist for ``name``.
+
+    Returns None when the loadout declares none, which means "surface
+    everything past bundle gating" -- a fresh install hands over the toolkit's
+    manual without anyone opting in to each page. A list is authoritative.
+    """
+    sel = _resolve_skill_selection(name, cli_loadout)
+    if sel is None:
+        return None
+    return getattr(sel, "enabled_skills", None)
+
+
+def _toolkit_skill_status(name: str, toolkit_dir: Path,
+                          cli_loadout: Optional[str] = None) -> "list[tuple]":
     """A toolkit's skills and whether each would be surfaced.
 
-    Returns ``[(slug, state, bundle)]`` sorted by slug, where state is
-    ``"on"``, ``"off"`` (deactivated in the active loadout) or
-    ``"gated"`` (scoped to a bundle whose config requirements aren't
-    met, so its tools aren't served either and the guide would mislead).
-    ``bundle`` is the skill's ``bundle:`` frontmatter (``None`` for a
-    toolkit-wide skill) whatever the state — it is what groups a skill
-    under its bundle in ``tb list -v``, which is as true of one that is
-    off as of one that is gated.
+    Returns ``[(slug, state, bundle)]`` sorted by slug, where state is one
+    of ``toolbase.skills.SKILL_STATES``: ``"on"``, ``"off"`` (deactivated in
+    the active loadout), ``"not-enabled"`` (the loadout declares
+    ``skills.enabled`` and this is not in it), or ``"gated"`` (scoped to a
+    bundle whose config requirements aren't met, so its tools aren't served
+    either and the guide would mislead). ``bundle`` is the skill's
+    ``bundle:`` frontmatter (``None`` for a toolkit-wide skill) whatever the
+    state — it is what groups a skill under its bundle in ``tb list -v``,
+    which is as true of one that is off as of one that is gated.
 
-    One function because three surfaces report this -- ``tb list -v``,
-    ``tb status``, and the surfacing that ``tb connect`` actually
-    performs -- and they answer the same question. It applies the same
-    two filters ``skills.surface_skills`` applies, in the same order, so
-    what is shown is what would be written into a harness.
+    One function because four surfaces report this -- ``tb list -v``,
+    ``tb status``, ``tb skills``, and the surfacing ``tb connect`` actually
+    performs -- and they answer the same question. The decision itself is
+    ``loadouts.skill_state_for_selection``, the same one ``surface_skills``
+    goes through, so what is shown is what would be written into a harness.
+    Deriving the state here from parts is what let the reasons drift.
     """
-    from .skills import discover_skills, normalize_slug, parse_frontmatter
+    from .skills import discover_skills, parse_frontmatter
+    from .serve.loadouts import skill_state_for_selection
 
     sources = discover_skills(toolkit_dir)
     if not sources:
         return []
-    disabled = _resolve_disabled_skills(name)
+    selection = _resolve_skill_selection(name, cli_loadout)
     available = _available_bundles_for_surface(name, toolkit_dir)
 
     rows = []
@@ -7820,13 +8059,11 @@ def _toolkit_skill_status(name: str, toolkit_dir: Path) -> "list[tuple]":
             # An unreadable guide is the author's problem, not a reason
             # to hide the skill from a listing.
             pass
-        if normalize_slug(src.slug) in disabled:
-            rows.append((src.slug, "off", bundle))
-            continue
-        if bundle is not None and available is not None and bundle not in available:
-            rows.append((src.slug, "gated", bundle))
-        else:
-            rows.append((src.slug, "on", bundle))
+        state = skill_state_for_selection(
+            src.slug, bundle, selection,
+            bundle_available=(available is None or bundle in available),
+        )
+        rows.append((src.slug, state, bundle))
     return sorted(rows)
 
 
@@ -7873,6 +8110,7 @@ def _surface_skills_for_connect(
                 name, slot, target,
                 available_bundles=_available_bundles_for_surface(name, slot),
                 disabled_slugs=_resolve_disabled_skills(name),
+                enabled_slugs=_resolve_enabled_skills(name),
             )
         except Exception as e:
             failed.add(name)

@@ -93,11 +93,95 @@ def test_parse_skills_must_be_string_list(tmp_path: Path):
 
 
 def test_parse_unknown_skills_key_rejected(tmp_path: Path):
+    # `enabled` used to be the example here, because it was unknown. It is now
+    # the allowlist, so the test needs a key that is still genuinely unknown.
     with pytest.raises(ServeConfigError):
         parse_loadout(
-            {"toolkits": {"heptapod": {"skills": {"enabled": ["x"]}}}},
+            {"toolkits": {"heptapod": {"skills": {"allowed": ["x"]}}}},
             "p", tmp_path / "p.yaml", "user",
         )
+
+
+def test_parse_skills_enabled_allowlist(tmp_path: Path):
+    """`skills.enabled` parses and marks the selection as pinned."""
+    lo = parse_loadout(
+        {"toolkits": {"heptapod": {"skills": {"enabled": ["feynrules"]}}}},
+        "p", tmp_path / "p.yaml", "user",
+    )
+    sel = lo.toolkits["heptapod"]
+    assert sel.enabled_skills == ["feynrules"]
+    assert sel.skills_is_allowlist is True
+
+
+def test_parse_skills_undeclared_is_not_an_allowlist(tmp_path: Path):
+    """No `skills:` block means "surface everything", not "surface nothing".
+
+    The distinction is the whole point of using None rather than []: a fresh
+    install should hand over the toolkit's manual without the user opting in
+    to each page, while a configuration that declares a list pins it exactly.
+    """
+    lo = parse_loadout(
+        {"toolkits": {"heptapod": {}}}, "p", tmp_path / "p.yaml", "user",
+    )
+    sel = lo.toolkits["heptapod"]
+    assert sel.enabled_skills is None
+    assert sel.skills_is_allowlist is False
+
+
+def test_parse_skills_enabled_must_be_string_list(tmp_path: Path):
+    with pytest.raises(ServeConfigError):
+        parse_loadout(
+            {"toolkits": {"heptapod": {"skills": {"enabled": "feynrules"}}}},
+            "p", tmp_path / "p.yaml", "user",
+        )
+
+
+def test_skill_is_surfaced_precedence(tmp_path: Path):
+    """Bundle gating, then the allowlist, then the blocklist."""
+    from toolbase.serve.loadouts import ToolkitSelection, skill_is_surfaced
+
+    class _Avail:
+        def __init__(self, ok):
+            self.ok = ok
+
+        def is_bundle_available(self, bundle):
+            return self.ok
+
+    up, down = _Avail(True), _Avail(False)
+
+    # No selection at all: everything past bundle gating surfaces.
+    assert skill_is_surfaced("feynrules", None, None, up) is True
+    assert skill_is_surfaced("feynrules", "feynrules", None, down) is False
+
+    # A selection that says nothing about skills does not narrow them.
+    assert skill_is_surfaced("feynrules", None, ToolkitSelection(), up) is True
+
+    pinned = ToolkitSelection(enabled_skills=["feynrules"])
+    assert skill_is_surfaced("feynrules", None, pinned, up) is True
+    assert skill_is_surfaced("mg5", None, pinned, up) is False
+
+    # Explicit deactivation wins over the allowlist.
+    both = ToolkitSelection(enabled_skills=["feynrules"],
+                            disabled_skills=["feynrules"])
+    assert skill_is_surfaced("feynrules", None, both, up) is False
+
+    # Gating beats everything: a guide to tools that are not served is worse
+    # than no guide.
+    assert skill_is_surfaced("feynrules", "feynrules", pinned, down) is False
+
+
+def test_skill_surfaces_normalizes_slugs():
+    """An entry written before slugs were hyphenated still matches."""
+    from toolbase.skills import skill_surfaces
+
+    assert skill_surfaces(
+        "pythia-forward-run-cards",
+        enabled=["pythia_forward_run_cards"],
+    ) is True
+    assert skill_surfaces(
+        "pythia-forward-run-cards",
+        disabled=["pythia_forward_run_cards"],
+    ) is False
 
 
 def test_parse_unknown_toolkit_key_rejected(tmp_path: Path):

@@ -91,3 +91,6 @@ docs/KNOWN_GAPS.md
 
 # MkDocs build output
 /site/
+
+# Agent context for this repo. Local to each checkout, not shared state.
+CLAUDE.md

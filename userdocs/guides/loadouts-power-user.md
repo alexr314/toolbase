@@ -45,12 +45,24 @@ toolkits:
     tools:
       enabled: [factorial]         # plus this specific tool
       disabled: [log]              # minus this one
+    skills:
+      enabled: [using-the-basics]  # exactly these skills
+      disabled: [matrix-tricks]    # or just drop one
   units: {}                        # whole toolkit
 ```
 
 - A toolkit with no `bundles`/`tools.enabled` (`{}`) serves the whole toolkit.
 - Set `bundles` and/or `tools.enabled` to switch to an allowlist (the union of
   the two), then `tools.disabled` subtracts.
+- `skills` works the same way but starts from the opposite default: with no
+  `skills` block every skill surfaces. Declaring `skills.enabled` makes that
+  list authoritative — useful when a configuration has to state exactly what it
+  contains, since a skill added by a later release of the toolkit would
+  otherwise join every loadout silently. `skills.enabled: []` means no skills;
+  omitting the key means all of them.
+- Skills reach the agent through `tb connect`, not `tb serve`, so a change here
+  applies on the next connect. See
+  [Curating tools → Curating skills](curating-tools.md#curating-skills).
 
 Loadouts are created two ways. `tb activate` / `tb deactivate` auto-create and
 edit the `default` loadout at `<project>/.toolbase/loadouts/default.yaml`,

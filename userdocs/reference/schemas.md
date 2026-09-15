@@ -32,12 +32,21 @@ toolkits:
     tools:
       enabled: [factorial]         # additive per-tool allowlist
       disabled: [log]              # subtracted last
+    skills:
+      enabled: [using-the-basics]  # authoritative skill list
+      disabled: [matrix-tricks]    # subtracted last
   units: {}                        # whole toolkit (no curation)
 ```
 
 Rules: a toolkit with neither `bundles` nor `tools.enabled` serves whole; set
 either to switch to an allowlist (their union); `tools.disabled` always
 subtracts.
+
+`skills` has the same shape and the opposite default: no `skills` block
+surfaces every skill, `skills.enabled` pins the set exactly (`[]` means none),
+and `skills.disabled` subtracts last. Names in every list are unqualified —
+`log`, not `calculator__log`. Skills are materialized by `tb connect` rather
+than served by `tb serve`, so a change to `skills` applies on the next connect.
 
 ## `toolkit.yaml` (authors)
 

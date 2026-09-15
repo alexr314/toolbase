@@ -88,6 +88,13 @@ deactivated toolkit or guide, a bundle whose config gate closed, a guide
 dropped by a new version). Skills you wrote yourself are never touched. Use
 `--no-skills` to wire the server without touching the skill surface at all.
 
+Connect is also the *only* thing that moves them. Tools are re-resolved every
+time `tb serve` starts; skills are files on disk, so a skill you deactivate
+stays in front of the agent until you connect again. `tb list -v` and
+`tb status` show what the next connect would write — compare that against the
+directory above if the agent seems to be reading something you turned off. See
+[Curating skills](curating-tools.md#curating-skills).
+
 ## Orchestral
 
 Orchestral is a library, not an MCP client, so there's no config to write. `tb
