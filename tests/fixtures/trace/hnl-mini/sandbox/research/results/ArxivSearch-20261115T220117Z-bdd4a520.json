@@ -1,0 +1,8 @@
+{
+  "status": "ok",
+  "schema": "literature-1.3",
+  "query": "ti:\"heavy Majorana neutrinos\" AND ti:\"jets\" AND abs:\"8 TeV\" AND abs:\"same-sign\"",
+  "request_url": "https://export.arxiv.org/api/query?search_query=ti%3A%22heavy+Majorana+neutrinos%22+AND+ti%3A%22jets%22+AND+abs%3A%228+TeV%22+AND+abs%3A%22same-sign%22&start=0&max_results=10&sortBy=relevance&sortOrder=descending",
+  "count": 0,
+  "papers": []
+}

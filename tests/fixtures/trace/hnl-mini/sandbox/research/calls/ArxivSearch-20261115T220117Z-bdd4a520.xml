@@ -1,0 +1,28 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<feed xmlns:opensearch="http://a9.com/-/spec/opensearch/1.1/" xmlns:arxiv="http://arxiv.org/schemas/atom" xmlns="http://www.w3.org/2005/Atom">
+  <id>https://arxiv.org/api/vPSDOxKG7TabrkEKv2FIsXkzPyo</id>
+  <title>arXiv Query: search_query=ti:"heavy Majorana neutrinos" AND ti:"jets" AND abs:"8 TeV" AND abs:"same-sign"&amp;id_list=&amp;start=0&amp;max_results=10</title>
+  <updated>2026-11-15T22:01:06Z</updated>
+  <link href="https://arxiv.org/api/query?search_query=ti:%22heavy+Majorana+neutrinos%22+AND+(ti:%22jets%22+AND+(abs:%228+TeV%22+AND+abs:%22same-sign%22))&amp;start=0&amp;max_results=10&amp;id_list=" type="application/atom+xml"/>
+  <opensearch:itemsPerPage>10</opensearch:itemsPerPage>
+  <opensearch:totalResults>1</opensearch:totalResults>
+  <opensearch:startIndex>0</opensearch:startIndex>
+  <entry>
+    <id>http://arxiv.org/abs/1603.02248v2</id>
+    <title>Search for heavy Majorana neutrinos in e+/- e+/- plus jets and e+/- mu+/- plus jets events in proton-proton collisions at sqrt(s) = 8 TeV</title>
+    <updated>2016-05-02T19:14:55Z</updated>
+    <link href="https://arxiv.org/abs/1603.02248v2" rel="alternate" type="text/html"/>
+    <link href="https://arxiv.org/pdf/1603.02248v2" rel="related" type="application/pdf" title="pdf"/>
+    <summary>A search is performed for heavy Majorana neutrinos (N) decaying into a W boson and a lepton using the CMS detector at the Large Hadron Collider. A signature of two jets and either two same sign electrons or a same sign electron-muon pair is searched for using 19.7 inverse femtobarns of data collected during 2012 in proton-proton collisions at a centre-of-mass energy of 8 TeV. The data are found to be consistent with the expected standard model (SM) background and, in the context of a Type-1 seesaw mechanism, upper limits are set on the cross section times branching fraction for production of heavy Majorana neutrinos in the mass range between 40 and 500 GeV. The results are additionally interpreted as limits on the mixing between the heavy Majorana neutrinos and the SM neutrinos. In the mass range considered, the upper limits range between 0.00015 - 0.72 for |V[eN]|^2 and 6.6E-5 - 0.47 for |V[eN] V*[muN]|^2 / ( |V[eN]|^2 + |V[muN]|^2 ), where V[lN] is the mixing element describing the mixing of the heavy neutrino with the SM neutrino of flavour l. These limits are the most restrictive direct limits for heavy Majorana neutrino masses above 200 GeV.</summary>
+    <category term="hep-ex" scheme="http://arxiv.org/schemas/atom"/>
+    <published>2016-03-07T20:45:55Z</published>
+    <arxiv:comment>Replaced with published version. Added the journal reference and DOI. All figures and tables can be found at http://cms-results.web.cern.ch/cms-results/public-results/publications/EXO-14-014/index.html</arxiv:comment>
+    <arxiv:primary_category term="hep-ex"/>
+    <arxiv:journal_ref>JHEP 04 (2016) 169</arxiv:journal_ref>
+    <author>
+      <name> CMS Collaboration</name>
+    </author>
+    <arxiv:doi>10.1007/JHEP04(2016)169</arxiv:doi>
+    <link rel="related" href="https://doi.org/10.1007/JHEP04(2016)169" title="doi"/>
+  </entry>
+</feed>

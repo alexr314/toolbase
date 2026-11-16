@@ -5,8 +5,8 @@ it, which tool at which toolkit version, the arguments, the outcome, and the
 files it named. Off by default. With it off, nothing below happens and serve
 behaves exactly as before.
 
-This is phase 1 (capture). Export to a shareable bundle and the HTML viewer
-come later.
+Phase 1 is capture (below); `tb trace export` (phase 4, [Export](#export-tb-trace-export))
+turns a trace directory into a shareable bundle with an HTML viewer.
 
 ## Turning it on
 
@@ -187,3 +187,157 @@ failure or when `ctx` is None). `parent` defaults to `ctx["call_id"]`.
   declares through `child_call` are not seen during the run.
 - A call still running when the process dies has no record (records are
   written when a call ends).
+
+## Export: `tb trace export`
+
+```
+tb trace export <session|dir> -o <bundle>
+    [--sandbox <dir>]                  # hash its files, match them to calls and commands
+    [--commands claude:<path>]         # shell commands from Claude Code transcripts
+    [--commands codex:<path>]          # ... from Codex rollouts
+    [--commands conjure:<session dir>] # ... from Conjure's per-agent logs (exact agent ids)
+    [--copy graph|all|none] [--copy-limit 1MB] [--copy-total 256MB]
+    [--hash-limit SIZE] [--no-redact] [--force]
+```
+
+Offline: it reads the JSONL files only, so it works on a run that finished,
+crashed or was killed (torn last lines are skipped and counted, agents with no
+`agent_ended` are reported). Nothing on the serve path imports it.
+
+### The bundle
+
+| File | Contents |
+|---|---|
+| `index.html` | the viewer, CSS, JS and data inlined; opens from disk, loads nothing from the network |
+| `trace.json` | `{"schema": "toolbase-trace-bundle/1", "meta", "nodes", "edges"}` |
+| `prov.json` | the same graph as a W3C PROV-JSON document |
+| `files.json` | `{"schema": "toolbase-trace-files/1", "files": [...]}`, one row per file version |
+| `files/<path>` | copies of small files, at their sandbox-relative paths |
+
+**Nodes** (`kind`, `id`):
+
+- `agent`, `ag-…` (and `@user`, `@system` for Conjure's external senders): label,
+  parent, model, engine, harness, `ts_start`/`ts_end`, `spawn` (the id of the
+  spawn message holding the brief), `terminated`.
+- `call`, `c-…`: the `calls.jsonl` record (agent, toolkit, version, tool, args,
+  ok, error, result head and hash, parent).
+- `command`, `cmd-<10 hex>`: a shell command or file-writing tool use from a
+  transcript. The id is the sha256 of the harness's tool-use id, so it is stable
+  across exports. Command text, agent, source reader(s), cwd, times, ok, exit
+  code, output head and hash, `script` (the first named script file with its
+  hash at export), `writes` for Write/Edit/apply_patch.
+- `file`, `f-<12 hex of sha256>`: one content version; `paths`, `bytes`,
+  `sha256`, `mtime`, `origin` (recorded, inferred, unknown), `present` (this
+  version is in the sandbox now), `copied`. A file with no hash (over
+  `--hash-limit`, or no sandbox) is `f-p<11 hex>` of path, size and mtime.
+- `message`: `m-<msg id>` for a send (from, to, body, thread),
+  `m-spawn-<agent>` for a spawn (role prompt, initial message, model, engine,
+  toolkits).
+
+**Edges** (`kind`, `from`, `to`, optional `ts`, `basis`, `inferred`):
+
+| kind | from → to | meaning |
+|---|---|---|
+| `spawned` | parent agent → child agent | |
+| `sent` | agent → message | |
+| `received` | message → agent | |
+| `called` | agent → call or command | |
+| `used` | call or command → file | existed before it started |
+| `generated` | call or command → file | written in its window |
+| `child_of` | call → call | a toolkit's inner call (`parent`) |
+
+A call's recorded files are `used` when their mtime is before the call started
+and `generated` when it falls in `[start − 0.5 s, end + 1 s]` (`basis:
+recorded`). Commands' edges are always `inferred: true`:
+
+- `used`, `basis: named`: a sandbox file the command names (resolved against its
+  cwd and any `cd`), unchanged since before it started.
+- `generated`, `basis: named` for Write/Edit/apply_patch paths.
+- `generated` by mtime, for every sandbox file nothing generated directly:
+  among the commands whose window holds the file's mtime, and the calls whose
+  window holds it and whose arguments name one of its directories, the one
+  that names it as a write target (`target+mtime`: `>`, `tee`, `-o`,
+  `open(…, "w")`, `savefig(…)`) wins, then one that names the file
+  (`named+mtime`), then the deepest named directory (`dir+mtime`), then the
+  shortest window. A file written in a command's window that the command does
+  not name is not attributed; `files.json` lists the commands as `candidates`.
+
+Only versions some call or command names become graph nodes; every other file
+is a row in `files.json`, with its inferred generator if any.
+
+**files.json rows**: `path` (sandbox-relative), `bytes`, `mtime`, `sha256`,
+`present`, `node` (graph node id, if any), `origin` (`recorded`, `inferred`,
+`unknown`), `generated_by`, `basis`, `used_by`, `copied` (bundle path),
+`candidates`, `before_trace` (unknown origin and older than the trace), `note`
+(a recorded version no longer in the sandbox).
+
+**Copies**: with `--copy graph` (default), the present files that are graph
+nodes and at most `--copy-limit` bytes; `--copy all` copies every sandbox file
+under the limit. Copying stops at `--copy-total`. Larger files are listed with
+their hash, so the bundle verifies them without containing them.
+
+**Redaction** (default): the sandbox's absolute path becomes `<sandbox>`, the
+trace directory's `<trace>`, and the home directory `~`, in every node and row.
+`--no-redact` keeps them.
+
+### PROV mapping (`prov.json`)
+
+Everything is in the `tb:` namespace (`https://toolbase.dev/ns/trace#`); ids are
+`tb:<node id>`, relations are blank nodes `_:e<n>`.
+
+| trace | PROV-JSON |
+|---|---|
+| agent | `agent`, `prov:type` `prov:SoftwareAgent` (`prov:Person` for `@user`), `prov:label` |
+| call | `activity`, `prov:type` `tb:ToolCall`, `prov:startTime`, `prov:endTime` |
+| command | `activity`, `prov:type` `tb:ShellCommand` |
+| file | `entity`, `prov:type` `tb:File`, `prov:location` (first path) |
+| message | `entity`, `prov:type` `tb:Message` or `tb:Spawn`, `prov:value` (body or brief) |
+| called | `wasAssociatedWith` (activity, agent) |
+| used | `used` (activity, entity) |
+| generated | `wasGeneratedBy` (entity, activity) |
+| spawned | `actedOnBehalfOf` (delegate child, responsible parent) |
+| child_of | `wasInformedBy` (informed child, informant parent) |
+| sent | `wasAttributedTo` (message, sender) |
+| received | `wasInfluencedBy` (influencee recipient, influencer message) |
+
+Other fields become `tb:<field>` attributes; structured values (arguments,
+toolkits) are JSON strings, since PROV-JSON attribute values are literals.
+Inferred edges carry `tb:inferred` and `tb:basis`.
+
+### Shell commands (`toolbase/trace/readers/`)
+
+| `--commands` | Reads | Agent |
+|---|---|---|
+| `conjure:<session dir>` | `agents/<agent-id>.jsonl`: `stream_end` `tool_calls` and `tool` results | the file name (exact) |
+| `claude:<path>` | Claude Code `~/.claude/projects/<escaped cwd>/*.jsonl` (and `subagents/`): `tool_use` / `tool_result` | Conjure's identity line (`Address id: …`) in the transcript, else its toolkit calls matched to `calls.jsonl` (tool, arguments, time), else the trace's only agent |
+| `codex:<path>` | `rollout-*.jsonl` under a Codex home: `CommandExecution` items, or older `function_call`/`exec_command_end` | the home's directory name (`codex_homes/<agent-id>/`), else the identity line, else as above |
+
+A session nothing attributes gets a placeholder agent `ag-<reader>-<session>`
+and a note. The same tool use seen by two readers (Conjure and Claude Code
+share `toolu_…` ids) is merged; for a Codex agent, the rollout's commands
+replace Conjure's per-turn view.
+
+### The viewer
+
+`index.html` has a timeline (one lane per agent in spawn order; calls coloured
+by toolkit, commands below them, failures red; spawns and messages drawn
+between lanes; wheel zoom, drag pan), a provenance view (from the selected node,
+its inputs to a chosen depth on the left and what used it on the right; dashed
+edges are inferred; optionally agents and messages), an activity list, a file
+index of every file with its origin, and the messages. Filters: search, agent,
+toolkit, tool, time window, failed only. The detail panel shows arguments,
+result head, files with hashes, a spawn's brief, a message's body.
+
+Anchors select a node on load: `index.html#c-<id>`, `#cmd-<id>`, `#ag-<id>`,
+`#m-<id>` and `#f-<sha256 prefix>` (8 hex digits or more; a file that is not a
+graph node opens its row). A citation can link straight to a call.
+
+### Limits
+
+- Files written by a toolkit's background job (heptapod `SubmitJob`) are not
+  matched until the toolkit records the job's work as child calls
+  (`child_call`); their outputs show as unknown origin.
+- Command windows are when the harness saw the command start and return; a
+  background command's later writes fall outside it.
+- A script's hash is taken at export; `changed_since` marks a script modified
+  after the command ran.

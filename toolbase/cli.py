@@ -7268,6 +7268,7 @@ def trace_group():
         tb trace on | off | status     # the project setting (serve.yaml trace)
         tb trace list                  # sessions in this project
         tb trace show <session|dir>    # agents, calls per agent and tool, failures
+        tb trace export <session|dir> -o <bundle>   # shareable bundle + viewer
 
     For one session without touching the project: TOOLBASE_TRACE=1 (and
     optionally TOOLBASE_TRACE_DIR), or `toolbase serve --trace [DIR]`.
@@ -7340,17 +7341,11 @@ def trace_list():
     click.echo(format_list(tdir, list_sessions(tdir)))
 
 
-@trace_group.command(name="show", short_help="Summarize one trace.")
-@click.argument("target")
-def trace_show(target):
-    """
-    Summarize a trace: agents, calls per agent and tool, failures.
-
-    TARGET is a trace directory, or a session name under this project's
-    .toolbase/traces/ (a unique prefix is enough).
-    """
+def _resolve_trace_target(target: str) -> Path:
+    """A trace directory, or a unique session-name prefix under this
+    project's .toolbase/traces/; exits with a message otherwise."""
     from .trace.session import traces_dir
-    from .trace.summary import format_show, is_trace_dir
+    from .trace.summary import is_trace_dir
     path = Path(target).expanduser()
     if not is_trace_dir(path):
         root, _src = _resolve_active_project_root()
@@ -7365,7 +7360,79 @@ def trace_show(target):
             click.echo(f"No trace at {target} (no calls.jsonl or agents.jsonl), "
                        f"and no session by that name in {tdir}.", err=True)
             sys.exit(1)
-    click.echo(format_show(path))
+    return path
+
+
+@trace_group.command(name="show", short_help="Summarize one trace.")
+@click.argument("target")
+def trace_show(target):
+    """
+    Summarize a trace: agents, calls per agent and tool, failures.
+
+    TARGET is a trace directory, or a session name under this project's
+    .toolbase/traces/ (a unique prefix is enough).
+    """
+    from .trace.summary import format_show
+    click.echo(format_show(_resolve_trace_target(target)))
+
+
+@trace_group.command(name="export", short_help="Write a shareable bundle with a viewer.")
+@click.argument("target")
+@click.option("-o", "--output", "output", required=True, type=click.Path(file_okay=False),
+              help="Bundle directory to write (created; must be empty unless --force).")
+@click.option("--sandbox", type=click.Path(exists=True, file_okay=False),
+              help="The agents' working directory: hash its files, match them to the "
+                   "calls and commands that wrote them, copy the small ones.")
+@click.option("--commands", "commands", multiple=True, metavar="KIND:PATH",
+              help="Shell commands from transcripts: claude:<path> (Claude Code), "
+                   "codex:<path> (Codex rollouts), conjure:<session dir>. Repeatable.")
+@click.option("--copy", "copy_mode", type=click.Choice(["graph", "all", "none"]), default="graph",
+              show_default=True, help="Which small files to copy: those in the graph "
+              "(named by a call or command), every sandbox file, or none.")
+@click.option("--copy-limit", default="1MB", show_default=True,
+              help="Copy files up to this size; larger ones are listed with their hash.")
+@click.option("--copy-total", default="256MB", show_default=True,
+              help="Stop copying when the copies reach this total.")
+@click.option("--hash-limit", default=None,
+              help="Do not hash sandbox files larger than this (default: hash all).")
+@click.option("--no-redact", is_flag=True,
+              help="Keep absolute sandbox and home paths (default: <sandbox> and ~).")
+@click.option("--force", is_flag=True, help="Replace an existing bundle at --output.")
+def trace_export(target, output, sandbox, commands, copy_mode, copy_limit, copy_total,
+                 hash_limit, no_redact, force):
+    """
+    Export a trace as a self-contained bundle: trace.json (nodes and edges),
+    prov.json (W3C PROV-JSON), files.json (every file with hash and origin),
+    files/ (small files copied) and index.html, a viewer that opens from disk.
+
+    Works offline on a finished, crashed or killed run. TARGET is a trace
+    directory or a session name in this project. Anchors such as
+    index.html#c-<id>, #cmd-<id>, #ag-<id> and #f-<sha8> open a node.
+
+    \b
+        tb trace export 20261115T221803Z-3fa9c2 -o proof/ \\
+            --sandbox workspace/ --commands conjure:conjure-native/sessions/run1
+    """
+    from .trace.export import ExportError, export, parse_size
+    path = _resolve_trace_target(target)
+    try:
+        sizes = dict(copy_limit=parse_size(copy_limit), copy_total=parse_size(copy_total),
+                     hash_limit=parse_size(hash_limit) if hash_limit else None)
+        r = export(path, Path(output), sandbox=Path(sandbox) if sandbox else None,
+                   commands=list(commands), copy_mode=copy_mode, redact=not no_redact,
+                   force=force, progress=lambda m: click.echo(f"  {m}", err=True), **sizes)
+    except (ExportError, ValueError, FileNotFoundError) as exc:
+        click.echo(f"Error: {exc}", err=True)
+        sys.exit(1)
+    c = r["meta"]["counts"]
+    click.echo(f"Wrote {r['out']} ({r['bundle_bytes'] / 1e6:.1f} MB, {r['seconds']} s)")
+    click.echo(f"  {c['agents']} agents, {c['calls']} calls ({c['failed_calls']} failed), "
+               f"{c['commands']} commands, {c['messages']} messages")
+    click.echo(f"  {c['files']} files ({c['unknown_origin']} of unknown origin), "
+               f"{c['copied']} copied ({c['copied_bytes'] / 1e6:.1f} MB)")
+    for w in r["meta"]["warnings"]:
+        click.echo(f"  note: {w}")
+    click.echo(f"Open {Path(r['out']) / 'index.html'}")
 
 @serve.command('enable', short_help='Persistently enable a toolkit by default.')
 @click.argument('toolkit')

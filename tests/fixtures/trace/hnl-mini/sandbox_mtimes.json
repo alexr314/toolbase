@@ -1,0 +1,11 @@
+{
+ "_logs/feynrules_validate/wolframscript_stderr.log": 1794780162.0108347,
+ "_logs/feynrules_validate/wolframscript_stdout.log": 1794780162.0101073,
+ "assays/hnl-mu-8tev/models/HNL_mu_UFO_logs/wolframscript_stderr.log": 1794780199.6213095,
+ "assays/hnl-mu-8tev/models/HNL_mu_UFO_logs/wolframscript_stdout.log": 1794780199.6211264,
+ "assays/hnl-mu-8tev/models/hnl_mu.fr": 1794780134.9436893,
+ "assays/hnl-mu-8tev/note/figures.py": 1794787547.9150589,
+ "research/calls/ArxivSearch-20261115T220117Z-bdd4a520.xml": 1794780077.997574,
+ "research/results/ArxivSearch-20261115T220117Z-bdd4a520.json": 1794780077.9980886,
+ "research/results/HEPDataSearch-20261115T220121Z-b1406850.json": 1794780081.7399826
+}

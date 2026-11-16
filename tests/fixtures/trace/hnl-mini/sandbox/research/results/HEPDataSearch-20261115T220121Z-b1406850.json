@@ -1,0 +1,138 @@
+{
+  "status": "ok",
+  "schema": "hepdata-1.0",
+  "query": "heavy Majorana neutrino same-sign dimuon jets 8 TeV",
+  "total": 6836,
+  "count": 5,
+  "results": [
+    {
+      "inspire_id": "1696330",
+      "version": 1,
+      "source_id": "HEPData:ins1696330/v1",
+      "title": "Search for heavy Majorana or Dirac neutrinos and right-handed $W$ gauge bosons in final states with two charged leptons and two jets at $\\sqrt{s}$ = 13 TeV with the ATLAS detector",
+      "collaborations": [
+        "ATLAS"
+      ],
+      "arxiv_id": "arXiv:1809.11105",
+      "journal_info": "JHEP 01 (2019) 016",
+      "year": "2019",
+      "hepdata_doi": "10.17182/hepdata.83786",
+      "last_updated": "2018-10-09T18:21:12",
+      "total_tables": 16,
+      "tables": [
+        "Table 1",
+        "Table 2",
+        "Table 3",
+        "Table 4",
+        "Table 5",
+        "Table 6",
+        "Table 7",
+        "Table 8",
+        "Table 9",
+        "Table 10",
+        "Table 11",
+        "Table 12",
+        "Table 13",
+        "Table 14",
+        "Table 15",
+        "Table 16"
+      ]
+    },
+    {
+      "inspire_id": "3222878",
+      "version": 1,
+      "source_id": "HEPData:ins3222878/v1",
+      "title": "Search for heavy neutral leptons in top quark decays with same-sign, same-flavor dilepton final states in proton-proton collisions at $\\sqrt{s}$ = 13 TeV",
+      "collaborations": [
+        "CMS"
+      ],
+      "arxiv_id": "arXiv:2611.04904",
+      "journal_info": "CMS-B2G-24-023",
+      "year": "2026",
+      "hepdata_doi": "10.17182/hepdata.170072",
+      "last_updated": "2026-11-05T09:21:19",
+      "total_tables": 26,
+      "tables": [
+        "Figure 2 a",
+        "Figure 2 b",
+        "Figure 2 c",
+        "Figure 2 d",
+        "Figure 3 a",
+        "Figure 3 b",
+        "Figure 3 c",
+        "Figure 3 d",
+        "Figure 4 a",
+        "Figure 4 b",
+        "Figure 4 c",
+        "Figure 4 d",
+        "Figure 5 a",
+        "Figure 5 b",
+        "Figure 5 c",
+        "Figure 5 d",
+        "Figure 10 a",
+        "Figure 10 b",
+        "Figure 10 c",
+        "Figure 10 d",
+        "Figure 11 a",
+        "Figure 11 b",
+        "Figure 11 c",
+        "Figure 11 d",
+        "Figure 12 a",
+        "Figure 12 b"
+      ]
+    },
+    {
+      "inspire_id": "32390",
+      "version": 1,
+      "source_id": "HEPData:ins32390/v1",
+      "title": "Neutrino production of same sign dimuons at the Fermilab Tevatron",
+      "collaborations": [],
+      "arxiv_id": null,
+      "journal_info": "Z.Phys.C 57 (1993) 1-12",
+      "year": "1993",
+      "hepdata_doi": "10.17182/hepdata.14493",
+      "last_updated": "1993-11-24T00:00:00",
+      "total_tables": 2,
+      "tables": [
+        "Table 1",
+        "Table 2"
+      ]
+    },
+    {
+      "inspire_id": "1641267",
+      "version": 1,
+      "source_id": "HEPData:ins1641267/v1",
+      "title": "Constraints on the double-parton scattering cross section from same-sign W boson pair production in proton-proton collisions at $\\sqrt{s} =$ 8 TeV",
+      "collaborations": [
+        "CMS"
+      ],
+      "arxiv_id": "arXiv:1712.02280",
+      "journal_info": "JHEP 02 (2018) 032",
+      "year": "2018",
+      "hepdata_doi": "10.17182/hepdata.89148",
+      "last_updated": "2019-03-26T14:25:46",
+      "total_tables": 1,
+      "tables": [
+        "Table1"
+      ]
+    },
+    {
+      "inspire_id": "1753976",
+      "version": 1,
+      "source_id": "HEPData:ins1753976/v1",
+      "title": "Evidence for WW production from double-parton interactions in proton-proton collisions at $\\sqrt{s} =$ 13 TeV",
+      "collaborations": [
+        "CMS"
+      ],
+      "arxiv_id": "arXiv:1909.06265",
+      "journal_info": "Eur.Phys.J.C 80 (2020) 41",
+      "year": "2020",
+      "hepdata_doi": "10.17182/hepdata.90950",
+      "last_updated": "2020-02-12T14:30:58",
+      "total_tables": 1,
+      "tables": [
+        "Table1"
+      ]
+    }
+  ]
+}

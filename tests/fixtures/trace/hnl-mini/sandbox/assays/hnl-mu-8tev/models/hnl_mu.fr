@@ -1,0 +1,52 @@
+(* Heavy Majorana neutrino N mixing only with nu_mu: add-on to SM.fr.
+   Specification: ../../../inputs/model.md.  Free parameters: mN, VmuN. *)
+M$ModelName = "HNL_mu";
+
+M$InteractionOrderHierarchy = {
+  {QCD, 1},
+  {QED, 2},
+  {NP,  1}
+};
+M$InteractionOrderLimit = { {QCD, 99}, {QED, 99}, {NP, 99} };
+
+M$Parameters = {
+  VmuN == {
+    ParameterType    -> External,
+    BlockName        -> HNLMIX,
+    OrderBlock       -> 1,
+    Value            -> 1.0,
+    ComplexParameter -> False,
+    InteractionOrder -> {NP, 1},
+    Description      -> "N-nu_mu mixing element (real)"
+  }
+};
+
+M$ClassesDescription = {
+  F[100] == {
+    ClassName        -> Nhnl,
+    SelfConjugate    -> True,
+    Mass             -> {mN, 100},
+    Width            -> {WN, 1},
+    PDG              -> 9900014,
+    ParticleName     -> "N1",
+    PropagatorLabel  -> "N",
+    PropagatorType   -> Straight,
+    PropagatorArrow  -> None,
+    FullName         -> "HeavyNeutrino"
+  }
+};
+
+LNkin := Block[{lor1},
+  (I/2) Nhnlbar.Ga[lor1].del[Nhnl, lor1] - (mN/2) Nhnlbar.Nhnl ];
+
+(* -g/sqrt2 V W^-_a mubar g^a P_L N + hc ;  W^- field = Wbar *)
+LNW := Block[{lor1},
+  - gw/Sqrt[2] VmuN Wbar[lor1] mubar.Ga[lor1].ProjM.Nhnl ];
+(* -g/(2 cW) V Z_a nubar_mu g^a P_L N + hc *)
+LNZ := Block[{lor1},
+  - gw/(2 cw) VmuN Z[lor1] vmbar.Ga[lor1].ProjM.Nhnl ];
+(* -g mN/(2 mW) V h nubar_mu P_R N + hc *)
+LNH := - gw mN/(2 MW) VmuN H vmbar.ProjP.Nhnl;
+
+LNint := LNW + LNZ + LNH;
+LBSM  := LNkin + LNint + HC[LNint];

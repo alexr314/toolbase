@@ -96,4 +96,8 @@ exclude = ["tests*"]
 "toolbase" = [
     "templates/*",
     "templates/**/*",
+    # The trace bundle's viewer (inlined into index.html by `tb trace export`).
+    "trace/viewer/*.html",
+    "trace/viewer/*.css",
+    "trace/viewer/*.js",
 ]
