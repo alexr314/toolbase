@@ -7398,8 +7398,9 @@ def trace_show(target):
 @click.option("--no-redact", is_flag=True,
               help="Keep absolute sandbox and home paths (default: <sandbox> and ~).")
 @click.option("--force", is_flag=True, help="Replace an existing bundle at --output.")
+@click.option("--title", default=None, help="The run's name in the viewer (default: the session).")
 def trace_export(target, output, sandbox, commands, copy_mode, copy_limit, copy_total,
-                 hash_limit, no_redact, force):
+                 hash_limit, no_redact, force, title):
     """
     Export a trace as a self-contained bundle: trace.json (nodes and edges),
     prov.json (W3C PROV-JSON), files.json (every file with hash and origin),
@@ -7420,7 +7421,7 @@ def trace_export(target, output, sandbox, commands, copy_mode, copy_limit, copy_
                      hash_limit=parse_size(hash_limit) if hash_limit else None)
         r = export(path, Path(output), sandbox=Path(sandbox) if sandbox else None,
                    commands=list(commands), copy_mode=copy_mode, redact=not no_redact,
-                   force=force, progress=lambda m: click.echo(f"  {m}", err=True), **sizes)
+                   force=force, title=title, progress=lambda m: click.echo(f"  {m}", err=True), **sizes)
     except (ExportError, ValueError, FileNotFoundError) as exc:
         click.echo(f"Error: {exc}", err=True)
         sys.exit(1)

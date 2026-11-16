@@ -346,6 +346,7 @@ def export(
     hash_limit: Optional[int] = None,
     redact: bool = True,
     force: bool = False,
+    title: Optional[str] = None,
     progress: Optional[Callable[[str], None]] = None,
 ) -> Dict[str, Any]:
     """Write the bundle; return a summary (counts, sizes, warnings)."""
@@ -792,6 +793,7 @@ def export(
 
     from .. import __version__ as tb_version  # type: ignore[attr-defined]
     meta = {
+        "title": title,
         "session": (trace_dir.parent.name if trace_dir.name in ("trace", "traces", ".")
                     else trace_dir.name),
         "exported_at": _iso(time.time()),

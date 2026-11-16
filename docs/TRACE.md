@@ -319,18 +319,36 @@ replace Conjure's per-turn view.
 
 ### The viewer
 
-`index.html` has a timeline (one lane per agent in spawn order; calls coloured
-by toolkit, commands below them, failures red; spawns and messages drawn
-between lanes; wheel zoom, drag pan), a provenance view (from the selected node,
-its inputs to a chosen depth on the left and what used it on the right; dashed
-edges are inferred; optionally agents and messages), an activity list, a file
-index of every file with its origin, and the messages. Filters: search, agent,
-toolkit, tool, time window, failed only. The detail panel shows arguments,
-result head, files with hashes, a spawn's brief, a message's body.
+`index.html` opens on the **agent graph**: the agents as a tree of cards in
+spawn order (label, model and engine, calls, shell commands, failures,
+duration, ended or not, messages received and sent), with the hierarchy and
+message links toggled, and zoom, pan and fit. Selecting an agent opens its
+**work sequence** beside the graph, in time order:
 
-Anchors select a node on load: `index.html#c-<id>`, `#cmd-<id>`, `#ag-<id>`,
-`#m-<id>` and `#f-<sha256 prefix>` (8 hex digits or more; a file that is not a
-graph node opens its row). A citation can link straight to a call.
+- tool calls as boxes in the note's `agenttool` citation style (a thin orange
+  frame, the tool on the top left, `toolkit@version` on the top right, the
+  agent-relative time and duration, the arguments, the result, files with short
+  hashes and sizes; red with the error when the call failed). A box opens to
+  the full arguments, the result (JSON pretty-printed), every file read and
+  written, and a toolkit's inner calls (`parent`) nested under the call that
+  launched them;
+- shell commands and file writes as the same box with a grey frame, the
+  command in monospace, its script with hash, output, and the files it wrote
+  (marked inferred where they are);
+- the spawn brief at the top, and messages sent and received as cards between
+  the boxes.
+
+The sequence renders in chunks as it scrolls, and filters by text, kind, tool
+and failure. Secondary tabs: **Provenance** (from a file, call or command, its
+inputs to a chosen depth and what used it; dashed links are inferred),
+**Timeline** (a lane per agent), **Files** (every file, with origin,
+generator and copy). Light theme by default, dark on the toggle. `--title`
+names the run in the header.
+
+Anchors open the viewer at a node: `index.html#c-<id>` and `#cmd-<id>` open the
+agent with that box expanded, scrolled into view and highlighted; `#ag-<id>`
+opens the agent; `#m-<id>` the message; `#f-<sha256 prefix>` (8 or more hex
+digits) the file's provenance, or its row when no call or command names it.
 
 ### Limits
 

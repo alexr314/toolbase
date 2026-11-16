@@ -1,90 +1,115 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="generator" content="toolbase trace export">
-<title>Trace __TITLE__</title>
+<title>__TITLE__ · provenance trace</title>
 <style>
 /*__CSS__*/
 </style>
 </head>
 <body>
-<header id="top">
-  <h1 id="title">Trace</h1>
-  <div class="sum" id="summary"></div>
-  <button id="warnbtn" class="warnbtn" style="display:none"></button>
-  <button id="themebtn" title="Toggle light/dark">Theme</button>
+<header id="hdr">
+  <div class="hdr-main">
+    <div class="hdr-title">
+      <div class="eyebrow">Provenance trace</div>
+      <h1 id="run-title">__TITLE__</h1>
+    </div>
+    <dl class="hdr-facts" id="facts"></dl>
+    <div class="hdr-tools">
+      <button class="btn ghost" id="notes-btn" hidden></button>
+      <button class="btn ghost icon" id="theme-btn" title="Light or dark theme" aria-label="Toggle theme">
+        <svg viewBox="0 0 16 16" width="15" height="15"><path d="M8 1.5a6.5 6.5 0 1 0 0 13 6.5 6.5 0 0 0 0-13Zm0 1.5v10a5 5 0 0 1 0-10Z" fill="currentColor"/></svg>
+      </button>
+    </div>
+  </div>
+  <nav id="tabs" role="tablist">
+    <button data-tab="agents" class="on">Agents</button>
+    <button data-tab="prov">Provenance</button>
+    <button data-tab="timeline">Timeline</button>
+    <button data-tab="files">Files</button>
+  </nav>
 </header>
-<div id="warnbox"><strong>Export notes</strong><ul id="warnlist"></ul></div>
-<div id="app">
-  <aside id="filters">
-    <h3>Search</h3>
-    <input type="search" id="q" placeholder="tool, command, path, id…">
-    <h3>Show</h3>
-    <label><input type="checkbox" id="f-calls" checked> toolkit calls</label>
-    <label><input type="checkbox" id="f-cmds" checked> shell commands</label>
-    <label><input type="checkbox" id="f-msgs" checked> messages and spawns</label>
-    <label><input type="checkbox" id="f-failed"> failed only</label>
-    <h3>Time <span class="tiny" id="f-time-label"></span></h3>
-    <div class="row"><input type="text" id="f-t0" placeholder="from +0:00" size="7"><input type="text" id="f-t1" placeholder="to end" size="7"></div>
-    <div class="row"><button id="f-time-view" title="Use the timeline's visible window">from view</button><button id="f-time-clear">clear</button></div>
-    <h3>Agents <a class="tiny" id="f-agents-all">all</a> <a class="tiny" id="f-agents-none">none</a></h3>
-    <div id="f-agents"></div>
-    <h3>Toolkits</h3>
-    <div id="f-toolkits"></div>
-    <h3>Tools <a class="tiny" id="f-tools-all">all</a> <a class="tiny" id="f-tools-none">none</a></h3>
-    <input type="search" id="f-tools-q" placeholder="filter tools">
-    <div id="f-tools"></div>
-  </aside>
-  <section id="main">
-    <nav id="tabs">
-      <button data-tab="timeline" class="on">Timeline</button>
-      <button data-tab="graph">Provenance</button>
-      <button data-tab="activity">Activity</button>
-      <button data-tab="files">Files</button>
-      <button data-tab="messages">Messages</button>
-      <span class="spacer"></span><span class="hint" id="tabhint"></span>
-    </nav>
-    <div class="view on" id="v-timeline">
-      <div class="toolbar">
-        <button id="tl-fit">Fit</button><button id="tl-in">+</button><button id="tl-out">−</button>
-        <span class="tiny">wheel to zoom, drag to pan, click a mark for details</span>
-        <span class="spacer" style="flex:1"></span>
-        <span class="legend"><span>toolkit calls coloured by toolkit</span><span><i style="background:var(--cmd)"></i>command</span><span><i style="background:var(--bad)"></i>failed</span><span><i style="background:var(--spawn)"></i>spawn</span><span><i style="background:var(--msg)"></i>message</span></span>
+<div id="notes" class="popover" hidden><h3>Export notes</h3><ul id="notes-list"></ul></div>
+
+<main id="views">
+  <section class="view on" id="v-agents">
+    <div class="graph-pane" id="graph-pane">
+      <div class="pane-bar">
+        <span class="pane-title">Agents</span>
+        <label class="tog"><input type="checkbox" id="e-tree" checked><span class="sw-line tree"></span>hierarchy</label>
+        <label class="tog"><input type="checkbox" id="e-msg" checked><span class="sw-line msg"></span>messages</label>
+        <span class="grow"></span>
+        <div class="seg"><button id="z-out" title="Zoom out">−</button><span id="z-pct">100%</span><button id="z-in" title="Zoom in">+</button><button id="z-fit">Fit</button></div>
       </div>
-      <div class="scroll" id="tl-scroll"><svg id="tl"></svg></div>
+      <div class="graph-canvas" id="graph-canvas"><div class="graph-world" id="graph-world"><svg id="graph-edges"></svg><div id="graph-cards"></div></div></div>
     </div>
-    <div class="view" id="v-graph">
-      <div class="toolbar">
-        <span class="tiny">inputs</span><select id="g-up"><option>1</option><option>2</option><option selected>3</option><option>6</option><option value="99">all</option></select>
-        <span class="tiny">uses</span><select id="g-down"><option>0</option><option selected>1</option><option>2</option><option>3</option><option value="99">all</option></select>
-        <label class="tiny"><input type="checkbox" id="g-ctx"> agents and messages</label>
-        <button id="g-fit">Fit</button>
-        <span class="tiny" id="g-info"></span>
+    <div class="seq-pane" id="seq-pane">
+      <div class="seq-head" id="seq-head"></div>
+      <div class="seq-bar" id="seq-bar">
+        <input type="search" id="s-q" placeholder="Search this agent's work">
+        <div class="seg kinds" id="s-kinds"><button data-k="call" class="on">Tool calls</button><button data-k="command" class="on">Shell</button><button data-k="message" class="on">Messages</button></div>
+        <select id="s-tool"><option value="">All tools</option></select>
+        <label class="tog"><input type="checkbox" id="s-failed">failed only</label>
+        <span class="grow"></span>
+        <button class="btn ghost small" id="s-expand">Expand all</button>
       </div>
-      <div class="scroll" id="g-scroll" style="overflow:hidden"><svg id="graph"></svg></div>
-    </div>
-    <div class="view" id="v-activity">
-      <div class="toolbar"><span class="tiny" id="a-info"></span></div>
-      <div class="scroll" id="a-scroll"></div>
-    </div>
-    <div class="view" id="v-files">
-      <div class="toolbar">
-        <input type="search" id="fl-q" placeholder="path or hash prefix" size="30">
-        <select id="fl-origin"><option value="">any origin</option><option value="recorded">generated by a call or a named write</option><option value="inferred">generated (inferred)</option><option value="unknown">unknown origin</option><option value="absent">not in the sandbox now</option></select>
-        <label class="tiny"><input type="checkbox" id="fl-graph"> in the graph only</label>
-        <span class="tiny" id="fl-info"></span>
-      </div>
-      <div class="scroll" id="fl-scroll"></div>
-    </div>
-    <div class="view" id="v-messages">
-      <div class="scroll" id="m-scroll"></div>
+      <div class="seq-scroll" id="seq-scroll"><div class="seq" id="seq"></div></div>
     </div>
   </section>
-  <aside id="detail"><div class="empty">Select a call, command, agent, file or message.<br><br>Links of the form <code>index.html#c-…</code>, <code>#cmd-…</code>, <code>#ag-…</code> and <code>#f-&lt;sha&gt;</code> open here.</div></aside>
-</div>
-<div id="tip"></div>
+
+  <section class="view" id="v-prov">
+    <div class="prov-pane">
+      <div class="pane-bar">
+        <span class="pane-title">Provenance</span>
+        <span class="lbl">inputs</span><select id="p-up"><option>1</option><option>2</option><option selected>3</option><option>6</option><option value="99">all</option></select>
+        <span class="lbl">used by</span><select id="p-down"><option>0</option><option selected>1</option><option>2</option><option value="99">all</option></select>
+        <span class="grow"></span>
+        <span class="muted small" id="p-info"></span>
+        <div class="seg"><button id="p-fit">Fit</button></div>
+      </div>
+      <div class="graph-canvas" id="p-canvas"><div class="graph-world" id="p-world"><svg id="p-edges"></svg><div id="p-cards"></div></div></div>
+    </div>
+    <aside class="side" id="p-side"></aside>
+  </section>
+
+  <section class="view" id="v-timeline">
+    <div class="tl-pane">
+      <div class="pane-bar">
+        <span class="pane-title">Timeline</span>
+        <div class="seg kinds" id="t-kinds"><button data-k="call" class="on">Tool calls</button><button data-k="command" class="on">Shell</button><button data-k="message" class="on">Messages</button></div>
+        <label class="tog"><input type="checkbox" id="t-failed">failed only</label>
+        <span class="grow"></span>
+        <span class="muted small">scroll to zoom · drag to pan · click to open</span>
+        <div class="seg"><button id="t-out">−</button><button id="t-in">+</button><button id="t-fit">Fit</button></div>
+      </div>
+      <div class="tl-scroll" id="tl-scroll"><svg id="tl"></svg></div>
+    </div>
+  </section>
+
+  <section class="view" id="v-files">
+    <div class="files-pane">
+      <div class="pane-bar">
+        <span class="pane-title">Files</span>
+        <input type="search" id="f-q" placeholder="Path, hash prefix or call id">
+        <select id="f-origin">
+          <option value="">Any origin</option>
+          <option value="recorded">Generated by a call or named write</option>
+          <option value="inferred">Generated (inferred)</option>
+          <option value="unknown">Unknown origin</option>
+          <option value="absent">Not in the sandbox now</option>
+        </select>
+        <label class="tog"><input type="checkbox" id="f-graph">named by a call or command</label>
+        <span class="grow"></span>
+        <span class="muted small" id="f-info"></span>
+      </div>
+      <div class="tbl-scroll" id="f-scroll"></div>
+    </div>
+    <aside class="side" id="f-side"></aside>
+  </section>
+</main>
+<div id="tip" role="tooltip"></div>
 <script type="application/json" id="trace-data">__DATA__</script>
 <script>
 /*__JS__*/

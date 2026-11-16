@@ -450,7 +450,18 @@ def test_viewer_embeds_data_and_anchors(run, tmp_path):
     # the anchor router knows each prefix
     for prefix in ("c|cmd", "^f-", "location.hash", "hashchange"):
         assert prefix in html
+    # the agent graph and the work sequence with its tool-call boxes
+    for part in ('id="graph-canvas"', 'id="seq"', '"tbox"', "focusItem", 'data-theme="light"'):
+        assert part in html, part
     assert len(html) < 2_000_000
+
+
+def test_viewer_title(run, tmp_path):
+    out = tmp_path / "b"
+    r = export(run / "trace", out, title="hnl <run>")
+    assert r["meta"]["title"] == "hnl <run>"
+    html = (out / "index.html").read_text(encoding="utf-8")
+    assert "<title>hnl &lt;run&gt; · provenance trace</title>" in html and "hnl <run>" not in html.split("<script")[0]
 
 
 def test_viewer_js_parses(run, tmp_path):

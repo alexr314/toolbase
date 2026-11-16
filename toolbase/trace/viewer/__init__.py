@@ -47,10 +47,11 @@ def render(trace_doc: Dict[str, Any], file_rows: List[Dict[str, Any]]) -> str:
     data = {"meta": trace_doc.get("meta", {}), "nodes": trace_doc.get("nodes", []),
             "edges": trace_doc.get("edges", []), "files": compact_files(file_rows)}
     page = _asset("viewer.html")
-    title = _html.escape(str(data["meta"].get("session") or ""))
+    meta = data["meta"]
+    title = _html.escape(str(meta.get("title") or meta.get("session") or "trace"))
+    page = page.replace("__TITLE__", title)
     head, _, rest = page.partition("/*__CSS__*/")
     mid, _, tail = rest.partition("/*__JS__*/")
     pre_data, _, post_data = mid.partition("__DATA__")
-    head = head.replace("__TITLE__", title)
     return "".join([head, _asset("viewer.css"), pre_data, embed_json(data), post_data,
                     _asset("viewer.js"), tail])
