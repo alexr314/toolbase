@@ -1,7 +1,7 @@
 """Serve defaults: ``~/.toolbase/serve.yaml`` (user) and
 ``<project>/.toolbase/serve.yaml`` (project).
 
-This file is intentionally small. It carries only two things:
+This file is intentionally small. It carries two defaults:
 
 1. ``default.loadout`` — the name of the active loadout (which curated
    tool set ``tb serve`` exposes). This is the canonical way to choose
@@ -13,6 +13,10 @@ This file is intentionally small. It carries only two things:
 2. ``default.disabled`` — an absolute blocklist applied on top of any
    active loadout. Toolkits / tools listed here are never served, no
    matter what the active loadout says.
+
+Plus one top-level switch, ``trace: true|false``: whether ``tb serve``
+records every tool call to ``<project>/.toolbase/traces/`` (see
+``toolbase.trace``). ``tb trace on|off`` writes it.
 
 Two-layer resolution: the project-level ``serve.yaml`` (if present)
 overrides the user-level one. ``default.loadout`` is project-wins;
@@ -73,15 +77,19 @@ class DefaultBlock:
 
 @dataclass
 class ServeConfig:
-    """Top-level ``serve.yaml`` shape (defaults only)."""
+    """Top-level ``serve.yaml`` shape: the defaults block, plus ``trace``
+    (record every tool call to ``.toolbase/traces/``; None = unset)."""
 
     default: DefaultBlock = field(default_factory=DefaultBlock)
+    trace: Optional[bool] = None
 
     def to_yaml_dict(self) -> dict:
         out: dict = {}
         d = self.default.to_yaml_dict()
         if d:
             out["default"] = d
+        if self.trace is not None:
+            out["trace"] = self.trace
         return out
 
 
@@ -113,6 +121,11 @@ def load_serve_config(path: Path = SERVE_CONFIG_PATH) -> ServeConfig:
         )
 
     cfg = ServeConfig()
+
+    trace = raw.get("trace")
+    if trace is not None and not isinstance(trace, bool):
+        raise ServeConfigError(f"{path}: 'trace' must be a boolean (true/false)")
+    cfg.trace = trace
 
     default_raw = raw.get("default") or {}
     if not isinstance(default_raw, dict):
@@ -168,6 +181,7 @@ def merge_serve_configs(user: ServeConfig, project: ServeConfig) -> ServeConfig:
       repeat it).
     """
     merged = ServeConfig()
+    merged.trace = project.trace if project.trace is not None else user.trace
     merged.default.loadout = project.default.loadout or user.default.loadout
     # A mode toggle: on if either layer turns it on (the CLI flag is the
     # per-invocation override either way).

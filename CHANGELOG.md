@@ -6,6 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/), and this
 
 ---
 
+## [Unreleased]
+
+### Added
+
+- **Provenance trace, phase 1: an optional record of every tool call.** Off by default; with it off nothing changes. Turned on per project with `tb trace on` (`trace: true` in `.toolbase/serve.yaml`, read when `serve` starts), per session with `TOOLBASE_TRACE=1` (and `TOOLBASE_TRACE_DIR`), per hand-started server with `toolbase serve --trace [DIR]`, or in-process with `Orchestrator(..., trace=Trace(dir, agent=...))`.
+
+  Each session writes `<project>/.toolbase/traces/<session>/`: `agents.jsonl` (`agent_started` / `agent_ended`, with parent, model, engine and harness) and `calls.jsonl`, one `toolbase-call/1` record per call with the agent, toolkit and the version actually served, tool, sanitised arguments, outcome, a result digest, and the files named in the arguments and result with size, mtime and sha256. Records are appended and flushed one per line, safe across threads and processes, so a killed run keeps everything up to the kill. Each traced result ends with a `[toolbase call <id>]` line the agent can cite. A trace failure is logged and never affects the call.
+
+  Toolkits can see the call they are serving (`toolbase.trace.current()`, sent in the MCP request `_meta`) and record work done later on its behalf with `parent` set (`toolbase.trace.child_call`, `record_call`), for jobs that run a tool in a worker. `tb trace status`, `tb trace list` and `tb trace show <session>` inspect it. See `docs/TRACE.md`.
+
+---
+
 ## [0.16.0] — 2026-09-15
 
 ### Added
