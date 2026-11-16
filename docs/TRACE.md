@@ -1,13 +1,13 @@
 # Provenance trace
 
-An optional record of every toolkit call `toolbase` serves: which agent made
+An optional trace of every toolkit call `toolbase` serves: which agent made
 it, which tool at which toolkit version, the arguments, the outcome, and the
 files it named. Off by default. With it off, nothing below happens and serve
 behaves exactly as before.
 
 toolbase writes the trace; [tooltrace](https://github.com/tonymenzo/tooltrace)
-reads it. tooltrace owns the record format (its `docs/FORMAT.md`, which this
-page's record sections follow) and turns a trace into a shareable bundle with
+reads it. tooltrace owns the trace format (its `docs/FORMAT.md`, which this
+page's entry sections follow) and turns a trace into the run's record, a shareable directory with
 an offline viewer. See [Export and viewing](#export-and-viewing).
 
 ## Turning it on
@@ -35,8 +35,8 @@ tool with versions, failures).
 A trace directory holds two append-only JSONL files. Every line is written
 with one `write(2)` on an `O_APPEND` descriptor under an exclusive `flock`,
 so threads, several orchestrators in one process and several processes can
-share a directory, and a killed run keeps every record up to the kill. The
-directory is created with the first record.
+share a directory, and a killed run keeps every entry up to the kill. The
+directory is created with the first entry.
 
 ### `agents.jsonl`
 
@@ -83,13 +83,13 @@ own agents (below); the orchestrator never registers one for them.
   it, any other by absolute path. Hashed when at most `hash_limit` bytes
   (default 100 MB; `Trace(hash_limit=…)` or `TOOLBASE_TRACE_HASH_LIMIT`),
   else `sha256` is null. At most 200 files per call.
-- `parent`: null for calls the orchestrator records; set by toolkits for
-  work they record on a call's behalf (below).
+- `parent`: null for calls the orchestrator traces; set by toolkits for
+  work they trace on a call's behalf (below).
 
 ### The call id in the result
 
 With tracing on, the text returned to the agent gains one last line,
-`[toolbase call <id>]`, so the agent can cite the call. If the record could
+`[toolbase call <id>]`, so the agent can cite the call. If the entry could
 not be written, no line is added.
 
 ### Failure never reaches the call
@@ -126,7 +126,7 @@ Module-level `toolbase.trace.register_agent(dir, id, …)` and
 `end_agent(dir, id)` do the same without a handle. A harness may write its own
 files (`messages.jsonl`) into the same directory; toolbase ignores them.
 
-## For toolkits: the current call and linked records
+## For toolkits: the current call and linked entries
 
 With tracing on, the orchestrator sends each call's trace context in the MCP
 request `_meta` under `"toolbase/trace"`, and the toolkit host makes it
@@ -152,7 +152,7 @@ same thread, not in threads or processes it starts. Hand it over explicitly:
   `current()` in that process reads `TOOLBASE_TRACE_CALL`,
   `TOOLBASE_TRACE_DIR` and `TOOLBASE_TRACE_AGENT`.
 
-To record work done later on a call's behalf, linked to it by `parent`:
+To trace work done later on a call's behalf, linked to it by `parent`:
 
 ```python
 # heptapod SubmitJob.execute (runs inside the traced SubmitJob call)
@@ -164,21 +164,21 @@ return f"submitted job {job.id}"
 with trace.child_call(ctx, tool_name, tool_args) as call:
     call.result = run_tool(tool_name, tool_args)          # text result
     call.files += manifest_paths                          # declared outputs
-# record written: parent = SubmitJob's id, same agent/toolkit/version,
+# entry written: parent = SubmitJob's id, same agent/toolkit/version,
 # ok false (and the exception re-raised) if the block raised.
 # call.id is known up front, e.g. for the job's status output.
 ```
 
 `child_call(ctx, tool, args=None, *, toolkit=None, version=None, files=None)`
 times the block, binds `current()` to the inner call inside it (so nested work
-links to the inner call), and writes the record when the block exits. Set
+links to the inner call), and writes the entry when the block exits. Set
 `call.result`, optionally `call.ok` / `call.error`, and extend `call.files`
 with paths the tool declares (a manifest); paths named in `args` and the
 result are found as for any call. With `ctx` None it does nothing.
 
 The lower-level `trace.record_call(ctx, tool=…, args=…, ok=…, error=…,
 result=…, ts_start=…, ts_end=…, toolkit=…, version=…, files=…, parent=…,
-id=…)` writes one record and returns its id; it never raises (returns None on
+id=…)` writes one entry and returns its id; it never raises (returns None on
 failure or when `ctx` is None). `parent` defaults to `ctx["call_id"]`.
 
 ## Limits
@@ -187,7 +187,7 @@ failure or when `ctx` is None). `parent` defaults to `ctx["call_id"]`.
   are attributed to the session's agent.
 - Files a tool writes but neither names in its arguments or result nor
   declares through `child_call` are not seen during the run.
-- A call still running when the process dies has no record (records are
+- A call still running when the process dies has no entry (entries are
   written when a call ends).
 
 ## Export and viewing
@@ -197,12 +197,12 @@ Export and the viewer live in a separate package,
 capture side only and other harnesses' logs can be traced too.
 
 ```
-tb trace export <session|dir> -o bundle/ [--sandbox DIR] [--commands claude:PATH] [--title NAME]
+tb trace export <session|dir> -o record/ [--sandbox DIR] [--commands claude:PATH] [--title NAME]
 ```
 
 hands everything after the session to `tooltrace export` when tooltrace is
 importable, and otherwise says how to install it. `tooltrace export`,
 `tooltrace open` and `tooltrace validate` work on a trace directory directly.
-The format's required keys are checked against toolbase's own records in
+The format's required keys are checked against toolbase's own entries in
 `tests/test_trace.py` (a vendored copy of tooltrace's spec, so the test needs
 no tooltrace).

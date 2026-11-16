@@ -7268,7 +7268,7 @@ def trace_group():
         tb trace on | off | status     # the project setting (serve.yaml trace)
         tb trace list                  # sessions in this project
         tb trace show <session|dir>    # agents, calls per agent and tool, failures
-        tb trace export <session|dir> -o <bundle>   # via tooltrace, if installed
+        tb trace export <session|dir> -o <record-dir>   # via tooltrace, if installed
 
     For one session without touching the project: TOOLBASE_TRACE=1 (and
     optionally TOOLBASE_TRACE_DIR), or `toolbase serve --trace [DIR]`.
@@ -7381,16 +7381,16 @@ TOOLTRACE_HINT = ("Exporting and viewing traces is done by tooltrace, which is n
                   "then rerun this command.")
 
 
-@trace_group.command(name="export", short_help="Bundle a trace with a viewer (tooltrace).",
+@trace_group.command(name="export", short_help="Write the run's record with a viewer (tooltrace).",
                      context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
 @click.argument("target")
 @click.argument("args", nargs=-1, type=click.UNPROCESSED)
 def trace_export(target, args):
     """
-    Export a trace as a shareable bundle with an offline viewer.
+    Export a trace as the run's record: a shareable directory with an offline viewer.
 
     Delegates to `tooltrace export` (a separate package); every option after
-    TARGET is passed through, e.g. -o bundle/ --sandbox DIR --commands
+    TARGET is passed through, e.g. -o record/ --sandbox DIR --commands
     claude:PATH --title NAME. TARGET is a trace directory or a session name
     in this project. Without tooltrace installed, says how to get it.
     """
