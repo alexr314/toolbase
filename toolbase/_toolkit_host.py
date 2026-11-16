@@ -631,6 +631,17 @@ def main(argv: list[str] | None = None) -> int:
         )
         return 6
 
+    # Provenance trace on: let tools see the call being served through
+    # ``toolbase.trace.current()`` (the orchestrator sends it in each
+    # request's ``_meta``). Stdlib-only module; any failure leaves the
+    # plain server in place.
+    if os.environ.get("TOOLBASE_TRACE_HOST") == "1":
+        try:
+            from toolbase.trace.mcp_hooks import host_server_class
+            MCPServer = host_server_class(MCPServer)
+        except Exception as e:
+            sys.stderr.write(f"[toolbase-host] WARN: trace hook unavailable: {e}\n")
+
     server = MCPServer(
         tools=tool_instances,
         name=f"toolbase-{args.name}",

@@ -447,7 +447,7 @@ class _SectionedGroup(click.Group):
             "Installing & serving",
             ["search", "install", "uninstall", "use", "status", "list",
              "activate",
-             "deactivate", "serve", "connect", "disconnect", "logs"],
+             "deactivate", "serve", "connect", "disconnect", "logs", "trace"],
         ),
         (
             "Configuration",
@@ -7096,8 +7096,17 @@ def toolbase_config_dir() -> Path:
         'callable) with a warning; the rest are served bare.'
     ),
 )
+@click.option(
+    '--trace', 'trace_opt', is_flag=False, flag_value='', default=None,
+    metavar='[DIR]',
+    help=(
+        'Record every tool call to DIR (default '
+        '<project>/.toolbase/traces/<session>/). Overrides TOOLBASE_TRACE and '
+        'serve.yaml trace for this invocation. See `tb trace`.'
+    ),
+)
 @click.pass_context
-def serve(ctx, loadout_name, dry_run, call_timeout, no_tui, bare_flag):
+def serve(ctx, loadout_name, dry_run, call_timeout, no_tui, bare_flag, trace_opt):
     """
     Start the MCP server for the active loadout's tools.
 
@@ -7168,13 +7177,22 @@ def serve(ctx, loadout_name, dry_run, call_timeout, no_tui, bare_flag):
         _print_resolution(loadout, bare=bare)
         return
 
+    # Provenance trace: --trace, else TOOLBASE_TRACE, else serve.yaml trace.
+    trace = None
+    from .trace.session import resolve as _resolve_trace
+    trace_dir, _why = _resolve_trace(project_root, trace_opt)
+    if trace_dir is not None:
+        from .trace import Trace
+        trace = Trace(trace_dir,
+                      base=project_root if _src != "fallback" else Path.cwd())
+
     # The MCP stdio protocol owns this process's stdin/stdout, so we do NOT
     # use the module-level `console` here (which writes to stdout). The
     # orchestrator builds its own stderr-bound Console.
     from .serve.orchestrator import DEFAULT_CALL_TIMEOUT_S, serve as _serve_entry
     timeout_s = call_timeout if call_timeout is not None else DEFAULT_CALL_TIMEOUT_S
     rc = _serve_entry(no_tui=True, loadout=loadout, call_timeout_s=timeout_s,
-                      bare=bare)
+                      bare=bare, trace=trace)
     sys.exit(rc)
 
 
@@ -7232,6 +7250,157 @@ def _print_resolution(loadout, bare: bool = False) -> None:
         "config-gating. Run `tb list -v` for the tool-level view.[/dim]"
     )
 
+
+
+# ── tb trace ────────────────────────────────────────────────────────────
+
+
+@main.group(name="trace")
+def trace_group():
+    """
+    Record every tool call (the provenance trace) and inspect the records.
+
+    Off by default. With it on, each `toolbase serve` writes
+    calls.jsonl and agents.jsonl to <project>/.toolbase/traces/<session>/,
+    and each tool result ends with a `[toolbase call <id>]` line.
+
+    \b
+        tb trace on | off | status     # the project setting (serve.yaml trace)
+        tb trace list                  # sessions in this project
+        tb trace show <session|dir>    # agents, calls per agent and tool, failures
+        tb trace export <session|dir> -o <record-dir>   # via tooltrace, if installed
+
+    For one session without touching the project: TOOLBASE_TRACE=1 (and
+    optionally TOOLBASE_TRACE_DIR), or `toolbase serve --trace [DIR]`.
+    """
+
+
+def _trace_set(value: bool) -> None:
+    from .serve.config import ServeConfigError, load_serve_config, save_serve_config
+    from .envs.paths import project_serve_config_path
+    root = _cwd_project_root()
+    path = project_serve_config_path(root)
+    try:
+        cfg = load_serve_config(path)
+    except ServeConfigError as e:
+        click.echo(f"Error in serve config: {e}", err=True)
+        sys.exit(1)
+    cfg.trace = value
+    save_serve_config(cfg, path)
+    from .trace.session import traces_dir
+    if value:
+        click.echo(f"Tracing on for {root} ({path}).")
+        click.echo(f"Each toolbase serve started here now records to {traces_dir(root)}/.")
+        click.echo("A serve already running picks it up when it next starts.")
+    else:
+        click.echo(f"Tracing off for {root} ({path}).")
+
+
+@trace_group.command(name="on", short_help="Trace every serve in this project.")
+def trace_on():
+    """Set `trace: true` in the project's .toolbase/serve.yaml."""
+    _trace_set(True)
+
+
+@trace_group.command(name="off", short_help="Stop tracing in this project.")
+def trace_off():
+    """Set `trace: false` in the project's .toolbase/serve.yaml."""
+    _trace_set(False)
+
+
+@trace_group.command(name="status", short_help="Is tracing on, and where does it go.")
+def trace_status():
+    """Show whether a `toolbase serve` started here would trace, and why."""
+    from .trace.session import env_switch, traces_dir, yaml_setting
+    root, _src = _resolve_active_project_root()
+    sw = env_switch(os.environ)
+    yaml_on = yaml_setting(root)
+    if sw is not None:
+        on, why = sw, f"TOOLBASE_TRACE={os.environ.get('TOOLBASE_TRACE')}"
+    else:
+        on = bool(yaml_on)
+        why = ("serve.yaml trace: true" if yaml_on else
+               "serve.yaml trace: false" if yaml_on is False else "default (off)")
+    click.echo(f"Tracing: {'on' if on else 'off'} ({why})")
+    click.echo(f"Project: {root}")
+    if os.environ.get("TOOLBASE_TRACE_DIR"):
+        click.echo(f"Directory: {os.environ['TOOLBASE_TRACE_DIR']} (TOOLBASE_TRACE_DIR)")
+    else:
+        click.echo(f"Directory: {traces_dir(root)}/<session>/")
+    from .trace.summary import list_sessions
+    click.echo(f"Sessions recorded: {len(list_sessions(traces_dir(root)))}")
+
+
+@trace_group.command(name="list", short_help="Trace sessions in this project.")
+def trace_list():
+    """List trace sessions: agents, calls, failures and time span."""
+    from .trace.session import traces_dir
+    from .trace.summary import format_list, list_sessions
+    root, _src = _resolve_active_project_root()
+    tdir = traces_dir(root)
+    click.echo(format_list(tdir, list_sessions(tdir)))
+
+
+def _resolve_trace_target(target: str) -> Path:
+    """A trace directory, or a unique session-name prefix under this
+    project's .toolbase/traces/; exits with a message otherwise."""
+    from .trace.session import traces_dir
+    from .trace.summary import is_trace_dir
+    path = Path(target).expanduser()
+    if not is_trace_dir(path):
+        root, _src = _resolve_active_project_root()
+        tdir = traces_dir(root)
+        matches = sorted(p for p in tdir.glob(f"{target}*") if p.is_dir()) if tdir.is_dir() else []
+        if len(matches) == 1:
+            path = matches[0]
+        elif len(matches) > 1:
+            click.echo(f"'{target}' matches {len(matches)} sessions in {tdir}; be more specific.", err=True)
+            sys.exit(1)
+        else:
+            click.echo(f"No trace at {target} (no calls.jsonl or agents.jsonl), "
+                       f"and no session by that name in {tdir}.", err=True)
+            sys.exit(1)
+    return path
+
+
+@trace_group.command(name="show", short_help="Summarize one trace.")
+@click.argument("target")
+def trace_show(target):
+    """
+    Summarize a trace: agents, calls per agent and tool, failures.
+
+    TARGET is a trace directory, or a session name under this project's
+    .toolbase/traces/ (a unique prefix is enough).
+    """
+    from .trace.summary import format_show
+    click.echo(format_show(_resolve_trace_target(target)))
+
+
+TOOLTRACE_HINT = ("Exporting and viewing traces is done by tooltrace, which is not installed "
+                  "here: pip install git+https://github.com/tonymenzo/tooltrace, "
+                  "then rerun this command.")
+
+
+@trace_group.command(name="export", short_help="Write the run's record with a viewer (tooltrace).",
+                     context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.argument("target")
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def trace_export(target, args):
+    """
+    Export a trace as the run's record: a shareable directory with an offline viewer.
+
+    Delegates to `tooltrace export` (a separate package); every option after
+    TARGET is passed through, e.g. -o record/ --sandbox DIR --commands
+    claude:PATH --title NAME. TARGET is a trace directory or a session name
+    in this project. Without tooltrace installed, says how to get it.
+    """
+    try:
+        from tooltrace.cli import main as tooltrace_main
+    except ImportError:
+        click.echo(TOOLTRACE_HINT, err=True)
+        sys.exit(1)
+    path = _resolve_trace_target(target)
+    sys.exit(tooltrace_main(["export", str(path), *args]))
 
 @serve.command('enable', short_help='Persistently enable a toolkit by default.')
 @click.argument('toolkit')

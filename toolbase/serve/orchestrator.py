@@ -937,6 +937,26 @@ def _prune_per_toolkit_log_if_oversized(log_path: Path) -> None:
 # rather than relying on the orchestrator to pump its stderr.
 
 
+def _served_version(disc: Optional[ToolkitDiscovery]) -> Optional[str]:
+    """The toolkit version this serve is running, for the trace. An editable
+    slot reports its checkout's ``toolkit.yaml`` version as ``<v>+editable``."""
+    if disc is None:
+        return None
+    v = (disc.meta or {}).get("version")
+    if v and v != EDITABLE:
+        return str(v)
+    declared = None
+    try:
+        import yaml
+        with open(disc.path / "toolkit.yaml", "r", encoding="utf-8") as f:
+            declared = (yaml.safe_load(f) or {}).get("version")
+    except Exception:
+        declared = None
+    if v == EDITABLE:
+        return f"{declared}+editable" if declared else EDITABLE
+    return str(declared) if declared else None
+
+
 # ── orchestrator ────────────────────────────────────────────────────────
 
 
@@ -952,6 +972,7 @@ class Orchestrator:
         call_timeout_s: float = DEFAULT_CALL_TIMEOUT_S,
         config_overrides: Optional[Dict[str, Any]] = None,
         bare: bool = False,
+        trace: Optional[Any] = None,  # toolbase.trace.Trace
     ):
         self.console = console or Console(stderr=True)
         # Stderr console because stdin/stdout are owned by MCP stdio in the
@@ -990,6 +1011,13 @@ class Orchestrator:
         # during start(). Lets an in-process embedder see how many tools were
         # dropped (and flag it) without scraping serve.log.
         self._tool_report: List[Dict[str, Any]] = []
+        # Provenance trace (``toolbase.trace.Trace``), off when None. Every
+        # call through this orchestrator is recorded for ``trace.agent``.
+        self.trace = trace
+        self._trace_bases: Dict[str, Optional[str]] = {}
+        self._trace_versions: Dict[str, Optional[str]] = {}
+        self._trace_errors = 0
+        self._trace_registered_agent = False
 
     @property
     def tool_report(self) -> List[Dict[str, Any]]:
@@ -1248,6 +1276,9 @@ class Orchestrator:
             if python_exe:
                 venv_bin = os.path.dirname(python_exe)
         env = _build_host_env(disc.path, disc.name, venv_bin=venv_bin)
+        if self.trace is not None:
+            env["TOOLBASE_TRACE_HOST"] = "1"
+            self._trace_bases[disc.name] = (state_config or {}).get("base_directory")
 
         try:
             from orchestral.mcp import MCPClient
@@ -1767,6 +1798,12 @@ class Orchestrator:
         logger = self.logger
 
         def forward(upstream_name: str, kwargs: Dict[str, Any]) -> str:
+            if self.trace is not None:
+                return self._traced_call(toolkit_name, upstream_name, kwargs, _forward)
+            return _forward(upstream_name, kwargs, None)
+
+        def _forward(upstream_name: str, kwargs: Dict[str, Any], tc) -> str:
+            # ``tc`` is the trace capture (None when tracing is off).
             rt = self._runtimes.get(toolkit_name)
             if rt is None:
                 # Should not happen — runtime is created before any proxy
@@ -1798,7 +1835,10 @@ class Orchestrator:
             tid = logger.log_tool_start(toolkit_name, upstream_name, kwargs)
             t0 = time.monotonic()
             try:
-                result = rt.mcp_client.call_tool(upstream_name, kwargs)
+                if tc is None:
+                    result = rt.mcp_client.call_tool(upstream_name, kwargs)
+                else:
+                    result = tc.call(rt, upstream_name, kwargs)
                 duration = time.monotonic() - t0
                 logger.log_tool_complete(tid, duration=duration, success=True)
                 return result
@@ -1811,6 +1851,8 @@ class Orchestrator:
                 logger.log_tool_complete(
                     tid, duration=duration, success=False, error=detail,
                 )
+                if tc is not None:
+                    tc.error = detail
 
                 if self._classify_call_failure(rt, e):
                     # Subprocess died. Transition to CRASHED, schedule
@@ -1839,11 +1881,73 @@ class Orchestrator:
 
         return forward
 
+    # ── provenance trace ────────────────────────────────────────────────
+
+    def _traced_call(self, toolkit_name: str, upstream_name: str,
+                     kwargs: Dict[str, Any], inner) -> str:
+        """Run ``inner`` with a trace capture, write the record, append the
+        call id to the result. Any trace failure is logged and swallowed:
+        the call's own result always goes back."""
+        try:
+            from ..trace.capture import CallCapture
+            rt = self._runtimes.get(toolkit_name)
+            tc = CallCapture(
+                self.trace, toolkit=toolkit_name, tool=upstream_name,
+                version=self._trace_version(toolkit_name, rt),
+                base=self._trace_bases.get(toolkit_name),
+            )
+        except Exception as e:
+            self._trace_error(f"could not start capture: {e}")
+            return inner(upstream_name, kwargs, None)
+        result = inner(upstream_name, kwargs, tc)
+        try:
+            tc.finish(kwargs, result)
+        except Exception as e:
+            self._trace_error(f"could not write call record: {e}")
+            return result
+        line = f"[toolbase call {tc.id}]"
+        if not isinstance(result, str):
+            return result
+        if not result:
+            return line
+        return result + ("" if result.endswith("\n") else "\n") + line
+
+    def _trace_version(self, toolkit_name: str, rt) -> Optional[str]:
+        if toolkit_name not in self._trace_versions:
+            self._trace_versions[toolkit_name] = (
+                _served_version(rt.discovery) if rt is not None else None)
+        return self._trace_versions[toolkit_name]
+
+    def _trace_error(self, message: str) -> None:
+        self._trace_errors += 1
+        if self._trace_errors <= 10:
+            try:
+                self.logger.log_event("trace_error", message=message, level="warn")
+            except Exception:
+                pass
+
+    def _register_serve_agent(self, client_info: Optional[Dict[str, Any]]) -> None:
+        """Plain ``toolbase serve``: register the session's one agent, named
+        from the MCP client's ``initialize`` info."""
+        if self.trace is None or self._trace_registered_agent:
+            return
+        name = (client_info or {}).get("name")
+        version = (client_info or {}).get("version")
+        label = " ".join(x for x in (name, version) if x) or "toolbase serve"
+        try:
+            self.trace.register_agent(label=label, harness=name)
+            self._trace_registered_agent = True
+        except Exception as e:
+            self._trace_error(f"could not register agent: {e}")
+
     # ── serve loop ──────────────────────────────────────────────────────
 
     def run_mcp_stdio(self) -> None:
         """Run the upstream MCP stdio server. Blocks until shutdown."""
         from orchestral.mcp import MCPServer
+        if self.trace is not None:
+            from ..trace.mcp_hooks import serve_server_class
+            MCPServer = serve_server_class(MCPServer, self._register_serve_agent)
         server = MCPServer(
             tools=self._proxy_tools,
             name="toolbase",
@@ -1862,6 +1966,11 @@ class Orchestrator:
             return
         self._shutdown_initiated = True
         self.logger.log_event("serve_shutting_down")
+        if self._trace_registered_agent:
+            try:
+                self.trace.end_agent()
+            except Exception as e:
+                self._trace_error(f"could not end agent: {e}")
 
         for name, rt in list(self._runtimes.items()):
             # MCPClient.disconnect() tears down both the persistent
@@ -1922,6 +2031,7 @@ def serve(
     loadout: Optional[Any] = None,
     call_timeout_s: float = DEFAULT_CALL_TIMEOUT_S,
     bare: bool = False,
+    trace: Optional[Any] = None,
 ) -> int:
     """Top-level entry point for ``toolbase serve``.
 
@@ -1939,6 +2049,9 @@ def serve(
     qualified ``<toolkit>__<tool>``. A name shared by two toolkits can't be
     served bare unambiguously, so those tools fall back to their qualified
     form (both stay callable) with a warning; bare naming applies to the rest.
+
+    ``trace`` (a ``toolbase.trace.Trace``) records every call; the session's
+    agent is registered from the MCP client's info at the first call.
     """
     if not no_tui:
         raise NotImplementedError("TUI mode not yet implemented; use --no-tui")
@@ -1948,8 +2061,10 @@ def serve(
     console = Console(stderr=True)
     orch = Orchestrator(
         console=console, loadout=loadout, call_timeout_s=call_timeout_s,
-        bare=bare,
+        bare=bare, trace=trace,
     )
+    if trace is not None:
+        console.print(f"[dim]Tracing tool calls to {trace.dir}[/dim]")
 
     try:
         orch.start()

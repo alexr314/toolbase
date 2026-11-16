@@ -41,6 +41,7 @@ from dataclasses import dataclass, asdict, field
 from collections import deque
 
 from ..config import LOGS_DIR
+from .._sanitize import sanitize_args
 
 
 SERVE_LOG_PATH = LOGS_DIR / "serve.log"
@@ -317,39 +318,9 @@ class ToolLogger:
         Returns:
             Sanitized arguments
         """
-        sanitized = {}
-
-        # List of keys that might contain secrets
-        secret_keys = {
-            'password', 'passwd', 'pwd',
-            'token', 'api_key', 'apikey', 'key',
-            'secret', 'auth', 'credential'
-        }
-
-        for key, value in args.items():
-            key_lower = key.lower()
-
-            # Check if key name suggests a secret
-            if any(secret in key_lower for secret in secret_keys):
-                sanitized[key] = "***REDACTED***"
-            else:
-                # Keep the value but limit size for large objects
-                if isinstance(value, (str, int, float, bool, type(None))):
-                    sanitized[key] = value
-                elif isinstance(value, (list, tuple)):
-                    # Truncate long lists
-                    if len(value) > 10:
-                        sanitized[key] = f"<{type(value).__name__} of {len(value)} items>"
-                    else:
-                        sanitized[key] = value
-                elif isinstance(value, dict):
-                    # Recursively sanitize nested dicts
-                    sanitized[key] = self._sanitize_args(value)
-                else:
-                    # Other types: just show type
-                    sanitized[key] = f"<{type(value).__name__}>"
-
-        return sanitized
+        # Shared with the provenance trace (``toolbase.trace``), which
+        # runs inside toolkit hosts and so can't import this module.
+        return sanitize_args(args)
 
     def _write_daily_log(self, message: str, level: str = "info"):
         """
