@@ -7268,6 +7268,7 @@ def trace_group():
         tb trace on | off | status     # the project setting (serve.yaml trace)
         tb trace list                  # sessions in this project
         tb trace show <session|dir>    # agents, calls per agent and tool, failures
+        tb trace export <session|dir> -o <bundle>   # via tooltrace, if installed
 
     For one session without touching the project: TOOLBASE_TRACE=1 (and
     optionally TOOLBASE_TRACE_DIR), or `toolbase serve --trace [DIR]`.
@@ -7340,17 +7341,11 @@ def trace_list():
     click.echo(format_list(tdir, list_sessions(tdir)))
 
 
-@trace_group.command(name="show", short_help="Summarize one trace.")
-@click.argument("target")
-def trace_show(target):
-    """
-    Summarize a trace: agents, calls per agent and tool, failures.
-
-    TARGET is a trace directory, or a session name under this project's
-    .toolbase/traces/ (a unique prefix is enough).
-    """
+def _resolve_trace_target(target: str) -> Path:
+    """A trace directory, or a unique session-name prefix under this
+    project's .toolbase/traces/; exits with a message otherwise."""
     from .trace.session import traces_dir
-    from .trace.summary import format_show, is_trace_dir
+    from .trace.summary import is_trace_dir
     path = Path(target).expanduser()
     if not is_trace_dir(path):
         root, _src = _resolve_active_project_root()
@@ -7365,7 +7360,47 @@ def trace_show(target):
             click.echo(f"No trace at {target} (no calls.jsonl or agents.jsonl), "
                        f"and no session by that name in {tdir}.", err=True)
             sys.exit(1)
-    click.echo(format_show(path))
+    return path
+
+
+@trace_group.command(name="show", short_help="Summarize one trace.")
+@click.argument("target")
+def trace_show(target):
+    """
+    Summarize a trace: agents, calls per agent and tool, failures.
+
+    TARGET is a trace directory, or a session name under this project's
+    .toolbase/traces/ (a unique prefix is enough).
+    """
+    from .trace.summary import format_show
+    click.echo(format_show(_resolve_trace_target(target)))
+
+
+TOOLTRACE_HINT = ("Exporting and viewing traces is done by tooltrace, which is not installed "
+                  "here: pip install git+https://github.com/tonymenzo/tooltrace, "
+                  "then rerun this command.")
+
+
+@trace_group.command(name="export", short_help="Bundle a trace with a viewer (tooltrace).",
+                     context_settings={"ignore_unknown_options": True, "allow_extra_args": True})
+@click.argument("target")
+@click.argument("args", nargs=-1, type=click.UNPROCESSED)
+def trace_export(target, args):
+    """
+    Export a trace as a shareable bundle with an offline viewer.
+
+    Delegates to `tooltrace export` (a separate package); every option after
+    TARGET is passed through, e.g. -o bundle/ --sandbox DIR --commands
+    claude:PATH --title NAME. TARGET is a trace directory or a session name
+    in this project. Without tooltrace installed, says how to get it.
+    """
+    try:
+        from tooltrace.cli import main as tooltrace_main
+    except ImportError:
+        click.echo(TOOLTRACE_HINT, err=True)
+        sys.exit(1)
+    path = _resolve_trace_target(target)
+    sys.exit(tooltrace_main(["export", str(path), *args]))
 
 @serve.command('enable', short_help='Persistently enable a toolkit by default.')
 @click.argument('toolkit')

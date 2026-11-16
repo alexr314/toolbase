@@ -537,3 +537,89 @@ def test_cli_serve_trace_flag_passes_a_trace(tmp_path, monkeypatch):
     monkeypatch.setenv("TOOLBASE_TRACE", "1")
     r = _cli(tmp_path, "serve")
     assert seen["trace"].dir.parent == tmp_path / ".toolbase" / "traces"
+
+
+# ── the written records follow the trace format (tooltrace docs/FORMAT.md) ──
+
+# A vendored copy of the format's required keys (tooltrace.spec), so this
+# check needs no tooltrace. Keep in step with FORMAT.md.
+FORMAT_AGENT_STARTED = ("event", "id", "label", "parent", "model", "engine", "harness", "ts")
+FORMAT_AGENT_ENDED = ("event", "id", "ts")
+FORMAT_CALL = ("schema", "id", "agent", "ts_start", "ts_end", "toolkit", "version", "tool",
+               "args", "ok", "error", "result", "files", "parent")
+FORMAT_CALL_RESULT = ("sha256", "head")
+FORMAT_CALL_FILE = ("path", "bytes", "mtime", "sha256")
+
+
+def _iso_z(v):
+    from datetime import datetime
+    assert isinstance(v, str) and v.endswith("Z"), v
+    datetime.fromisoformat(v.replace("Z", "+00:00"))
+
+
+def test_records_follow_the_trace_format(tmp_path):
+    d = tmp_path / "trace"
+    lead = Trace(d, agent="ag-lead")
+    lead.register_agent(label="lead", model="m", engine="claude", harness="conjure")
+    (tmp_path / "in.txt").write_text("x")
+    _, fwd, client = _orch(tmp_path, lead, name="heptapod", base=tmp_path)
+    fwd("Tool", {"path": "in.txt", "api_key": "s"})
+    client.call_tool.side_effect = ValueError("boom")
+    fwd("Tool", {})
+    ctx = {"call_id": "c-outer", "dir": str(d), "agent": "ag-lead", "toolkit": "heptapod",
+           "version": "1", "base": str(tmp_path)}
+    with tbtrace.child_call(ctx, "Inner", {"a": 1}) as cc:
+        cc.result = "ok"
+    lead.end_agent()
+
+    events = read_jsonl(d / "agents.jsonl")
+    assert [e["event"] for e in events] == ["agent_started", "agent_ended"]
+    for e in events:
+        keys = FORMAT_AGENT_STARTED if e["event"] == "agent_started" else FORMAT_AGENT_ENDED
+        assert all(k in e for k in keys), (keys, e)
+        assert isinstance(e["id"], str) and e["id"]
+        _iso_z(e["ts"])
+    calls = read_jsonl(d / "calls.jsonl")
+    assert len(calls) == 3
+    for c in calls:
+        assert all(k in c for k in FORMAT_CALL), c
+        name, _, major = c["schema"].rpartition("/")
+        assert (name, major) == ("toolbase-call", "1")
+        _iso_z(c["ts_start"])
+        _iso_z(c["ts_end"])
+        assert isinstance(c["ok"], bool) and isinstance(c["args"], dict)
+        assert all(k in c["result"] for k in FORMAT_CALL_RESULT)
+        assert isinstance(c["files"], list)
+        for f in c["files"]:
+            assert all(k in f for k in FORMAT_CALL_FILE), f
+    assert calls[0]["files"][0]["path"] == "in.txt"
+    assert calls[1]["ok"] is False and calls[1]["error"]
+    assert calls[2]["parent"] == "c-outer"
+    assert len({c["id"] for c in calls}) == 3
+
+
+# ── tb trace export delegates to tooltrace ─────────────────────────────
+
+
+def test_cli_export_hint_without_tooltrace(tmp_path, monkeypatch):
+    d = tmp_path / "t"
+    Trace(d, agent="ag-1").register_agent(label="x")
+    monkeypatch.setitem(sys.modules, "tooltrace", None)
+    monkeypatch.setitem(sys.modules, "tooltrace.cli", None)
+    r = _cli(tmp_path, "trace", "export", str(d), "-o", str(tmp_path / "b"))
+    assert r.exit_code == 1
+    assert "tooltrace" in r.output and "pip install git+https://github.com/tonymenzo/tooltrace" in r.output
+
+
+def test_cli_export_delegates_to_tooltrace(tmp_path, monkeypatch):
+    import types
+    seen = {}
+    fake = types.ModuleType("tooltrace.cli")
+    fake.main = lambda argv: seen.setdefault("argv", argv) and 0
+    monkeypatch.setitem(sys.modules, "tooltrace", types.ModuleType("tooltrace"))
+    monkeypatch.setitem(sys.modules, "tooltrace.cli", fake)
+    d = tmp_path / "t"
+    Trace(d, agent="ag-1").register_agent(label="x")
+    r = _cli(tmp_path, "trace", "export", str(d), "-o", "b", "--sandbox", "w", "--title", "T")
+    assert r.exit_code == 0, r.output
+    assert seen["argv"] == ["export", str(d), "-o", "b", "--sandbox", "w", "--title", "T"]

@@ -5,8 +5,10 @@ it, which tool at which toolkit version, the arguments, the outcome, and the
 files it named. Off by default. With it off, nothing below happens and serve
 behaves exactly as before.
 
-This is phase 1 (capture). Export to a shareable bundle and the HTML viewer
-come later.
+toolbase writes the trace; [tooltrace](https://github.com/tonymenzo/tooltrace)
+reads it. tooltrace owns the record format (its `docs/FORMAT.md`, which this
+page's record sections follow) and turns a trace into a shareable bundle with
+an offline viewer. See [Export and viewing](#export-and-viewing).
 
 ## Turning it on
 
@@ -179,7 +181,7 @@ result=…, ts_start=…, ts_end=…, toolkit=…, version=…, files=…, paren
 id=…)` writes one record and returns its id; it never raises (returns None on
 failure or when `ctx` is None). `parent` defaults to `ctx["call_id"]`.
 
-## Limits (phase 1)
+## Limits
 
 - Subagents inside one harness session share its MCP connection; their calls
   are attributed to the session's agent.
@@ -187,3 +189,20 @@ failure or when `ctx` is None). `parent` defaults to `ctx["call_id"]`.
   declares through `child_call` are not seen during the run.
 - A call still running when the process dies has no record (records are
   written when a call ends).
+
+## Export and viewing
+
+Export and the viewer live in a separate package,
+[tooltrace](https://github.com/tonymenzo/tooltrace), so toolbase stays the
+capture side only and other harnesses' logs can be traced too.
+
+```
+tb trace export <session|dir> -o bundle/ [--sandbox DIR] [--commands claude:PATH] [--title NAME]
+```
+
+hands everything after the session to `tooltrace export` when tooltrace is
+importable, and otherwise says how to install it. `tooltrace export`,
+`tooltrace open` and `tooltrace validate` work on a trace directory directly.
+The format's required keys are checked against toolbase's own records in
+`tests/test_trace.py` (a vendored copy of tooltrace's spec, so the test needs
+no tooltrace).
